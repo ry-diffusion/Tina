@@ -1,0 +1,7 @@
+[package]
+name = "tina-ipc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tina-core = { version = "0.1.0", path = "../tina-core" }
