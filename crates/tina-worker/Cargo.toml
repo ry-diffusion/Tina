@@ -1,10 +1,12 @@
 [package]
-name = "tina-db"
+name = "tina-worker"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sqlx.workspace = true
+tina-core = { version = "0.1.0", path = "../tina-core" }
+tina-db = { version = "0.1.0", path = "../tina-db" }
+tina-ipc = { version = "0.1.0", path = "../tina-ipc" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

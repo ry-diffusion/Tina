@@ -14,10 +14,7 @@ pub enum Message {
 #[derive(Default, Debug, Clone)]
 pub enum Scene {
     #[default]
-    /** Downloading the nanachi dependencies and initializing it. It will be slow on the first startup */
     AppCoreInitializing,
-
-    /** Welcome screen */
     Welcome,
 }
 
@@ -26,6 +23,7 @@ impl Tina {
         match message {
             Message::Ready => {
                 tracing::info!("Tina is ready!");
+                self.scene = Scene::Welcome;
             }
             Message::InitError { reason, details } => {
                 tracing::error!("Initialization Error: {}: {}", reason, details);
@@ -40,7 +38,7 @@ impl Tina {
         }
     }
 
-    pub fn theme(&self) -> Option<Theme> {
+    pub fn theme(&self) -> Option<iced::Theme> {
         Some(iced::Theme::Dark)
     }
 }

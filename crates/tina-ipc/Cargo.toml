@@ -5,3 +5,9 @@ edition = "2024"
 
 [dependencies]
 tina-core = { version = "0.1.0", path = "../tina-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+directories.workspace = true

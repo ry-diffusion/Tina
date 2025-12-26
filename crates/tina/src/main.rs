@@ -15,9 +15,9 @@ fn main() -> color_eyre::Result<()> {
             tracing_subscriber::EnvFilter::builder()
                 .from_env_lossy()
                 .add_directive("tina=info".parse().unwrap())
-                .add_directive("tina_core=info".parse().unwrap())
-                .add_directive("tina_db=info".parse().unwrap())
-                .add_directive("tina_ipc=info".parse().unwrap()),
+                .add_directive("tina_worker=info".parse().unwrap())
+                .add_directive("tina_ipc=info".parse().unwrap())
+                .add_directive("tina_db=info".parse().unwrap()),
         )
         .init();
 
