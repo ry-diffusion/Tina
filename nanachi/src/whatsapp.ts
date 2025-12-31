@@ -60,6 +60,7 @@ export async function startAccount(accountId: string): Promise<void> {
         } else if (connection === "open") {
             const phoneNumber = sock.user?.id?.split(":")[0];
             ipc.sendConnected(accountId, phoneNumber);
+            fetchAllGroups(sock, accountId);
         }
     });
 
@@ -227,6 +228,18 @@ function mapGroup(g: GroupMetadata): GroupData {
         description: g.desc ?? undefined,
         participants,
     };
+}
+
+async function fetchAllGroups(sock: WASocket, accountId: string): Promise<void> {
+    try {
+        const groups = await sock.groupFetchAllParticipating();
+        const mapped = Object.values(groups).map(mapGroup);
+        if (mapped.length > 0) {
+            ipc.sendGroupsUpsert(accountId, mapped);
+        }
+    } catch (err) {
+        ipc.sendError(accountId, `Failed to fetch groups: ${err}`);
+    }
 }
 
 function extractMessageContent(msg: WAMessage): string | undefined {

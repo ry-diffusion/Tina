@@ -3,7 +3,7 @@ use sqlx::{Pool, Sqlite, SqlitePool};
 use std::path::PathBuf;
 
 use crate::error::{DbError, Result};
-use crate::models::{Account, Contact, Group, Message};
+use crate::models::{Account, ChatBasicRow, ChatPreviewRow, Contact, Group, Message};
 use crate::schema::SCHEMA;
 
 pub struct TinaDb {
@@ -273,6 +273,67 @@ impl TinaDb {
         .await?;
 
         Ok(rows.into_iter().map(|(jid,)| jid).collect())
+    }
+
+    pub async fn get_chats_with_names(&self, account_id: &str) -> Result<Vec<ChatBasicRow>> {
+        let rows = sqlx::query_as::<_, ChatBasicRow>(
+            r#"
+            SELECT 
+                m.chat_jid,
+                COALESCE(g.subject, c.name, c.notify_name, c.verified_name) as resolved_name,
+                CASE WHEN m.chat_jid LIKE '%@g.us' THEN 1 ELSE 0 END as is_group,
+                MAX(m.timestamp) as last_timestamp
+            FROM messages m
+            LEFT JOIN groups g ON g.jid = m.chat_jid AND g.account_id = ?
+            LEFT JOIN contacts c ON c.jid = m.chat_jid AND c.account_id = ?
+            WHERE m.account_id = ?
+            GROUP BY m.chat_jid
+            ORDER BY last_timestamp DESC
+            "#,
+        )
+        .bind(account_id)
+        .bind(account_id)
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn get_chat_previews_batch(&self, account_id: &str) -> Result<Vec<ChatPreviewRow>> {
+        let rows = sqlx::query_as::<_, ChatPreviewRow>(
+            r#"
+            WITH ranked_messages AS (
+                SELECT 
+                    chat_jid,
+                    content,
+                    message_type,
+                    timestamp,
+                    ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC) as rn
+                FROM messages 
+                WHERE account_id = ?
+            )
+            SELECT 
+                rm.chat_jid,
+                rm.content as last_message_content,
+                rm.message_type as last_message_type,
+                rm.timestamp as last_message_timestamp,
+                COALESCE(g.subject, c.name, c.notify_name, c.verified_name) as resolved_name,
+                CASE WHEN rm.chat_jid LIKE '%@g.us' THEN 1 ELSE 0 END as is_group
+            FROM ranked_messages rm
+            LEFT JOIN groups g ON g.jid = rm.chat_jid AND g.account_id = ?
+            LEFT JOIN contacts c ON c.jid = rm.chat_jid AND c.account_id = ?
+            WHERE rm.rn = 1
+            ORDER BY rm.timestamp DESC
+            "#,
+        )
+        .bind(account_id)
+        .bind(account_id)
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
     }
 
     pub async fn delete_account(&self, account_id: &str) -> Result<()> {
