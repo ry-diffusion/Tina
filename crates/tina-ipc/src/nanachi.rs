@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tracing::{info, debug};
 
 use tina_core::{IpcCommand, IpcEvent, IpcMessage};
 
@@ -42,7 +41,7 @@ impl NanachiManager {
         }
 
         if !node_modules.exists() {
-            info!("Installing nanachi dependencies with bun");
+            tracing::info!("Installing nanachi dependencies with bun...");
             self.run_bun_install().await?;
         }
 
@@ -64,7 +63,7 @@ impl NanachiManager {
             return Err(IpcError::BunInstallFailed(stderr.to_string()));
         }
 
-        info!("bun install completed successfully");
+        tracing::info!("bun install completed successfully");
         Ok(())
     }
 
@@ -75,7 +74,7 @@ impl NanachiManager {
 
         self.ensure_dependencies().await?;
 
-        info!("Starting nanachi process");
+        tracing::info!("Starting nanachi process...");
 
         let handle = ProcessHandle::spawn(
             &self.nanachi_dir,
@@ -87,42 +86,22 @@ impl NanachiManager {
 
         self.process = Some(handle);
 
-        info!("Nanachi process started successfully");
+        tracing::info!("Nanachi process started");
         Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut process) = self.process.take() {
-            info!("Stopping nanachi process");
             let _ = self.send_command(IpcCommand::Shutdown).await;
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             let _ = process.kill().await;
-            info!("Nanachi process stopped");
+            tracing::info!("Nanachi process stopped");
         }
         Ok(())
     }
 
     pub async fn send_command(&self, command: IpcCommand) -> Result<()> {
         let process = self.process.as_ref().ok_or(IpcError::ProcessNotRunning)?;
-        
-        let (cmd_name, account_id) = match &command {
-            IpcCommand::StartAccount { account_id } => ("StartAccount", Some(account_id.as_str())),
-            IpcCommand::StopAccount { account_id } => ("StopAccount", Some(account_id.as_str())),
-            IpcCommand::SetAuthState { account_id, .. } => ("SetAuthState", Some(account_id.as_str())),
-            IpcCommand::SendMessage { account_id, .. } => ("SendMessage", Some(account_id.as_str())),
-            IpcCommand::GetQrCode { account_id } => ("GetQrCode", Some(account_id.as_str())),
-            IpcCommand::GetContacts { account_id } => ("GetContacts", Some(account_id.as_str())),
-            IpcCommand::GetGroups { account_id } => ("GetGroups", Some(account_id.as_str())),
-            IpcCommand::GetMessages { account_id, .. } => ("GetMessages", Some(account_id.as_str())),
-            IpcCommand::Shutdown => ("Shutdown", None),
-        };
-        
-        if let Some(acc_id) = account_id {
-            debug!(command = cmd_name, account_id = %acc_id, "Sending IPC command");
-        } else {
-            debug!(command = cmd_name, "Sending IPC command");
-        }
-        
         let message = IpcMessage::new_command(command);
         let line = message.to_line();
         process.send(&line).await

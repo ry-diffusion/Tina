@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
+members = ["crates/tina",
   "crates/tina-cli",
   "crates/tina-core",
   "crates/tina-db",

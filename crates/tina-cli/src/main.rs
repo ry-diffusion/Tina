@@ -130,19 +130,6 @@ fn handle_event(event: WorkerEvent) {
                 error
             );
         }
-        WorkerEvent::SyncStarted { account_id, sync_type } => {
-            println!("\n⏳ Sync started for {}: {}", account_id, sync_type);
-        }
-        WorkerEvent::SyncProgress { account_id: _, sync_type, current, total } => {
-            if let Some(t) = total {
-                println!("   {} sync progress: {}/{}", sync_type, current, t);
-            } else {
-                println!("   {} sync progress: {}...", sync_type, current);
-            }
-        }
-        WorkerEvent::SyncCompleted { account_id, sync_type, count } => {
-            println!("\n✅ Sync completed for {}: {} ({} items)", account_id, sync_type, count);
-        }
     }
 }
 

@@ -61,21 +61,3 @@ pub struct GroupParticipant {
     pub admin: Option<String>,
     pub phone_number: Option<String>,
 }
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ChatPreviewRow {
-    pub chat_jid: String,
-    pub last_message_content: Option<String>,
-    pub last_message_type: String,
-    pub last_message_timestamp: i64,
-    pub resolved_name: Option<String>,
-    pub is_group: i32,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ChatBasicRow {
-    pub chat_jid: String,
-    pub resolved_name: Option<String>,
-    pub is_group: i32,
-    pub last_timestamp: i64,
-}
