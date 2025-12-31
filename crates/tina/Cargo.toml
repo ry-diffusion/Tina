@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+slint.workspace = true
+tina-core = { version = "0.1.0", path = "../tina-core" }
+tina-db = { version = "0.1.0", path = "../tina-db" }
+tina-worker = { version = "0.1.0", path = "../tina-worker" }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/tina",
+members = [
+  "crates/tina",
   "crates/tina-cli",
   "crates/tina-core",
   "crates/tina-db",
@@ -10,7 +11,7 @@ members = ["crates/tina",
 
 [workspace.dependencies]
 tokio = { version = "1.48", features = ["full"] }
-iced = { version = "0.14", features = ["tokio"] }
+slint = "1"
 color-eyre = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
