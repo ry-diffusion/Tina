@@ -4,7 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+color-eyre.workspace = true
+slint-build.workspace = true
+owo-colors.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 slint.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
 tina-core = { version = "0.1.0", path = "../tina-core" }
 tina-db = { version = "0.1.0", path = "../tina-db" }
 tina-worker = { version = "0.1.0", path = "../tina-worker" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+qrcode = "0.14"
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+slint-build.workspace = true

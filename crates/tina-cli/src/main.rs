@@ -20,7 +20,8 @@ async fn main() -> Result<()> {
         .init();
 
     let nanachi_dir = find_nanachi_dir()?;
-    println!("📁 Nanachi directory: {}", nanachi_dir.display());
+
+    println!("Nanachi directory: {}", nanachi_dir.display());
 
     let mut worker = TinaWorker::new(nanachi_dir)
         .await
@@ -53,11 +54,11 @@ async fn main() -> Result<()> {
             "6" => list_chats(&worker).await?,
             "7" => send_message(&worker).await?,
             "0" => {
-                println!("👋 Shutting down...");
+                println!("Shutting down...");
                 worker.stop().await?;
                 break;
             }
-            _ => println!("❌ Invalid choice"),
+            _ => println!("Invalid choice"),
         }
     }
 
@@ -83,52 +84,51 @@ fn print_menu() {
 fn handle_event(event: WorkerEvent) {
     match event {
         WorkerEvent::NanachiReady => {
-            println!("\n🚀 Nanachi is ready!");
+            println!("\nNanachi is ready!");
         }
         WorkerEvent::AccountReady { account_id } => {
-            println!("\n✅ Account {} is ready", account_id);
+            println!("\nAccount {} is ready", account_id);
         }
         WorkerEvent::QrCode { account_id, qr } => {
-            println!("\n📱 QR Code for account {}:", account_id);
+            println!("\nQR Code for account {}:", account_id);
             print_qr_code(&qr);
         }
-        WorkerEvent::Connected { account_id, phone_number } => {
+        WorkerEvent::Connected {
+            account_id,
+            phone_number,
+        } => {
             println!(
-                "\n✅ Connected: {} (phone: {})",
+                "\nConnected: {} (phone: {})",
                 account_id,
                 phone_number.unwrap_or_default()
             );
         }
         WorkerEvent::Disconnected { account_id, reason } => {
-            println!("\n❌ Disconnected: {} - {}", account_id, reason);
+            println!("\nDisconnected: {} - {}", account_id, reason);
         }
         WorkerEvent::LoggedOut { account_id } => {
-            println!("\n🚪 Logged out: {}", account_id);
+            println!("\nLogged out: {}", account_id);
         }
         WorkerEvent::ContactsSynced { account_id, count } => {
-            println!("\n📇 Synced {} contacts for {}", count, account_id);
+            println!("\nSynced {} contacts for {}", count, account_id);
         }
         WorkerEvent::GroupsSynced { account_id, count } => {
-            println!("\n👥 Synced {} groups for {}", count, account_id);
+            println!("\nSynced {} groups for {}", count, account_id);
         }
         WorkerEvent::MessagesSynced { account_id, count } => {
-            println!("\n💬 Synced {} messages for {}", count, account_id);
+            println!("\nSynced {} messages for {}", count, account_id);
         }
         WorkerEvent::HistorySyncComplete {
             account_id,
             messages_count,
         } => {
             println!(
-                "\n📜 History sync complete for {}: {} messages",
+                "\nHistory sync complete for {}: {} messages",
                 account_id, messages_count
             );
         }
         WorkerEvent::Error { account_id, error } => {
-            println!(
-                "\n❌ Error ({}): {}",
-                account_id.unwrap_or_default(),
-                error
-            );
+            println!("\nError ({}): {}", account_id.unwrap_or_default(), error);
         }
     }
 }
@@ -150,7 +150,11 @@ async fn create_account(worker: &TinaWorker) -> Result<()> {
     };
 
     let account = worker.create_account(id.trim(), name_opt).await?;
-    println!("✅ Created account: {} ({})", account.id, account.name.unwrap_or_default());
+    println!(
+        "Created account: {} ({})",
+        account.id,
+        account.name.unwrap_or_default()
+    );
     Ok(())
 }
 
@@ -158,14 +162,14 @@ async fn list_accounts(worker: &TinaWorker) -> Result<()> {
     let accounts = worker.list_accounts().await?;
 
     if accounts.is_empty() {
-        println!("📭 No accounts found");
+        println!("No accounts found");
     } else {
-        println!("\n📋 Accounts:");
+        println!("\nAccounts:");
         for account in accounts {
             let has_auth = if account.auth_state.is_some() {
-                "🔑"
+                "[AUTH]"
             } else {
-                "❌"
+                "[NO AUTH]"
             };
             println!(
                 "  {} {} - {} {}",
@@ -182,7 +186,7 @@ async fn list_accounts(worker: &TinaWorker) -> Result<()> {
 async fn login_account(worker: &TinaWorker) -> Result<()> {
     let id = read_line("Account ID to login: ")?;
     worker.start_account(id.trim()).await?;
-    println!("🔄 Starting account {}... watch for QR code", id.trim());
+    println!("Starting account {}... watch for QR code", id.trim());
     Ok(())
 }
 
@@ -191,12 +195,12 @@ async fn list_contacts(worker: &TinaWorker) -> Result<()> {
     let contacts = worker.get_contacts(id.trim()).await?;
 
     if contacts.is_empty() {
-        println!("📭 No contacts found");
+        println!("No contacts found");
     } else {
-        println!("\n📇 Contacts ({}):", contacts.len());
+        println!("\nContacts ({}):", contacts.len());
         for contact in contacts.iter().take(20) {
             println!(
-                "  📱 {} - {} ({})",
+                "  {} - {} ({})",
                 contact.jid,
                 contact.name.as_deref().unwrap_or("?"),
                 contact.phone_number.as_deref().unwrap_or("?")
@@ -214,9 +218,9 @@ async fn list_chats(worker: &TinaWorker) -> Result<()> {
     let chats = worker.get_chats(id.trim()).await?;
 
     if chats.is_empty() {
-        println!("📭 No chats found");
+        println!("No chats found");
     } else {
-        println!("\n💬 Chats ({}):", chats.len());
+        println!("\nChats ({}):", chats.len());
         for (i, chat) in chats.iter().enumerate().take(20) {
             println!("  {}. {}", i + 1, chat);
         }
@@ -242,9 +246,9 @@ async fn list_messages(worker: &TinaWorker) -> Result<()> {
         .await?;
 
     if messages.is_empty() {
-        println!("📭 No messages found");
+        println!("No messages found");
     } else {
-        println!("\n💬 Messages ({}):", messages.len());
+        println!("\nMessages ({}):", messages.len());
         for msg in messages {
             let direction = if msg.is_from_me { "→" } else { "←" };
             println!(
@@ -267,7 +271,7 @@ async fn send_message(worker: &TinaWorker) -> Result<()> {
     worker
         .send_message(account_id.trim(), to.trim(), content.trim())
         .await?;
-    println!("📤 Message sent!");
+    println!("Message sent!");
     Ok(())
 }
 
@@ -281,7 +285,7 @@ fn read_line(prompt: &str) -> Result<String> {
 
 fn find_nanachi_dir() -> Result<PathBuf> {
     let exe_path = std::env::current_exe()?;
-    
+
     let mut current = exe_path.parent();
     while let Some(dir) = current {
         let nanachi = dir.join("nanachi");

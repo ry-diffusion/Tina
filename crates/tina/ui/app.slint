@@ -1,0 +1,164 @@
+import {
+    Button,
+    VerticalBox,
+    ProgressIndicator,
+    HorizontalBox,
+    ComboBox,
+} from "std-widgets.slint";
+
+export global AccountManagement {
+    in-out property <[string]> accounts;
+    in-out property <string> selected-account;
+    in-out property <image> qr-code;
+    callback select-account(string);
+    callback login-account(string);
+    callback create-account();
+}
+
+export global FailureManagment {
+    in-out property <string> error;
+}
+
+export global AddAccountManagement {
+    in-out property <bool> is-qr-code-loaded;
+    in-out property <image> qr-code;
+}
+
+export struct Account {
+    id: string,
+    display_name: string,
+}
+
+export enum Scene {
+    Init,
+    QRLogin,
+    Syncing,
+    InApp,
+    FatalError,
+}
+
+
+component InitScene inherits Rectangle {
+    VerticalBox {
+        alignment: center;
+        Text {
+            text: "Tina";
+            font-size: 32px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "WhatsApp Client for Desktop";
+            font-size: 14px;
+            horizontal-alignment: center;
+            color: #666;
+        }
+
+        ProgressIndicator {
+            indeterminate: true;
+        }
+
+        Text {
+            text: "Initializing...";
+            horizontal-alignment: center;
+            color: #666;
+        }
+    }
+}
+
+component QRLoginScene inherits Rectangle {
+    VerticalBox {
+        alignment: center;
+        spacing: 20px;
+        Text {
+            text: "Scan QR Code";
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+
+        HorizontalBox {
+            alignment: center;
+            Image {
+                source: AccountManagement.qr-code;
+                width: 256px;
+                height: 256px;
+            }
+        }
+
+        if AccountManagement.qr-code.width == 0: VerticalBox {
+            spacing: 10px;
+            ProgressIndicator {
+                indeterminate: true;
+            }
+
+            Text {
+                text: "Waiting for QR code...";
+                horizontal-alignment: center;
+                color: #999;
+            }
+        }
+    }
+}
+
+component SyncingScene inherits Rectangle {
+    VerticalBox {
+        alignment: center;
+        Text {
+            text: "Syncing Messages";
+            font-size: 24px;
+            horizontal-alignment: center;
+        }
+
+        ProgressIndicator {
+            indeterminate: true;
+        }
+
+        Text {
+            text: "Please wait while we sync your messages...";
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            color: #666;
+        }
+    }
+}
+
+component InAppScene inherits Rectangle {
+    HorizontalBox {
+        ComboBox {
+            model: AccountManagement.accounts;
+            current-value: AccountManagement.selected-account;
+            selected(current-value) => {
+                AccountManagement.select-account(current-value);
+            }
+        }
+    }
+}
+
+component LeaveScene inherits Rectangle {
+    HorizontalBox {
+        VerticalBox {
+            Text {
+                text: "Error";
+                font-size: 20px;
+                color: #cc0000;
+            }
+
+            Text {
+                text: FailureManagment.error;
+                wrap: word-wrap;
+                color: #666;
+            }
+        }
+    }
+}
+
+export component Tina inherits Window {
+    title: "Tina";
+    in-out property <Scene> current-scene: Scene.Init;
+
+    if (current-scene == Scene.Init): InitScene { }
+    if (current-scene == Scene.QRLogin): QRLoginScene { }
+    if (current-scene == Scene.Syncing): SyncingScene { }
+    if (current-scene == Scene.InApp): InAppScene { }
+    if (current-scene == Scene.FatalError): LeaveScene { }
+}
