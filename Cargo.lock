@@ -2904,6 +2904,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lucide-slint"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e51170c7b0348e08b43554e829ff98cae3a4f5c9db4a153435f19f161912cbc"
+
+[[package]]
 name = "lyon_algorithms"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5261,6 +5267,7 @@ name = "tina"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "lucide-slint",
  "owo-colors",
  "qrcode",
  "serde",
