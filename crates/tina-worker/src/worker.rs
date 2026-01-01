@@ -131,6 +131,32 @@ impl TinaWorker {
         Ok(self.db.get_chats(account_id).await?)
     }
 
+    /// Resolve o nome de um chat (contato ou grupo) a partir do JID
+    pub async fn get_chat_name(&self, account_id: &str, chat_jid: &str) -> Result<Option<String>> {
+        // Tenta buscar como contato
+        if let Ok(Some(contact)) = self.db.get_contact_by_jid(account_id, chat_jid).await {
+            // Prioridade: name > notify_name > phone_number
+            if let Some(name) = contact.name {
+                return Ok(Some(name));
+            }
+            if let Some(notify) = contact.notify_name {
+                return Ok(Some(notify));
+            }
+            if let Some(phone) = contact.phone_number {
+                return Ok(Some(phone));
+            }
+        }
+
+        // Tenta buscar como grupo
+        if let Ok(Some(group)) = self.db.get_group_by_jid(account_id, chat_jid).await {
+            if let Some(subject) = group.subject {
+                return Ok(Some(subject));
+            }
+        }
+
+        Ok(None)
+    }
+
     pub async fn send_message(&self, account_id: &str, to: &str, content: &str) -> Result<()> {
         let nanachi = self.nanachi.read().await;
         nanachi
@@ -187,7 +213,14 @@ async fn handle_ipc_event(
 
         IpcEvent::ContactsUpsert { account_id, contacts } => {
             let count = contacts.len();
+            tracing::info!("📇 Recebidos {} novos contatos para {}", count, account_id);
             for contact in contacts {
+                let display_name = contact.name.as_ref()
+                    .or(contact.notify.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("<sem nome>");
+                tracing::debug!("  → Contato: {} ({})", display_name, contact.jid);
+                
                 db.upsert_contact(
                     &account_id,
                     &contact.jid,
@@ -227,7 +260,11 @@ async fn handle_ipc_event(
 
         IpcEvent::GroupsUpsert { account_id, groups } => {
             let count = groups.len();
+            tracing::info!("👥 Recebidos {} novos grupos para {}", count, account_id);
             for group in groups {
+                let group_name = group.subject.as_deref().unwrap_or("<sem nome>");
+                tracing::debug!("  → Grupo: {} ({})", group_name, group.jid);
+                
                 let participants_json = serde_json::to_string(&group.participants).ok();
                 db.upsert_group(
                     &account_id,
@@ -265,7 +302,14 @@ async fn handle_ipc_event(
 
         IpcEvent::MessagesUpsert { account_id, messages } => {
             let count = messages.len();
-            for msg in messages {
+            tracing::info!("💬 Recebidas {} mensagens para {}", count, account_id);
+            for msg in &messages {
+                let preview = msg.content.as_ref()
+                    .map(|c| if c.len() > 30 { format!("{}...", &c[..30]) } else { c.clone() })
+                    .unwrap_or_else(|| format!("[{}]", msg.message_type));
+                let direction = if msg.is_from_me { "→" } else { "←" };
+                tracing::debug!("  {} {}: {}", direction, msg.chat_jid, preview);
+                
                 db.insert_message(
                     &account_id,
                     &msg.message_id,
@@ -278,6 +322,16 @@ async fn handle_ipc_event(
                     msg.raw_json.as_deref(),
                 )
                 .await?;
+                
+                // Send event for each new message to update UI
+                let _ = event_tx
+                    .send(WorkerEvent::NewMessage {
+                        account_id: account_id.clone(),
+                        chat_jid: msg.chat_jid.clone(),
+                        content: msg.content.clone(),
+                        timestamp: msg.timestamp,
+                    })
+                    .await;
             }
             let _ = event_tx
                 .send(WorkerEvent::MessagesSynced { account_id, count })

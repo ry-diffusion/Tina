@@ -9,6 +9,7 @@ pub enum WorkerEvent {
     ContactsSynced { account_id: String, count: usize },
     GroupsSynced { account_id: String, count: usize },
     MessagesSynced { account_id: String, count: usize },
+    NewMessage { account_id: String, chat_jid: String, content: Option<String>, timestamp: i64 },
     HistorySyncComplete { account_id: String, messages_count: usize },
     Error { account_id: Option<String>, error: String },
 }

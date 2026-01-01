@@ -118,6 +118,13 @@ fn handle_event(event: WorkerEvent) {
         WorkerEvent::MessagesSynced { account_id, count } => {
             println!("\nSynced {} messages for {}", count, account_id);
         }
+        WorkerEvent::NewMessage { account_id, chat_jid, content, timestamp: _ } => {
+            let preview = content
+                .as_ref()
+                .map(|c| if c.len() > 40 { format!("{}...", &c[..40]) } else { c.clone() })
+                .unwrap_or_else(|| "[Media]".to_string());
+            println!("\n📩 New message in {} ({}): {}", account_id, chat_jid, preview);
+        }
         WorkerEvent::HistorySyncComplete {
             account_id,
             messages_count,

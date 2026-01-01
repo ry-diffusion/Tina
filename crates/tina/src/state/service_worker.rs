@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
 
+use chrono::Datelike;
 use color_eyre::eyre::Context;
 use slint::{ComponentHandle, Weak};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -9,8 +10,9 @@ use tina_worker::{TinaWorker, WorkerEvent};
 
 use super::messages::UIMessage;
 use super::ui::{
-    crash_app, load_account_data, set_selected_account, setup_settings_callbacks, show_error,
-    show_scene, update_account_list, update_qr_code, update_user_profile,
+    crash_app, load_account_data, set_selected_account, setup_chat_callbacks,
+    setup_settings_callbacks, show_error, show_scene, update_account_list, update_chat_name,
+    update_chat_preview, update_chats_list, update_qr_code, update_user_profile,
 };
 
 type UiSender = mpsc::UnboundedSender<UIMessage>;
@@ -110,8 +112,9 @@ async fn ui_worker_loop(
     // Store worker reference for external access
     *worker_storage.lock().await = Some(worker.clone());
 
-    // Setup UI callbacks for settings
+    // Setup UI callbacks for settings and chats
     setup_settings_callbacks(&handle);
+    setup_chat_callbacks(&handle, tx.clone());
 
     // Start worker
     worker.start().await.wrap_err("Failed to start worker")?;
@@ -217,7 +220,96 @@ async fn ui_worker_loop(
                     Some(account_id)
                 };
             }
+            UIMessage::LoadChats => {
+                if let Some(account_id) = &selected_account {
+                    tracing::info!("Loading chats for account: {}", account_id);
+                    match worker.get_chats(account_id).await {
+                        Ok(chats) => {
+                            tracing::info!("Loaded {} chats", chats.len());
+                            update_chats_list(&handle, &chats);
+
+                            // Spawn tasks to load names and previews asynchronously
+                            for chat_jid in chats {
+                                let worker_clone = worker.clone();
+                                let account_id_clone = account_id.clone();
+                                let chat_jid_clone = chat_jid.clone();
+                                let tx_clone = tx.clone();
+
+                                tokio::spawn(async move {
+                                    // Load chat name
+                                    if let Ok(Some(name)) = worker_clone
+                                        .get_chat_name(&account_id_clone, &chat_jid_clone)
+                                        .await
+                                    {
+                                        let _ = tx_clone.send(UIMessage::UpdateChatName {
+                                            chat_jid: chat_jid_clone.clone(),
+                                            name,
+                                        });
+                                    }
+
+                                    // Load last message
+                                    if let Ok(messages) = worker_clone
+                                        .get_messages(
+                                            &account_id_clone,
+                                            Some(&chat_jid_clone),
+                                            1,
+                                            0,
+                                        )
+                                        .await
+                                    {
+                                        if let Some(last_msg) = messages.first() {
+                                            let content = last_msg
+                                                .content
+                                                .clone()
+                                                .unwrap_or_else(|| "[Media]".to_string());
+                                            let timestamp = format_timestamp(last_msg.timestamp);
+
+                                            let _ = tx_clone.send(UIMessage::UpdateChatPreview {
+                                                chat_jid: chat_jid_clone,
+                                                last_message: content,
+                                                timestamp,
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load chats: {}", e);
+                            show_error(&handle, &format!("Failed to load chats: {}", e));
+                        }
+                    }
+                } else {
+                    tracing::warn!("No account selected, cannot load chats");
+                }
+            }
+            UIMessage::UpdateChatPreview {
+                chat_jid,
+                last_message,
+                timestamp,
+            } => {
+                update_chat_preview(&handle, &chat_jid, &last_message, &timestamp);
+            }
+            UIMessage::UpdateChatName { chat_jid, name } => {
+                update_chat_name(&handle, &chat_jid, &name);
+            }
         }
+    }
+}
+
+fn format_timestamp(timestamp: i64) -> String {
+    use chrono::{DateTime, Local, Utc};
+
+    let dt = DateTime::<Utc>::from_timestamp(timestamp, 0).unwrap_or_else(|| Utc::now());
+    let local: DateTime<Local> = dt.into();
+    let now = Local::now();
+
+    if local.date_naive() == now.date_naive() {
+        local.format("%H:%M").to_string()
+    } else if local.year() == now.year() {
+        local.format("%d/%m").to_string()
+    } else {
+        local.format("%d/%m/%y").to_string()
     }
 }
 
@@ -269,6 +361,17 @@ async fn handle_worker_event(
                 messages_count
             );
             show_scene(handle, Scene::InApp);
+        }
+        WorkerEvent::NewMessage {
+            account_id: _,
+            chat_jid,
+            content,
+            timestamp,
+        } => {
+            tracing::debug!("New message in chat {}", chat_jid);
+            let content = content.unwrap_or_else(|| "[Media]".to_string());
+            let formatted_timestamp = format_timestamp(timestamp);
+            update_chat_preview(handle, &chat_jid, &content, &formatted_timestamp);
         }
         WorkerEvent::Error { account_id, error } => {
             let msg = format!("Error ({}): {}", account_id.unwrap_or_default(), error);

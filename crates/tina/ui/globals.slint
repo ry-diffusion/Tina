@@ -48,6 +48,11 @@ export struct ChatItem {
     avatar: image,
 }
 
+export global ChatManagement {
+    in-out property <[ChatItem]> chats;
+    callback load-chats();
+}
+
 // ============== ENUMS ==============
 
 export enum Scene {

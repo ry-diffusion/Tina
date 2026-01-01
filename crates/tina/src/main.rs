@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+mod jid_utils;
 mod scenes;
 mod state;
 use color_eyre::eyre::Context;

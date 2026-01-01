@@ -200,6 +200,16 @@ impl TinaDb {
         )
     }
 
+    pub async fn get_group_by_jid(&self, account_id: &str, jid: &str) -> Result<Option<Group>> {
+        Ok(sqlx::query_as::<_, Group>(
+            "SELECT * FROM groups WHERE account_id = ? AND jid = ?",
+        )
+        .bind(account_id)
+        .bind(jid)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     pub async fn insert_message(
         &self,
         account_id: &str,

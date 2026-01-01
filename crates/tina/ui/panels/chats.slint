@@ -6,6 +6,7 @@ import {
     PanelListItem,
     PanelEmptyState,
 } from "../components/sidebar-panel.slint";
+import { ChatManagement } from "../globals.slint";
 
 export component ChatsPanel inherits SidebarPanel {
     title: "Chats";
@@ -14,16 +15,24 @@ export component ChatsPanel inherits SidebarPanel {
     show-action-2: true;
     action-icon-1: @image-url("../icons/message-square-plus.svg");
     action-icon-2: @image-url("../icons/ellipsis-vertical.svg");
+    init => {
+        ChatManagement.load-chats();
+    }
     ScrollView {
         vertical-stretch: 1;
         VerticalLayout {
             alignment: start;
-            
-            // Placeholder chat for demo
-            PanelListItem {
-                title: "Welcome";
-                subtitle: "Welcome to Tina!";
-                trailing-text: "now";
+            if ChatManagement.chats.length == 0: PanelEmptyState {
+                icon: @image-url("../icons/message-circle.svg");
+                title: "No chats yet";
+                subtitle: "Start a new conversation";
+            }
+            for chat in ChatManagement.chats: PanelListItem {
+                title: chat.name != "" ? chat.name : chat.id;
+                subtitle: chat.last_message != "" ? chat.last_message : "Loading...";
+                trailing-text: chat.timestamp;
+                badge-count: chat.unread_count;
+                avatar: chat.avatar;
             }
         }
     }

@@ -16,4 +16,14 @@ pub enum UIMessage {
     ShowError(String),
     QrCodeReceived(String),
     AccountSelected(String),
+    LoadChats,
+    UpdateChatPreview {
+        chat_jid: String,
+        last_message: String,
+        timestamp: String,
+    },
+    UpdateChatName {
+        chat_jid: String,
+        name: String,
+    },
 }
