@@ -1,0 +1,10 @@
+// ============== ICON COMPONENT ==============
+
+import { Palette } from "std-widgets.slint";
+
+export component Icon inherits Image {
+    in property <brush> icon-color: Palette.foreground;
+    width: 24px;
+    height: 24px;
+    colorize: icon-color;
+}

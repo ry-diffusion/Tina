@@ -81,6 +81,43 @@ pub(crate) fn crash_app(handle: &Weak<Tina>, msg: &str) {
         .expect("Failed to crash the app");
 }
 
+/// Update user profile information in the UI
+pub(crate) fn update_user_profile(
+    handle: &Weak<Tina>,
+    name: Option<&str>,
+    phone_number: Option<&str>,
+    status: Option<&str>,
+) {
+    let name = SharedString::from(name.unwrap_or("User"));
+    let phone = SharedString::from(phone_number.unwrap_or(""));
+    let status = SharedString::from(status.unwrap_or("Hey there! I am using Tina."));
+
+    handle
+        .clone()
+        .upgrade_in_event_loop(move |ui| {
+            let profile = ui.global::<crate::UserProfile>();
+            profile.set_name(name);
+            profile.set_phone_number(phone);
+            profile.set_status(status);
+        })
+        .ok();
+}
+
+/// Setup callbacks for app settings
+pub(crate) fn setup_settings_callbacks(handle: &Weak<Tina>) {
+    handle
+        .clone()
+        .upgrade_in_event_loop(move |ui| {
+            let settings = ui.global::<crate::AppSettings>();
+
+            settings.on_logout(|| {
+                tracing::info!("Logout requested");
+                // TODO: Implement logout logic
+            });
+        })
+        .ok();
+}
+
 #[allow(dead_code)]
 pub(crate) async fn load_account_data(
     worker: &Arc<TinaWorker>,

@@ -1,0 +1,67 @@
+// ============== GLOBAL STATE ==============
+
+import { Palette } from "std-widgets.slint";
+
+export global AccountManagement {
+    in-out property <[string]> accounts;
+    in-out property <string> selected-account;
+    in-out property <image> qr-code;
+    callback select-account(string);
+    callback login-account(string);
+    callback create-account();
+}
+
+export global FailureManagment {
+    in-out property <string> error;
+}
+
+export global AddAccountManagement {
+    in-out property <bool> is-qr-code-loaded;
+    in-out property <image> qr-code;
+}
+
+export global UserProfile {
+    in-out property <string> name: "User";
+    in-out property <string> phone-number: "";
+    in-out property <string> status: "Hey there! I am using Tina.";
+    in-out property <image> avatar;
+}
+
+export global AppSettings {
+    in-out property <bool> dark-mode: true;
+    callback logout();
+}
+
+// ============== STRUCTS ==============
+
+export struct Account {
+    id: string,
+    display_name: string,
+}
+
+export struct ChatItem {
+    id: string,
+    name: string,
+    last_message: string,
+    timestamp: string,
+    unread_count: int,
+    avatar: image,
+}
+
+// ============== ENUMS ==============
+
+export enum Scene {
+    Init,
+    QRLogin,
+    Syncing,
+    InApp,
+    FatalError,
+}
+
+export enum SidebarTab {
+    Chats,
+    Status,
+    Channels,
+    Communities,
+    Settings,
+}

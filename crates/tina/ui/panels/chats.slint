@@ -1,0 +1,30 @@
+// ============== CHATS PANEL ==============
+
+import { Palette, ScrollView } from "std-widgets.slint";
+import {
+    SidebarPanel,
+    PanelListItem,
+    PanelEmptyState,
+} from "../components/sidebar-panel.slint";
+
+export component ChatsPanel inherits SidebarPanel {
+    title: "Chats";
+    search-placeholder: "Search";
+    show-action-1: true;
+    show-action-2: true;
+    action-icon-1: @image-url("../icons/message-square-plus.svg");
+    action-icon-2: @image-url("../icons/ellipsis-vertical.svg");
+    ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            alignment: start;
+            
+            // Placeholder chat for demo
+            PanelListItem {
+                title: "Welcome";
+                subtitle: "Welcome to Tina!";
+                trailing-text: "now";
+            }
+        }
+    }
+}

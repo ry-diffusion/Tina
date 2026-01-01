@@ -9,8 +9,8 @@ use tina_worker::{TinaWorker, WorkerEvent};
 
 use super::messages::UIMessage;
 use super::ui::{
-    crash_app, load_account_data, set_selected_account, show_error, show_scene,
-    update_account_list, update_qr_code,
+    crash_app, load_account_data, set_selected_account, setup_settings_callbacks, show_error,
+    show_scene, update_account_list, update_qr_code, update_user_profile,
 };
 
 type UiSender = mpsc::UnboundedSender<UIMessage>;
@@ -109,6 +109,9 @@ async fn ui_worker_loop(
 
     // Store worker reference for external access
     *worker_storage.lock().await = Some(worker.clone());
+
+    // Setup UI callbacks for settings
+    setup_settings_callbacks(&handle);
 
     // Start worker
     worker.start().await.wrap_err("Failed to start worker")?;
@@ -244,6 +247,8 @@ async fn handle_worker_event(
                 account_id,
                 phone_number
             );
+            // Update user profile with phone number
+            update_user_profile(handle, Some(&account_id), phone_number.as_deref(), None);
             let _ = tx.send(UIMessage::ShowSyncing);
         }
         WorkerEvent::Connected {
@@ -251,6 +256,8 @@ async fn handle_worker_event(
             phone_number,
         } => {
             tracing::info!("Connected: {} (phone: {:?})", account_id, phone_number);
+            // Update user profile with phone number
+            update_user_profile(handle, Some(&account_id), phone_number.as_deref(), None);
         }
         WorkerEvent::HistorySyncComplete {
             account_id,

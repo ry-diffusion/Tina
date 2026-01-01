@@ -1,0 +1,131 @@
+// ============== SIDEBAR NAVIGATION ==============
+
+import { Palette } from "std-widgets.slint";
+import { Icon } from "icon.slint";
+import { SidebarTab, UserProfile } from "../globals.slint";
+
+component SidebarNavButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> active: false;
+    in property <bool> has-notification: false;
+    callback clicked();
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    states [
+        hovered when touch-area.has-hover && !active: {
+            background: Palette.alternate-background;
+        }
+        active when active: {
+            background: Palette.accent-background.transparentize(0.8);
+        }
+    ]
+    touch-area := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: icon;
+        icon-color: active ? Palette.accent-background : Palette.foreground.transparentize(0.3);
+    }
+
+    if has-notification: Rectangle {
+        x: parent.width - 14px;
+        y: 8px;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: #25D366;
+    }
+}
+
+export component SidebarNav inherits Rectangle {
+    in-out property <SidebarTab> current-tab: SidebarTab.Chats;
+    callback tab-changed(SidebarTab);
+    width: 64px;
+    background: Palette.alternate-background;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+        
+        // User avatar at top
+        Rectangle {
+            height: 56px;
+            Rectangle {
+                x: (parent.width - 40px) / 2;
+                y: 8px;
+                width: 40px;
+                height: 40px;
+                border-radius: 20px;
+                background: Palette.accent-background;
+                clip: true;
+                if UserProfile.avatar.width > 0: Image {
+                    width: 100%;
+                    height: 100%;
+                    source: UserProfile.avatar;
+                    image-fit: cover;
+                }
+                if UserProfile.avatar.width == 0: Text {
+                    width: 100%;
+                    height: 100%;
+                    text: "👤";
+                    font-size: 20px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 16px;
+        }
+
+        SidebarNavButton {
+            icon: @image-url("../icons/message-circle.svg");
+            active: current-tab == SidebarTab.Chats;
+            clicked => {
+                root.tab-changed(SidebarTab.Chats);
+            }
+        }
+
+        SidebarNavButton {
+            icon: @image-url("../icons/circle-dashed.svg");
+            active: current-tab == SidebarTab.Status;
+            clicked => {
+                root.tab-changed(SidebarTab.Status);
+            }
+        }
+
+        SidebarNavButton {
+            icon: @image-url("../icons/radio.svg");
+            active: current-tab == SidebarTab.Channels;
+            clicked => {
+                root.tab-changed(SidebarTab.Channels);
+            }
+        }
+
+        SidebarNavButton {
+            icon: @image-url("../icons/users.svg");
+            active: current-tab == SidebarTab.Communities;
+            clicked => {
+                root.tab-changed(SidebarTab.Communities);
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        SidebarNavButton {
+            icon: @image-url("../icons/settings.svg");
+            active: current-tab == SidebarTab.Settings;
+            clicked => {
+                root.tab-changed(SidebarTab.Settings);
+            }
+        }
+    }
+}

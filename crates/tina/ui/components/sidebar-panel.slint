@@ -1,0 +1,235 @@
+// ============== GENERIC SIDEBAR PANEL ==============
+
+import {
+    Palette,
+    HorizontalBox,
+    VerticalBox,
+    LineEdit,
+    ScrollView,
+} from "std-widgets.slint";
+import { Icon } from "icon.slint";
+
+// Generic header action button
+component HeaderActionButton inherits Rectangle {
+    in property <image> icon;
+    callback clicked();
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
+    states [
+        hovered when touch-area.has-hover: {
+            background: Palette.alternate-background;
+        }
+    ]
+    touch-area := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: icon;
+        icon-color: Palette.foreground.transparentize(0.2);
+    }
+}
+
+// Generic sidebar panel with title, search, and content area
+export component SidebarPanel inherits Rectangle {
+    in property <string> title: "Panel";
+    in property <string> search-placeholder: "Search";
+    in property <bool> show-search: true;
+    in property <image> action-icon-1;
+    in property <image> action-icon-2;
+    in property <bool> show-action-1: false;
+    in property <bool> show-action-2: false;
+    in-out property <string> search-text: "";
+    callback search-changed(string);
+    callback action-1-clicked();
+    callback action-2-clicked();
+    background: Palette.background;
+    VerticalBox {
+        // Header
+        HorizontalBox {
+            height: 56px;
+            Text {
+                text: title;
+                font-size: 22px;
+                font-weight: 600;
+                color: Palette.foreground;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            if show-action-1: HeaderActionButton {
+                icon: action-icon-1;
+                clicked => {
+                    root.action-1-clicked();
+                }
+            }
+            if show-action-2: HeaderActionButton {
+                icon: action-icon-2;
+                clicked => {
+                    root.action-2-clicked();
+                }
+            }
+        }
+        
+        // Search bar
+        if show-search: HorizontalBox {
+            height: 52px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: search-placeholder;
+                text <=> root.search-text;
+                edited(text) => {
+                    root.search-changed(text);
+                }
+            }
+        }
+        
+        // Content area - to be filled by @children
+        @children
+    }
+}
+
+// List item for use in panels
+export component PanelListItem inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> trailing-text;
+    in property <image> avatar;
+    in property <int> badge-count: 0;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 72px;
+    states [
+        hovered when touch-area.has-hover && !selected: {
+            background: Palette.alternate-background;
+        }
+        selected when selected: {
+            background: Palette.accent-background.transparentize(0.85);
+        }
+    ]
+    touch-area := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+        
+        // Avatar
+        Rectangle {
+            width: 48px;
+            height: 48px;
+            border-radius: 24px;
+            background: Palette.control-background;
+            clip: true;
+            if avatar.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                source: avatar;
+                image-fit: cover;
+            }
+            if avatar.width == 0: Text {
+                width: 100%;
+                height: 100%;
+                text: "👤";
+                font-size: 22px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        
+        // Info
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            alignment: center;
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: title;
+                    font-size: 15px;
+                    font-weight: 500;
+                    color: Palette.foreground;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: trailing-text;
+                    font-size: 12px;
+                    color: badge-count > 0 ? #25D366 : Palette.foreground.transparentize(0.5);
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: subtitle;
+                    font-size: 13px;
+                    color: Palette.foreground.transparentize(0.4);
+                    overflow: elide;
+                }
+
+                if badge-count > 0: Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 10px;
+                    background: #25D366;
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: badge-count;
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: #ffffff;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Empty state for panels
+export component PanelEmptyState inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> subtitle;
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 64px;
+            height: 64px;
+            source: icon;
+            icon-color: Palette.foreground.transparentize(0.6);
+        }
+
+        Text {
+            text: title;
+            font-size: 18px;
+            font-weight: 500;
+            color: Palette.foreground;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: subtitle;
+            font-size: 14px;
+            color: Palette.foreground.transparentize(0.4);
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}

@@ -1,0 +1,300 @@
+// ============== SETTINGS PANEL ==============
+
+import {
+    Palette,
+    ScrollView,
+    Switch,
+    HorizontalBox,
+    VerticalBox,
+    LineEdit,
+} from "std-widgets.slint";
+import { Icon } from "../components/icon.slint";
+import { UserProfile, AppSettings } from "../globals.slint";
+
+component SettingsMenuItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> subtitle;
+    callback clicked();
+    height: 64px;
+    states [
+        hovered when touch-area.has-hover: {
+            background: Palette.alternate-background;
+        }
+    ]
+    touch-area := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 16px;
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 20px;
+                height: 20px;
+                source: icon;
+                icon-color: Palette.foreground.transparentize(0.3);
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: title;
+                font-size: 15px;
+                color: Palette.foreground;
+            }
+
+            if subtitle != "": Text {
+                text: subtitle;
+                font-size: 13px;
+                color: Palette.foreground.transparentize(0.4);
+            }
+        }
+
+        Icon {
+            width: 18px;
+            height: 18px;
+            source: @image-url("../icons/chevron-right.svg");
+            icon-color: Palette.foreground.transparentize(0.5);
+        }
+    }
+}
+
+export component SettingsPanel inherits Rectangle {
+    in-out property <string> search-text: "";
+    background: Palette.background;
+    VerticalBox {
+        // Header
+        HorizontalBox {
+            height: 56px;
+            Text {
+                text: "Settings";
+                font-size: 22px;
+                font-weight: 600;
+                color: Palette.foreground;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        
+        // Search bar
+        HorizontalBox {
+            height: 52px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            Rectangle {
+                border-radius: 8px;
+                background: Palette.alternate-background;
+                horizontal-stretch: 1;
+                HorizontalBox {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Icon {
+                        width: 18px;
+                        height: 18px;
+                        source: @image-url("../icons/search.svg");
+                        icon-color: Palette.foreground.transparentize(0.5);
+                    }
+
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        placeholder-text: "Search settings";
+                        text <=> root.search-text;
+                    }
+                }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                
+                // Profile section
+                Rectangle {
+                    height: 80px;
+                    states [
+                        hovered when profile-touch.has-hover: {
+                            background: Palette.alternate-background;
+                        }
+                    ]
+                    profile-touch := TouchArea { }
+
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        
+                        // Avatar
+                        Rectangle {
+                            width: 48px;
+                            height: 48px;
+                            border-radius: 24px;
+                            background: Palette.accent-background;
+                            clip: true;
+                            if UserProfile.avatar.width > 0: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: UserProfile.avatar;
+                                image-fit: cover;
+                            }
+                            if UserProfile.avatar.width == 0: Text {
+                                width: 100%;
+                                height: 100%;
+                                text: "👤";
+                                font-size: 24px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: UserProfile.phone-number != "" ? UserProfile.phone-number : UserProfile.name;
+                                font-size: 17px;
+                                font-weight: 500;
+                                color: Palette.foreground;
+                            }
+
+                            Text {
+                                text: UserProfile.status;
+                                font-size: 13px;
+                                color: Palette.foreground.transparentize(0.4);
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+                
+                // Divider
+                Rectangle {
+                    height: 1px;
+                    background: Palette.border;
+                }
+                
+                // Account info
+                SettingsMenuItem {
+                    icon: @image-url("../icons/user.svg");
+                    title: "Account";
+                    subtitle: UserProfile.phone-number;
+                }
+                
+                // Divider
+                Rectangle {
+                    height: 8px;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Palette.border;
+                }
+
+                Rectangle {
+                    height: 8px;
+                }
+                
+                // Toggle settings - Dark mode
+                Rectangle {
+                    height: 64px;
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            Icon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: 20px;
+                                height: 20px;
+                                source: @image-url("../icons/moon.svg");
+                                icon-color: Palette.foreground.transparentize(0.3);
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Dark mode";
+                                font-size: 15px;
+                                color: Palette.foreground;
+                            }
+
+                            Text {
+                                text: "Use dark theme";
+                                font-size: 13px;
+                                color: Palette.foreground.transparentize(0.4);
+                            }
+                        }
+
+                        Switch {
+                            checked: Palette.color-scheme == ColorScheme.dark;
+                            toggled => {
+                                if self.checked {
+                                    Palette.color-scheme = ColorScheme.dark;
+                                } else {
+                                    Palette.color-scheme = ColorScheme.light;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 16px;
+                }
+                
+                // Logout
+                Rectangle {
+                    height: 48px;
+                    states [
+                        hovered when logout-touch.has-hover: {
+                            background: Palette.alternate-background;
+                        }
+                    ]
+                    logout-touch := TouchArea {
+                        clicked => {
+                            AppSettings.logout();
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        Icon {
+                            width: 20px;
+                            height: 20px;
+                            source: @image-url("../icons/log-out.svg");
+                            icon-color: #e74c3c;
+                        }
+
+                        Text {
+                            text: "Log out";
+                            font-size: 15px;
+                            color: #e74c3c;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 32px;
+                }
+            }
+        }
+    }
+}

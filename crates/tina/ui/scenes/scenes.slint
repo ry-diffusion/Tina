@@ -1,0 +1,343 @@
+// ============== SCENES ==============
+
+import {
+    Palette,
+    ProgressIndicator,
+    HorizontalBox,
+    VerticalBox,
+} from "std-widgets.slint";
+import { Icon } from "../components/icon.slint";
+import {
+    Scene,
+    SidebarTab,
+    AccountManagement,
+    FailureManagment,
+} from "../globals.slint";
+import { SidebarNav } from "../components/sidebar.slint";
+import { ChatsPanel } from "../panels/chats.slint";
+import { StatusPanel } from "../panels/status.slint";
+import { ChannelsPanel } from "../panels/channels.slint";
+import { CommunitiesPanel } from "../panels/communities.slint";
+import { SettingsPanel } from "../panels/settings.slint";
+
+// ============== CONTENT VIEWS ==============
+
+component EmptyContentView inherits Rectangle {
+    in property <string> title: "Tina";
+    in property <string> subtitle: "Send and receive messages";
+    background: Palette.alternate-background;
+    VerticalLayout {
+        alignment: center;
+        spacing: 16px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 80px;
+            height: 80px;
+            source: @image-url("../icons/message-circle.svg");
+            icon-color: Palette.foreground.transparentize(0.7);
+        }
+
+        Text {
+            text: title;
+            font-size: 32px;
+            font-weight: 300;
+            color: Palette.foreground;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: subtitle;
+            font-size: 14px;
+            color: Palette.foreground.transparentize(0.5);
+            horizontal-alignment: center;
+        }
+    }
+}
+
+component SettingsContentView inherits Rectangle {
+    background: Palette.alternate-background;
+    VerticalLayout {
+        alignment: center;
+        spacing: 16px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 80px;
+            height: 80px;
+            source: @image-url("../icons/settings.svg");
+            icon-color: Palette.foreground.transparentize(0.7);
+        }
+
+        Text {
+            text: "Settings";
+            font-size: 32px;
+            font-weight: 300;
+            color: Palette.foreground;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ============== SCENES ==============
+
+export component InitScene inherits Rectangle {
+    background: Palette.background;
+    VerticalLayout {
+        alignment: center;
+        spacing: 16px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 64px;
+            height: 64px;
+            source: @image-url("../icons/message-circle.svg");
+            icon-color: #25D366;
+        }
+
+        Text {
+            text: "Tina";
+            font-size: 32px;
+            font-weight: 300;
+            horizontal-alignment: center;
+            color: Palette.foreground;
+        }
+
+        Text {
+            text: "A not so bad WA App";
+            font-size: 14px;
+            horizontal-alignment: center;
+            color: Palette.foreground.transparentize(0.4);
+        }
+
+        Rectangle {
+            height: 16px;
+        }
+
+        VerticalBox {
+            spacing: 8px;
+            ProgressIndicator {
+                indeterminate: true;
+            }
+        }
+
+        Text {
+            text: "Initializing...";
+            horizontal-alignment: center;
+            color: Palette.foreground.transparentize(0.5);
+        }
+    }
+}
+
+export component QRLoginScene inherits Rectangle {
+    background: Palette.background;
+    VerticalLayout {
+        alignment: center;
+        spacing: 20px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 48px;
+            height: 48px;
+            source: @image-url("../icons/smartphone.svg");
+            icon-color: #25D366;
+        }
+
+        Text {
+            text: "Link with your phone";
+            font-size: 24px;
+            font-weight: 300;
+            horizontal-alignment: center;
+            color: Palette.foreground;
+        }
+
+        HorizontalBox {
+            alignment: center;
+            Rectangle {
+                width: 264px;
+                height: 264px;
+                border-radius: 8px;
+                background: #ffffff;
+                Image {
+                    x: 4px;
+                    y: 4px;
+                    width: 256px;
+                    height: 256px;
+                    source: AccountManagement.qr-code;
+                }
+            }
+        }
+
+        if AccountManagement.qr-code.width == 0: VerticalLayout {
+            spacing: 10px;
+            ProgressIndicator {
+                indeterminate: true;
+            }
+
+            Text {
+                text: "Waiting for QR code...";
+                horizontal-alignment: center;
+                color: Palette.foreground.transparentize(0.5);
+            }
+        }
+        Rectangle {
+            height: 16px;
+        }
+
+        VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "1.";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+
+                Text {
+                    text: "Open WhatsApp on your phone";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "2.";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+
+                Text {
+                    text: "Tap Menu or Settings and select Linked Devices";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "3.";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+
+                Text {
+                    text: "Point your phone at this screen to capture the QR code";
+                    font-size: 14px;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+            }
+        }
+    }
+}
+
+export component SyncingScene inherits Rectangle {
+    background: Palette.background;
+    VerticalLayout {
+        alignment: center;
+        spacing: 16px;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            width: 48px;
+            height: 48px;
+            source: @image-url("../icons/refresh-cw.svg");
+            icon-color: #25D366;
+        }
+
+        Text {
+            text: "Syncing Messages";
+            font-size: 24px;
+            font-weight: 300;
+            horizontal-alignment: center;
+            color: Palette.foreground;
+        }
+
+        ProgressIndicator {
+            indeterminate: true;
+        }
+
+        Text {
+            text: "Please wait while we sync your messages...";
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            color: Palette.foreground.transparentize(0.4);
+        }
+    }
+}
+
+export component InAppScene inherits Rectangle {
+    in-out property <SidebarTab> active-tab: SidebarTab.Chats;
+    background: Palette.background;
+    HorizontalLayout {
+        // Left sidebar navigation
+        SidebarNav {
+            current-tab: active-tab;
+            tab-changed(tab) => {
+                active-tab = tab;
+            }
+        }
+        
+        // Secondary panel (chat list, status, channels, communities, or settings)
+        Rectangle {
+            width: 340px;
+            background: Palette.background;
+            if active-tab == SidebarTab.Chats: ChatsPanel { }
+            if active-tab == SidebarTab.Status: StatusPanel { }
+            if active-tab == SidebarTab.Channels: ChannelsPanel { }
+            if active-tab == SidebarTab.Communities: CommunitiesPanel { }
+            if active-tab == SidebarTab.Settings: SettingsPanel { }
+        }
+        
+        // Divider
+        Rectangle {
+            width: 1px;
+            background: Palette.border;
+        }
+        
+        // Main content area
+        Rectangle {
+            horizontal-stretch: 1;
+            if active-tab == SidebarTab.Settings: SettingsContentView { }
+            if active-tab != SidebarTab.Settings: EmptyContentView {
+                title: "Tina";
+                subtitle: "WIP lol. Why not chat for a bit?";
+            }
+        }
+    }
+}
+
+export component ErrorScene inherits Rectangle {
+    background: Palette.background;
+    HorizontalBox {
+        alignment: center;
+        VerticalLayout {
+            alignment: center;
+            spacing: 16px;
+            Icon {
+                x: (parent.width - self.width) / 2;
+                width: 48px;
+                height: 48px;
+                source: @image-url("../icons/alert-triangle.svg");
+                icon-color: #e74c3c;
+            }
+
+            Text {
+                text: "Error";
+                font-size: 24px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                color: #e74c3c;
+            }
+
+            Text {
+                text: FailureManagment.error;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                color: Palette.foreground.transparentize(0.3);
+                max-width: 400px;
+            }
+        }
+    }
+}
