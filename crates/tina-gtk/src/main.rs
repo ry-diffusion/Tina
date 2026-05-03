@@ -12,6 +12,7 @@
 mod app;
 mod banner;
 mod components;
+mod format;
 mod qr;
 mod service;
 mod time;
@@ -51,11 +52,9 @@ fn main() -> color_eyre::Result<()> {
 
     tracing_subscriber::fmt()
         .with_thread_names(true)
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::new("tina_gtk=info,tina_core=info,tina_worker=info,tina_db=info")
-            }),
-        )
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("tina_gtk=info,tina_core=info,tina_worker=info,tina_db=info")
+        }))
         .pretty()
         .init();
 

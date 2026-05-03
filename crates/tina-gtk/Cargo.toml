@@ -32,3 +32,4 @@ owo-colors.workspace = true
 tina-core = { path = "../tina-core" }
 tina-worker = { path = "../tina-worker" }
 tina-db = { path = "../tina-db" }
+phonenumber = "0.3.9"

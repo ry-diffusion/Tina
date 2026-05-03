@@ -14,9 +14,9 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::gdk;
 use gtk::glib;
+use relm4::Controller;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
-use relm4::Controller;
 use tina_db::{ChatRow, MessageRow};
 
 use crate::components::chat_row::{ChatRowFactory, ChatRowItem};
@@ -79,7 +79,10 @@ pub enum MainInput {
     /// Bubble in some tab clicked "Tap to download".
     RequestMediaDownload(String),
     /// Tab scrolled near the top and is requesting an older page.
-    RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestLoadOlder {
+        chat_id: String,
+        before_ts: i64,
+    },
     /// Older messages came back from the worker; route to the tab.
     OlderMessagesLoaded {
         chat_id: String,
@@ -88,7 +91,10 @@ pub enum MainInput {
     },
     /// A profile picture finished downloading; refresh sidebar/headerbar
     /// for any chat that resolves to this JID.
-    AvatarReady { jid: String, path: String },
+    AvatarReady {
+        jid: String,
+        path: String,
+    },
 }
 
 #[derive(Debug)]
@@ -441,14 +447,12 @@ impl SimpleComponent for MainPage {
         // (set by the factory).
         {
             let input_sender = sender.input_sender().clone();
-            chats
-                .widget()
-                .connect_row_activated(move |_listbox, row| {
-                    let id = row.widget_name().to_string();
-                    if !id.is_empty() {
-                        let _ = input_sender.send(MainInput::OpenInCurrent(id));
-                    }
-                });
+            chats.widget().connect_row_activated(move |_listbox, row| {
+                let id = row.widget_name().to_string();
+                if !id.is_empty() {
+                    let _ = input_sender.send(MainInput::OpenInCurrent(id));
+                }
+            });
         }
 
         // Right-click → context menu with "Open" / "Open in new tab".
@@ -567,9 +571,10 @@ impl SimpleComponent for MainPage {
                 push_name,
                 ..
             } => {
-                self.phone = phone.clone();
+                let formatted_phone = phone.as_deref().map(crate::format::format_jid_or_phone);
+                self.phone = formatted_phone.clone();
                 self.user_jid = jid;
-                self.user_name = push_name.or(phone);
+                self.user_name = push_name.or(formatted_phone);
             }
             MainInput::ChatsUpserted(rows) => {
                 // Trigger avatar fetches for any new chat ids we haven't
@@ -579,8 +584,7 @@ impl SimpleComponent for MainPage {
                         continue;
                     }
                     if self.avatar_requested.insert(r.chat_id.clone()) {
-                        let _ = sender
-                            .output(MainOutput::RequestFetchAvatar(r.chat_id.clone()));
+                        let _ = sender.output(MainOutput::RequestFetchAvatar(r.chat_id.clone()));
                     }
                 }
                 self.apply_chats_upserted(rows);
@@ -679,8 +683,7 @@ impl SimpleComponent for MainPage {
                 if self.current_chat_avatar.is_none()
                     && self.avatar_requested.insert(chat_id.clone())
                 {
-                    let _ =
-                        sender.output(MainOutput::RequestFetchAvatar(chat_id.clone()));
+                    let _ = sender.output(MainOutput::RequestFetchAvatar(chat_id.clone()));
                 }
             }
             MainInput::ChatOpened { chat_id: None, .. } => {
@@ -787,13 +790,7 @@ impl SimpleComponent for MainPage {
                     .guard()
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, f)| {
-                        if f.item.chat_id == jid {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|(i, f)| if f.item.chat_id == jid { Some(i) } else { None })
                     .collect();
                 if !indices.is_empty() {
                     let mut guard = self.chats.guard();

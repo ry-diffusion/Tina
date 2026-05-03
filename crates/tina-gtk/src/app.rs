@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use adw::prelude::*;
 use gtk::glib;
-use relm4::prelude::*;
 use relm4::Controller;
+use relm4::prelude::*;
 use tina_db::{ChatRow, MessageRow};
 
 use crate::components::login::{LoginInput, LoginPage};
@@ -185,7 +185,6 @@ impl SimpleComponent for AppModel {
                 }
                 MainOutput::RequestFetchAvatar(jid) => AppMsg::RequestFetchAvatar(jid),
             });
-
         let model = AppModel {
             scene: Scene::Init,
             error: None,
@@ -203,7 +202,17 @@ impl SimpleComponent for AppModel {
 
         let widgets = view_output!();
 
-        // Boot.
+        if !gtk::gdk_pixbuf::Pixbuf::formats()
+            .iter()
+            .any(|f| f.name().as_deref() == Some("webp"))
+        {
+            let toast = adw::Toast::builder()
+                .title("Aviso: Suporte a WebP não encontrado! Figurinhas podem não carregar. Instale webp-pixbuf-loader.")
+                .timeout(10)
+                .build();
+            widgets.toast_overlay.add_toast(toast);
+        }
+
         model.service.handle.send(Cmd::Initialize);
 
         ComponentParts { model, widgets }
@@ -224,17 +233,18 @@ impl SimpleComponent for AppModel {
                 push_name,
             } => {
                 self.phone = phone_number.clone();
+                let base_j = jid.as_deref().map(crate::format::base_jid);
                 let _ = self.main.sender().send(MainInput::SetIdentity {
                     account_id,
                     phone: phone_number,
-                    jid: jid.clone(),
+                    jid: base_j.clone(),
                     push_name,
                 });
                 // Self-portrait: kick off the same avatar pipeline we use
                 // for any other JID. AvatarReady will drop the resulting
                 // path into MainPage, and the profile popover binds it
                 // through #[watch].
-                if let Some(j) = jid {
+                if let Some(j) = base_j {
                     self.service.handle.send(Cmd::FetchAvatar { jid: j });
                 }
                 if self.scene == Scene::QrLogin {
@@ -337,7 +347,10 @@ impl SimpleComponent for AppModel {
                 self.service.handle.send(Cmd::FetchAvatar { jid });
             }
             AppMsg::AvatarReady { jid, path } => {
-                let _ = self.main.sender().send(MainInput::AvatarReady { jid, path });
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::AvatarReady { jid, path });
             }
             AppMsg::OlderMessagesLoaded {
                 chat_id,

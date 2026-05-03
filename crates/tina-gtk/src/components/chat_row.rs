@@ -5,9 +5,9 @@
 
 use adw::prelude::*;
 use gtk::glib;
+use relm4::FactorySender;
 use relm4::factory::{DynamicIndex, FactoryComponent};
 use relm4::prelude::*;
-use relm4::FactorySender;
 
 use tina_db::ChatRow;
 
@@ -70,11 +70,11 @@ impl ChatRowItem {
         Self {
             chat_id: row.chat_id.clone(),
             kind: row.kind.clone(),
-            name: if row.name.is_empty() {
-                row.chat_id.clone()
+            name: crate::format::format_jid_or_phone(if row.name.is_empty() {
+                &row.chat_id
             } else {
-                row.name.clone()
-            },
+                &row.name
+            }),
             preview,
             timestamp: format_chat_timestamp(last_ts),
             last_ts,

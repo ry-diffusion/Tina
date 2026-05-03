@@ -13,9 +13,9 @@
 
 use adw::prelude::*;
 use gtk::gio;
+use relm4::FactorySender;
 use relm4::factory::{DynamicIndex, FactoryComponent};
 use relm4::prelude::*;
-use relm4::FactorySender;
 use tina_db::MessageRow;
 
 use crate::time::format_message_time;
@@ -74,7 +74,9 @@ impl MessageItem {
         Self {
             id: row.message_id.clone(),
             from_me: row.is_from_me,
-            sender_name: row.sender_name.clone().unwrap_or_default(),
+            sender_name: crate::format::format_jid_or_phone(
+                &row.sender_name.clone().unwrap_or_default(),
+            ),
             show_sender,
             content: display,
             message_type: row.message_type.clone(),
