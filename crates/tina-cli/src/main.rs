@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
             "5" => list_messages(&worker).await?,
             "6" => list_chats(&worker).await?,
             "7" => send_message(&worker).await?,
+            "8" => reconcile_account(&worker).await?,
             "0" => {
                 println!("Shutting down...");
                 worker.stop().await?;
@@ -77,6 +78,7 @@ fn print_menu() {
     println!("║  5. List Messages                  ║");
     println!("║  6. List Chats                     ║");
     println!("║  7. Send Message                   ║");
+    println!("║  8. Reconcile (whatsmeow → tina)   ║");
     println!("║  0. Exit                           ║");
     println!("╚════════════════════════════════════╝");
 }
@@ -109,21 +111,24 @@ fn handle_event(event: WorkerEvent) {
         WorkerEvent::LoggedOut { account_id } => {
             println!("\nLogged out: {}", account_id);
         }
-        WorkerEvent::ContactsSynced { account_id, count } => {
-            println!("\nSynced {} contacts for {}", count, account_id);
+        WorkerEvent::ChatsUpserted { account_id, rows } => {
+            println!("\n💬 {} chat(s) upserted for {}", rows.len(), account_id);
+            for row in rows.iter().take(5) {
+                println!(
+                    "  · {} ({}): {}",
+                    row.name,
+                    row.kind,
+                    row.last_message_preview.as_deref().unwrap_or("")
+                );
+            }
         }
-        WorkerEvent::GroupsSynced { account_id, count } => {
-            println!("\nSynced {} groups for {}", count, account_id);
-        }
-        WorkerEvent::MessagesSynced { account_id, count } => {
-            println!("\nSynced {} messages for {}", count, account_id);
-        }
-        WorkerEvent::NewMessage { account_id, chat_jid, content, timestamp: _ } => {
-            let preview = content
-                .as_ref()
-                .map(|c| if c.len() > 40 { format!("{}...", &c[..40]) } else { c.clone() })
-                .unwrap_or_else(|| "[Media]".to_string());
-            println!("\n📩 New message in {} ({}): {}", account_id, chat_jid, preview);
+        WorkerEvent::MessagesAppended { account_id, chat_id, messages } => {
+            println!(
+                "\n📩 {} new message(s) in {} for {}",
+                messages.len(),
+                chat_id,
+                account_id
+            );
         }
         WorkerEvent::HistorySyncComplete {
             account_id,
@@ -133,6 +138,19 @@ fn handle_event(event: WorkerEvent) {
                 "\nHistory sync complete for {}: {} messages",
                 account_id, messages_count
             );
+        }
+        WorkerEvent::ReconcileProgress {
+            account_id: _,
+            stage,
+            current,
+            total,
+            indeterminate: _,
+        } => {
+            if total > 0 {
+                println!("\n🔧 {} ({}/{})", stage, current, total);
+            } else {
+                println!("\n🔧 {}", stage);
+            }
         }
         WorkerEvent::Error { account_id, error } => {
             println!("\nError ({}): {}", account_id.unwrap_or_default(), error);
@@ -148,7 +166,12 @@ fn print_qr_code(qr: &str) {
 }
 
 async fn create_account(worker: &TinaWorker) -> Result<()> {
-    let id = read_line("Account ID: ")?;
+    let id_input = read_line("Account ID (vazio = auto-gera UUIDv7): ")?;
+    let id = if id_input.trim().is_empty() {
+        uuid::Uuid::now_v7().to_string()
+    } else {
+        id_input.trim().to_string()
+    };
     let name = read_line("Account Name (optional): ")?;
     let name_opt = if name.trim().is_empty() {
         None
@@ -156,7 +179,7 @@ async fn create_account(worker: &TinaWorker) -> Result<()> {
         Some(name.trim())
     };
 
-    let account = worker.create_account(id.trim(), name_opt).await?;
+    let account = worker.create_account(&id, name_opt).await?;
     println!(
         "Created account: {} ({})",
         account.id,
@@ -173,7 +196,7 @@ async fn list_accounts(worker: &TinaWorker) -> Result<()> {
     } else {
         println!("\nAccounts:");
         for account in accounts {
-            let has_auth = if account.auth_state.is_some() {
+            let has_auth = if account.phone_number.is_some() {
                 "[AUTH]"
             } else {
                 "[NO AUTH]"
@@ -197,42 +220,30 @@ async fn login_account(worker: &TinaWorker) -> Result<()> {
     Ok(())
 }
 
-async fn list_contacts(worker: &TinaWorker) -> Result<()> {
-    let id = read_line("Account ID: ")?;
-    let contacts = worker.get_contacts(id.trim()).await?;
-
-    if contacts.is_empty() {
-        println!("No contacts found");
-    } else {
-        println!("\nContacts ({}):", contacts.len());
-        for contact in contacts.iter().take(20) {
-            println!(
-                "  {} - {} ({})",
-                contact.jid,
-                contact.name.as_deref().unwrap_or("?"),
-                contact.phone_number.as_deref().unwrap_or("?")
-            );
-        }
-        if contacts.len() > 20 {
-            println!("  ... and {} more", contacts.len() - 20);
-        }
-    }
+async fn list_contacts(_worker: &TinaWorker) -> Result<()> {
+    println!("(list_contacts não exposto na CLI ainda — use list_chats)");
     Ok(())
 }
 
 async fn list_chats(worker: &TinaWorker) -> Result<()> {
     let id = read_line("Account ID: ")?;
-    let chats = worker.get_chats(id.trim()).await?;
+    let rows = worker.list_chat_rows(id.trim()).await?;
 
-    if chats.is_empty() {
+    if rows.is_empty() {
         println!("No chats found");
     } else {
-        println!("\nChats ({}):", chats.len());
-        for (i, chat) in chats.iter().enumerate().take(20) {
-            println!("  {}. {}", i + 1, chat);
+        println!("\nChats ({}):", rows.len());
+        for (i, row) in rows.iter().enumerate().take(40) {
+            println!(
+                "  {:>3}. [{:<10}] {} — {}",
+                i + 1,
+                row.kind,
+                row.name,
+                row.last_message_preview.as_deref().unwrap_or("")
+            );
         }
-        if chats.len() > 20 {
-            println!("  ... and {} more", chats.len() - 20);
+        if rows.len() > 40 {
+            println!("  ... and {} more", rows.len() - 40);
         }
     }
     Ok(())
@@ -240,16 +251,10 @@ async fn list_chats(worker: &TinaWorker) -> Result<()> {
 
 async fn list_messages(worker: &TinaWorker) -> Result<()> {
     let account_id = read_line("Account ID: ")?;
-    let chat_jid = read_line("Chat JID (empty for all): ")?;
-
-    let chat_opt = if chat_jid.trim().is_empty() {
-        None
-    } else {
-        Some(chat_jid.trim())
-    };
+    let chat_id = read_line("Chat ID: ")?;
 
     let messages = worker
-        .get_messages(account_id.trim(), chat_opt, 20, 0)
+        .get_messages(account_id.trim(), chat_id.trim(), 20, 0)
         .await?;
 
     if messages.is_empty() {
@@ -262,11 +267,21 @@ async fn list_messages(worker: &TinaWorker) -> Result<()> {
                 "  {} [{}] {}: {}",
                 direction,
                 msg.message_type,
-                msg.sender_jid,
+                msg.sender_contact_id.as_deref().unwrap_or("?"),
                 msg.content.as_deref().unwrap_or("[media]")
             );
         }
     }
+    Ok(())
+}
+
+async fn reconcile_account(worker: &TinaWorker) -> Result<()> {
+    let id = read_line("Account ID: ")?;
+    worker.reconcile_account(id.trim()).await?;
+    println!(
+        "Reconcile requested for {}. Watch the worker logs for upserts.",
+        id.trim()
+    );
     Ok(())
 }
 
@@ -296,7 +311,7 @@ fn find_nanachi_dir() -> Result<PathBuf> {
     let mut current = exe_path.parent();
     while let Some(dir) = current {
         let nanachi = dir.join("nanachi");
-        if nanachi.join("package.json").exists() {
+        if nanachi.join("go.mod").exists() {
             return Ok(nanachi);
         }
         current = dir.parent();
@@ -304,7 +319,7 @@ fn find_nanachi_dir() -> Result<PathBuf> {
 
     let cwd = std::env::current_dir()?;
     let nanachi = cwd.join("nanachi");
-    if nanachi.join("package.json").exists() {
+    if nanachi.join("go.mod").exists() {
         return Ok(nanachi);
     }
 

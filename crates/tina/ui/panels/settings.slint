@@ -257,7 +257,64 @@ export component SettingsPanel inherits Rectangle {
                 Rectangle {
                     height: 16px;
                 }
-                
+
+                // Repair (reconcile whatsmeow → tina)
+                Rectangle {
+                    height: 64px;
+                    states [
+                        hovered when repair-touch.has-hover && !AppSettings.repairing: {
+                            background: Palette.alternate-background;
+                        }
+                    ]
+                    repair-touch := TouchArea {
+                        enabled: !AppSettings.repairing;
+                        clicked => {
+                            AppSettings.repair();
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            Icon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: 20px;
+                                height: 20px;
+                                source: @image-url("../icons/wrench.svg");
+                                icon-color: Palette.foreground.transparentize(0.3);
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Reparar";
+                                font-size: 15px;
+                                color: Palette.foreground;
+                            }
+
+                            Text {
+                                text: AppSettings.repairing
+                                    ? "Reconciliando…"
+                                    : "Re-sincroniza nomes e grupos com base no cache do WhatsApp";
+                                font-size: 13px;
+                                color: Palette.foreground.transparentize(0.4);
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 16px;
+                }
+
                 // Logout
                 Rectangle {
                     height: 48px;

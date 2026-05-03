@@ -6,3 +6,6 @@ mod schema;
 pub use error::DbError;
 pub use models::*;
 pub use repository::TinaDb;
+
+#[cfg(test)]
+mod tests;

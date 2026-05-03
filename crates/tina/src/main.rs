@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-mod jid_utils;
 mod scenes;
 mod state;
 use color_eyre::eyre::Context;
@@ -19,7 +18,7 @@ fn find_nanachi_dir() -> color_eyre::Result<PathBuf> {
     let mut current = exe_path.parent();
     while let Some(dir) = current {
         let nanachi = dir.join("nanachi");
-        if nanachi.join("package.json").exists() {
+        if nanachi.join("go.mod").exists() {
             return Ok(nanachi);
         }
         current = dir.parent();
@@ -27,7 +26,7 @@ fn find_nanachi_dir() -> color_eyre::Result<PathBuf> {
 
     let cwd = std::env::current_dir()?;
     let nanachi = cwd.join("nanachi");
-    if nanachi.join("package.json").exists() {
+    if nanachi.join("go.mod").exists() {
         return Ok(nanachi);
     }
 

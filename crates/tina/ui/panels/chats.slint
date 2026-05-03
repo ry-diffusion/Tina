@@ -29,10 +29,14 @@ export component ChatsPanel inherits SidebarPanel {
             }
             for chat in ChatManagement.chats: PanelListItem {
                 title: chat.name != "" ? chat.name : chat.id;
-                subtitle: chat.last_message != "" ? chat.last_message : "Loading...";
+                subtitle: chat.last_message != "" ? chat.last_message : " ";
                 trailing-text: chat.timestamp;
                 badge-count: chat.unread_count;
                 avatar: chat.avatar;
+                selected: chat.id == ChatManagement.active-chat-id;
+                clicked => {
+                    ChatManagement.select-chat(chat.id);
+                }
             }
         }
     }

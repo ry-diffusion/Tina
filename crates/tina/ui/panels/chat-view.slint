@@ -1,0 +1,144 @@
+// ============== CHAT VIEW (right pane) ==============
+
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Icon } from "../components/icon.slint";
+import { ChatViewModel, MessageItem } from "../globals.slint";
+
+component MessageBubble inherits Rectangle {
+    in property <MessageItem> msg;
+    in property <bool> show-sender;
+    height: layout.preferred-height + 8px;
+
+    HorizontalLayout {
+        padding-left: msg.from_me ? 80px : 12px;
+        padding-right: msg.from_me ? 12px : 80px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        alignment: msg.from_me ? end : start;
+
+        Rectangle {
+            background: msg.from_me ? #25D366.transparentize(0.85) : Palette.alternate-background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            layout := VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+
+                if show-sender && !msg.from_me && msg.sender_name != "": Text {
+                    text: msg.sender_name;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #25D366;
+                }
+
+                Text {
+                    text: msg.content != "" ? msg.content : ("[" + msg.message_type + "]");
+                    wrap: word-wrap;
+                    color: Palette.foreground;
+                    font-size: 14px;
+                    horizontal-alignment: left;
+                }
+
+                Text {
+                    text: msg.timestamp;
+                    font-size: 10px;
+                    color: Palette.foreground.transparentize(0.5);
+                    horizontal-alignment: right;
+                }
+            }
+        }
+    }
+}
+
+export component ChatContentView inherits Rectangle {
+    background: Palette.alternate-background;
+
+    VerticalLayout {
+        // Header
+        Rectangle {
+            height: 56px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: start;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 20px;
+                    background: Palette.control-background;
+                    y: (parent.height - self.height) / 2;
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "👤";
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text {
+                        text: ChatViewModel.chat-name;
+                        font-size: 16px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                    }
+
+                    Text {
+                        text: ChatViewModel.chat-kind;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.5);
+                    }
+                }
+            }
+        }
+
+        // Messages
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: end;
+                if ChatViewModel.messages.length == 0: Rectangle {
+                    height: 80px;
+                    Text {
+                        text: "Sem mensagens ainda";
+                        color: Palette.foreground.transparentize(0.4);
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                for msg[idx] in ChatViewModel.messages: MessageBubble {
+                    msg: msg;
+                    // mostra o nome se grupo (kind != "dm") e mudou de remetente.
+                    show-sender: ChatViewModel.chat-kind != "dm"
+                        && (idx == 0 || ChatViewModel.messages[idx - 1].sender_name != msg.sender_name);
+                }
+            }
+        }
+
+        // Input placeholder (compose box virá depois)
+        Rectangle {
+            height: 56px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            Text {
+                text: "Compose box em breve…";
+                color: Palette.foreground.transparentize(0.5);
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

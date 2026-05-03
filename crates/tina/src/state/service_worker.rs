@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
 
-use chrono::Datelike;
 use color_eyre::eyre::Context;
 use slint::{ComponentHandle, Weak};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -10,9 +9,10 @@ use tina_worker::{TinaWorker, WorkerEvent};
 
 use super::messages::UIMessage;
 use super::ui::{
-    crash_app, load_account_data, set_selected_account, setup_chat_callbacks,
-    setup_settings_callbacks, show_error, show_scene, update_account_list, update_chat_name,
-    update_chat_preview, update_chats_list, update_qr_code, update_user_profile,
+    apply_chat_opened, apply_chats_upserted, apply_messages_appended, crash_app,
+    set_repairing, set_selected_account, setup_chat_callbacks, setup_settings_callbacks,
+    show_error, show_scene, update_account_list, update_qr_code, update_repair_progress,
+    update_user_profile,
 };
 
 type UiSender = mpsc::UnboundedSender<UIMessage>;
@@ -61,12 +61,10 @@ impl TinaUIServiceWorker {
         }
     }
 
-    /// Send a UI message to the worker thread
     pub fn send(&self, msg: UIMessage) -> Result<(), UiSendError> {
         self.channel.send(msg)
     }
 
-    /// Get a reference to the TinaWorker
     #[allow(dead_code)]
     pub async fn worker(&self) -> Option<Arc<TinaWorker>> {
         self.worker.lock().await.clone()
@@ -94,7 +92,6 @@ async fn ui_worker_loop(
     tx: UiSender,
     worker_storage: WorkerStorage,
 ) -> color_eyre::Result<()> {
-    // Initialize TinaWorker
     let mut worker = TinaWorker::new(nanachi_dir).await.map_err(|e| {
         crash_app(&handle, &format!("Failed to create worker: {}", e));
         e
@@ -109,26 +106,21 @@ async fn ui_worker_loop(
     let worker = Arc::new(worker);
     let login_scene = LoginScene::new(handle.clone(), worker.clone(), tx.clone());
 
-    // Store worker reference for external access
     *worker_storage.lock().await = Some(worker.clone());
 
-    // Setup UI callbacks for settings and chats
-    setup_settings_callbacks(&handle);
+    setup_settings_callbacks(&handle, tx.clone());
     setup_chat_callbacks(&handle, tx.clone());
 
-    // Start worker
     worker.start().await.wrap_err("Failed to start worker")?;
 
-    // Spawn event handler task
     let handle_ui = handle.clone();
-    let worker_clone = worker.clone();
     let tx_events = tx.clone();
     let in_login_flow_shared = Arc::new(RwLock::new(false));
     let in_login_flow_reader = in_login_flow_shared.clone();
     let event_handle = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let is_login = *in_login_flow_reader.read().await;
-            handle_worker_event(&handle_ui, &worker_clone, event, &tx_events, is_login).await;
+            handle_worker_event(&handle_ui, event, &tx_events, is_login).await;
         }
     });
 
@@ -183,7 +175,6 @@ async fn ui_worker_loop(
                 let next_selection = selected_account.clone().or(fallback);
                 set_selected_account(&handle, next_selection.as_deref());
                 selected_account = next_selection;
-                // Skip SelectAccount scene - go directly to InApp
                 show_scene(&handle, Scene::InApp);
             }
             UIMessage::ShowSyncing => {
@@ -191,10 +182,9 @@ async fn ui_worker_loop(
             }
             UIMessage::ShowInApp => {
                 *in_login_flow_shared.write().await = false;
-                // Load initial data and show
                 if let Some(account_id) = &selected_account {
-                    if let Err(e) = load_account_data(&worker, account_id).await {
-                        tracing::warn!("Failed to load account data: {}", e);
+                    if let Ok(rows) = worker.list_chat_rows(account_id).await {
+                        apply_chats_upserted(&handle, rows);
                     }
                 }
                 show_scene(&handle, Scene::InApp);
@@ -222,102 +212,66 @@ async fn ui_worker_loop(
             }
             UIMessage::LoadChats => {
                 if let Some(account_id) = &selected_account {
-                    tracing::info!("Loading chats for account: {}", account_id);
-                    match worker.get_chats(account_id).await {
-                        Ok(chats) => {
-                            tracing::info!("Loaded {} chats", chats.len());
-                            update_chats_list(&handle, &chats);
-
-                            // Spawn tasks to load names and previews asynchronously
-                            for chat_jid in chats {
-                                let worker_clone = worker.clone();
-                                let account_id_clone = account_id.clone();
-                                let chat_jid_clone = chat_jid.clone();
-                                let tx_clone = tx.clone();
-
-                                tokio::spawn(async move {
-                                    // Load chat name
-                                    if let Ok(Some(name)) = worker_clone
-                                        .get_chat_name(&account_id_clone, &chat_jid_clone)
-                                        .await
-                                    {
-                                        let _ = tx_clone.send(UIMessage::UpdateChatName {
-                                            chat_jid: chat_jid_clone.clone(),
-                                            name,
-                                        });
-                                    }
-
-                                    // Load last message
-                                    if let Ok(messages) = worker_clone
-                                        .get_messages(
-                                            &account_id_clone,
-                                            Some(&chat_jid_clone),
-                                            1,
-                                            0,
-                                        )
-                                        .await
-                                    {
-                                        if let Some(last_msg) = messages.first() {
-                                            let content = last_msg
-                                                .content
-                                                .clone()
-                                                .unwrap_or_else(|| "[Media]".to_string());
-                                            let timestamp = format_timestamp(last_msg.timestamp);
-
-                                            let _ = tx_clone.send(UIMessage::UpdateChatPreview {
-                                                chat_jid: chat_jid_clone,
-                                                last_message: content,
-                                                timestamp,
-                                            });
-                                        }
-                                    }
-                                });
-                            }
+                    match worker.list_chat_rows(account_id).await {
+                        Ok(rows) => {
+                            tracing::info!("Loaded {} chats", rows.len());
+                            apply_chats_upserted(&handle, rows);
                         }
                         Err(e) => {
                             tracing::error!("Failed to load chats: {}", e);
                             show_error(&handle, &format!("Failed to load chats: {}", e));
                         }
                     }
-                } else {
-                    tracing::warn!("No account selected, cannot load chats");
                 }
             }
-            UIMessage::UpdateChatPreview {
-                chat_jid,
-                last_message,
-                timestamp,
-            } => {
-                update_chat_preview(&handle, &chat_jid, &last_message, &timestamp);
+            UIMessage::ApplyChatsUpserted(rows) => {
+                apply_chats_upserted(&handle, rows);
             }
-            UIMessage::UpdateChatName { chat_jid, name } => {
-                update_chat_name(&handle, &chat_jid, &name);
+            UIMessage::RepairRequested => {
+                let Some(account_id) = selected_account.clone() else {
+                    continue;
+                };
+                update_repair_progress(&handle, "Iniciando…", 0, 0, true);
+                set_repairing(&handle, true);
+                if let Err(e) = worker.reconcile_account(&account_id).await {
+                    tracing::error!("Repair failed: {}", e);
+                    set_repairing(&handle, false);
+                } else {
+                    tracing::info!("Repair (reconcile) requested for {}", account_id);
+                }
+            }
+            UIMessage::SetActiveChat(chat_id) => {
+                let Some(account_id) = selected_account.clone() else {
+                    continue;
+                };
+                worker
+                    .set_active_chat(&account_id, chat_id.as_deref())
+                    .await;
+                match chat_id.as_deref() {
+                    None => {
+                        apply_chat_opened(&handle, None, None, None, Vec::new());
+                    }
+                    Some(id) => {
+                        let row = worker.get_chat_row(&account_id, id).await.ok().flatten();
+                        let (name, kind) = row
+                            .as_ref()
+                            .map(|r| (r.name.clone(), r.kind.clone()))
+                            .unwrap_or_else(|| (id.to_string(), "unknown".to_string()));
+                        let messages = worker
+                            .get_message_rows(&account_id, id, 200, 0)
+                            .await
+                            .unwrap_or_default();
+                        apply_chat_opened(&handle, Some(id), Some(&name), Some(&kind), messages);
+                    }
+                }
             }
         }
     }
 }
 
-fn format_timestamp(timestamp: i64) -> String {
-    use chrono::{DateTime, Local, Utc};
-
-    let dt = DateTime::<Utc>::from_timestamp(timestamp, 0).unwrap_or_else(|| Utc::now());
-    let local: DateTime<Local> = dt.into();
-    let now = Local::now();
-
-    if local.date_naive() == now.date_naive() {
-        local.format("%H:%M").to_string()
-    } else if local.year() == now.year() {
-        local.format("%d/%m").to_string()
-    } else {
-        local.format("%d/%m/%y").to_string()
-    }
-}
-
-/// Handle worker events and send UI messages
-#[tracing::instrument(skip(handle, _worker, tx))]
+#[tracing::instrument(skip(handle, tx))]
 async fn handle_worker_event(
     handle: &Weak<Tina>,
-    _worker: &Arc<TinaWorker>,
     event: WorkerEvent,
     tx: &UiSender,
     in_login_flow: bool,
@@ -339,7 +293,6 @@ async fn handle_worker_event(
                 account_id,
                 phone_number
             );
-            // Update user profile with phone number
             update_user_profile(handle, Some(&account_id), phone_number.as_deref(), None);
             let _ = tx.send(UIMessage::ShowSyncing);
         }
@@ -348,8 +301,17 @@ async fn handle_worker_event(
             phone_number,
         } => {
             tracing::info!("Connected: {} (phone: {:?})", account_id, phone_number);
-            // Update user profile with phone number
             update_user_profile(handle, Some(&account_id), phone_number.as_deref(), None);
+        }
+        WorkerEvent::ReconcileProgress {
+            account_id: _,
+            stage,
+            current,
+            total,
+            indeterminate,
+        } => {
+            tracing::debug!("ReconcileProgress: {} ({}/{})", stage, current, total);
+            update_repair_progress(handle, &stage, current, total, indeterminate);
         }
         WorkerEvent::HistorySyncComplete {
             account_id,
@@ -360,18 +322,26 @@ async fn handle_worker_event(
                 account_id,
                 messages_count
             );
-            show_scene(handle, Scene::InApp);
+            // Garante que a UI sai do "Syncing".
+            let _ = tx.send(UIMessage::ShowInApp);
+            // Também marca o reconcile como terminado (botão Reparar).
+            set_repairing(handle, false);
         }
-        WorkerEvent::NewMessage {
+        WorkerEvent::ChatsUpserted { account_id: _, rows } => {
+            tracing::debug!("ChatsUpserted: {} rows", rows.len());
+            let _ = tx.send(UIMessage::ApplyChatsUpserted(rows));
+        }
+        WorkerEvent::MessagesAppended {
             account_id: _,
-            chat_jid,
-            content,
-            timestamp,
+            chat_id,
+            messages,
         } => {
-            tracing::debug!("New message in chat {}", chat_jid);
-            let content = content.unwrap_or_else(|| "[Media]".to_string());
-            let formatted_timestamp = format_timestamp(timestamp);
-            update_chat_preview(handle, &chat_jid, &content, &formatted_timestamp);
+            tracing::debug!(
+                "MessagesAppended chat={} count={}",
+                chat_id,
+                messages.len()
+            );
+            apply_messages_appended(handle, &chat_id, messages);
         }
         WorkerEvent::Error { account_id, error } => {
             let msg = format!("Error ({}): {}", account_id.unwrap_or_default(), error);

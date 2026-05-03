@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 pub enum IpcCommand {
     StartAccount { account_id: String },
     StopAccount { account_id: String },
-    GetQrCode { account_id: String },
+    Logout { account_id: String },
     SendMessage { account_id: String, to: String, content: String },
-    GetContacts { account_id: String },
-    GetGroups { account_id: String },
-    GetMessages { account_id: String, chat_jid: Option<String>, limit: i64 },
-    SetAuthState { account_id: String, auth_state: String },
+    /// Re-pesca contatos/grupos/newsletters do whatsmeow e re-emite eventos
+    /// de upsert. Usado pra reconstruir a tabela do tina a partir do que o
+    /// whatsmeow.db já sabe — sem precisar de re-pareamento.
+    Reconcile { account_id: String },
     Shutdown,
 }
 
@@ -19,24 +19,29 @@ pub enum IpcCommand {
 pub enum IpcEvent {
     Ready { account_id: String },
     QrCode { account_id: String, qr: String },
-    Connected { account_id: String, phone_number: Option<String> },
+    PairingCode { account_id: String, code: String },
+    Connected { account_id: String, phone_number: Option<String>, jid: Option<String> },
     Disconnected { account_id: String, reason: String },
     LoggedOut { account_id: String },
-    
-    AuthStateUpdated { account_id: String, auth_state: String },
-    
+
     ContactsUpsert { account_id: String, contacts: Vec<ContactData> },
-    ContactsUpdate { account_id: String, contacts: Vec<ContactData> },
-    
     GroupsUpsert { account_id: String, groups: Vec<GroupData> },
-    GroupsUpdate { account_id: String, groups: Vec<GroupData> },
-    
     MessagesUpsert { account_id: String, messages: Vec<MessageData> },
-    
+
     HistorySyncComplete { account_id: String, messages_count: usize },
-    
+
+    /// Progresso da reconciliação. `total = 0` significa indeterminado
+    /// (mostra spinner, sem barra). Stage é texto pronto pra UI.
+    ReconcileProgress {
+        account_id: String,
+        stage: String,
+        current: i64,
+        total: i64,
+        indeterminate: bool,
+    },
+
     Error { account_id: Option<String>, error: String },
-    
+
     CommandResult { command_id: String, success: bool, data: Option<serde_json::Value>, error: Option<String> },
 }
 

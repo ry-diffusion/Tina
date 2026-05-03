@@ -7,4 +7,4 @@ pub use events::WorkerEvent;
 pub use worker::TinaWorker;
 
 pub use tina_core::{ContactData, GroupData, MessageData};
-pub use tina_db::{Account, Contact, Group, Message};
+pub use tina_db::{Account, Chat, ChatKind, ChatRow, Contact, Group, Message, MessageRow};

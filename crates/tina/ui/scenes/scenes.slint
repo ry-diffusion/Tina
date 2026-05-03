@@ -15,10 +15,13 @@ import {
 } from "../globals.slint";
 import { SidebarNav } from "../components/sidebar.slint";
 import { ChatsPanel } from "../panels/chats.slint";
+import { ChatContentView } from "../panels/chat-view.slint";
 import { StatusPanel } from "../panels/status.slint";
 import { ChannelsPanel } from "../panels/channels.slint";
 import { CommunitiesPanel } from "../panels/communities.slint";
 import { SettingsPanel } from "../panels/settings.slint";
+import { RepairingOverlay } from "../panels/repairing.slint";
+import { ChatManagement, AppSettings } from "../globals.slint";
 
 // ============== CONTENT VIEWS ==============
 
@@ -270,6 +273,16 @@ export component SyncingScene inherits Rectangle {
 export component InAppScene inherits Rectangle {
     in-out property <SidebarTab> active-tab: SidebarTab.Chats;
     background: Palette.background;
+
+    // Overlay de reparo: cobre todo o InApp quando reparando=true.
+    if AppSettings.repairing: RepairingOverlay {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        z: 10;
+    }
+
     HorizontalLayout {
         // Left sidebar navigation
         SidebarNav {
@@ -300,7 +313,12 @@ export component InAppScene inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             if active-tab == SidebarTab.Settings: SettingsContentView { }
-            if active-tab != SidebarTab.Settings: EmptyContentView {
+            if active-tab == SidebarTab.Chats && ChatManagement.active-chat-id != "": ChatContentView { }
+            if active-tab == SidebarTab.Chats && ChatManagement.active-chat-id == "": EmptyContentView {
+                title: "Tina";
+                subtitle: "Selecione um chat à esquerda";
+            }
+            if active-tab != SidebarTab.Settings && active-tab != SidebarTab.Chats: EmptyContentView {
                 title: "Tina";
                 subtitle: "WIP lol. Why not chat for a bit?";
             }

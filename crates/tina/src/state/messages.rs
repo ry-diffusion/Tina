@@ -1,5 +1,5 @@
 use crate::Scene;
-use tina_worker::Account;
+use tina_worker::{Account, ChatRow};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -16,14 +16,18 @@ pub enum UIMessage {
     ShowError(String),
     QrCodeReceived(String),
     AccountSelected(String),
+
+    /// Pede ao worker um snapshot inicial completo da lista de chats.
     LoadChats,
-    UpdateChatPreview {
-        chat_jid: String,
-        last_message: String,
-        timestamp: String,
-    },
-    UpdateChatName {
-        chat_jid: String,
-        name: String,
-    },
+
+    /// Worker entregou linhas resolvidas para a lista; UI faz upsert por chat_id
+    /// e re-ordena.
+    ApplyChatsUpserted(Vec<ChatRow>),
+
+    /// UI seleciona/desseleciona chat aberto. None = lista. Um Some destino
+    /// faz o worker passar a empurrar `MessagesAppended` para esse chat.
+    SetActiveChat(Option<String>),
+
+    /// Botão Reparar: dispara reconcile (whatsmeow → tina) e reseta a UI.
+    RepairRequested,
 }

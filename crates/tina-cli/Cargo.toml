@@ -10,3 +10,4 @@ color-eyre.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 qr2term = "0.3.3"
+uuid = { version = "1", features = ["v7"] }

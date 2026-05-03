@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -8,11 +11,24 @@ use tina_core::{IpcCommand, IpcEvent, IpcMessage};
 use crate::error::{IpcError, Result};
 use crate::process::ProcessHandle;
 
+/// Metadata de comando em voo: nome do tipo (`StartAccount`, `Reconcile`, …)
+/// e instante de envio. Usado pra calcular round-trip quando chega o
+/// `CommandResult` correspondente.
+#[derive(Debug, Clone)]
+pub struct CommandTiming {
+    pub kind: &'static str,
+    pub sent_at: Instant,
+}
+
 pub struct NanachiManager {
     nanachi_dir: PathBuf,
     process: Option<ProcessHandle>,
     event_tx: mpsc::Sender<String>,
     event_rx: Option<mpsc::Receiver<String>>,
+    /// `command_id` → metadata; cresce no `send_command`, drena no
+    /// `take_command_timing`. `std::sync::Mutex` é ok aqui — locks são
+    /// curtíssimos (insert/remove de uma entrada).
+    outstanding: Arc<Mutex<HashMap<String, CommandTiming>>>,
 }
 
 impl NanachiManager {
@@ -23,6 +39,7 @@ impl NanachiManager {
             process: None,
             event_tx,
             event_rx: Some(event_rx),
+            outstanding: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -30,40 +47,55 @@ impl NanachiManager {
         self.event_rx.take()
     }
 
-    pub async fn ensure_dependencies(&self) -> Result<()> {
-        let package_json = self.nanachi_dir.join("package.json");
-        let node_modules = self.nanachi_dir.join("node_modules");
+    fn binary_path(&self) -> PathBuf {
+        let name = if cfg!(windows) { "nanachi.exe" } else { "nanachi" };
+        self.nanachi_dir.join(name)
+    }
 
-        if !package_json.exists() {
-            return Err(IpcError::BunInstallFailed(
-                "package.json not found".to_string(),
+    pub async fn ensure_dependencies(&self) -> Result<()> {
+        let go_mod = self.nanachi_dir.join("go.mod");
+        if !go_mod.exists() {
+            return Err(IpcError::BuildFailed(
+                "go.mod not found in nanachi directory".to_string(),
             ));
         }
 
-        if !node_modules.exists() {
-            tracing::info!("Installing nanachi dependencies with bun...");
-            self.run_bun_install().await?;
+        let bin = self.binary_path();
+        let needs_build = match (bin.metadata(), go_mod.metadata()) {
+            (Ok(b), Ok(m)) => match (b.modified(), m.modified()) {
+                (Ok(bt), Ok(mt)) => bt < mt,
+                _ => false,
+            },
+            (Err(_), _) => true,
+            _ => false,
+        };
+
+        if needs_build {
+            tracing::info!("Building nanachi (whatsmeow) Go binary...");
+            self.run_go_build().await?;
         }
 
         Ok(())
     }
 
-    async fn run_bun_install(&self) -> Result<()> {
-        let output = Command::new("bun")
-            .arg("install")
+    async fn run_go_build(&self) -> Result<()> {
+        let bin_name = if cfg!(windows) { "nanachi.exe" } else { "nanachi" };
+
+        let output = Command::new("go")
+            .args(["build", "-o", bin_name, "."])
             .current_dir(&self.nanachi_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| IpcError::BunInstallFailed(e.to_string()))?;
+            .map_err(|e| IpcError::BuildFailed(format!("failed to invoke `go`: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(IpcError::BunInstallFailed(stderr.to_string()));
+            return Err(IpcError::BuildFailed(stderr.into_owned()));
         }
 
-        tracing::info!("bun install completed successfully");
+        tracing::info!("nanachi build completed");
         Ok(())
     }
 
@@ -76,10 +108,13 @@ impl NanachiManager {
 
         tracing::info!("Starting nanachi process...");
 
+        let bin = self.binary_path();
+        let bin_str = bin.to_string_lossy().into_owned();
+
         let handle = ProcessHandle::spawn(
             &self.nanachi_dir,
-            "bun",
-            &["run", "index.ts"],
+            &bin_str,
+            &[],
             self.event_tx.clone(),
         )
         .await?;
@@ -102,9 +137,37 @@ impl NanachiManager {
 
     pub async fn send_command(&self, command: IpcCommand) -> Result<()> {
         let process = self.process.as_ref().ok_or(IpcError::ProcessNotRunning)?;
+        let kind = command_kind(&command);
         let message = IpcMessage::new_command(command);
+        let id = message.id.clone();
         let line = message.to_line();
+        // Registra antes do write — se o write bloquear, o reloj já está rodando.
+        if let Ok(mut map) = self.outstanding.lock() {
+            map.insert(
+                id,
+                CommandTiming {
+                    kind,
+                    sent_at: Instant::now(),
+                },
+            );
+        }
         process.send(&line).await
+    }
+
+    /// Drena a metadata de um comando completo (ao receber `CommandResult`).
+    /// Retorna `None` se o id é desconhecido (provavelmente um Result de
+    /// outra instância ou já consumido).
+    pub fn take_command_timing(&self, command_id: &str) -> Option<CommandTiming> {
+        self.outstanding
+            .lock()
+            .ok()
+            .and_then(|mut m| m.remove(command_id))
+    }
+
+    /// Acessor read-only ao mapa de outstanding (pra compartilhar com tasks
+    /// fora da read-lock do `RwLock<NanachiManager>` no worker).
+    pub fn outstanding_handle(&self) -> Arc<Mutex<HashMap<String, CommandTiming>>> {
+        self.outstanding.clone()
     }
 
     pub fn is_running(&mut self) -> bool {
@@ -127,6 +190,17 @@ impl NanachiManager {
             tina_core::IpcMessageContent::Event(event) => Some(event),
             _ => None,
         }
+    }
+}
+
+fn command_kind(c: &IpcCommand) -> &'static str {
+    match c {
+        IpcCommand::StartAccount { .. } => "StartAccount",
+        IpcCommand::StopAccount { .. } => "StopAccount",
+        IpcCommand::Logout { .. } => "Logout",
+        IpcCommand::SendMessage { .. } => "SendMessage",
+        IpcCommand::Reconcile { .. } => "Reconcile",
+        IpcCommand::Shutdown => "Shutdown",
     }
 }
 

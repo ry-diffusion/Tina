@@ -27,14 +27,9 @@ impl InAppScene {
         }
     }
 
-    /// Load chats and messages for the selected account
     #[allow(dead_code)]
     pub async fn load_account_data(&self, account_id: &str) -> color_eyre::Result<()> {
-        let _contacts = self.worker.get_contacts(account_id).await?;
-        let _chats = self.worker.get_chats(account_id).await?;
-
-        tracing::info!("Loaded contacts and chats for {}", account_id);
-
+        let _ = self.worker.list_chat_rows(account_id).await?;
         Ok(())
     }
 }

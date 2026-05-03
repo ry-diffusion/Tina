@@ -11,8 +11,8 @@ pub enum IpcError {
     #[error("Failed to spawn process: {0}")]
     SpawnFailed(String),
 
-    #[error("Bun install failed: {0}")]
-    BunInstallFailed(String),
+    #[error("Nanachi build failed: {0}")]
+    BuildFailed(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

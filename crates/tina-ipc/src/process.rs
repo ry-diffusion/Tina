@@ -1,10 +1,14 @@
 use std::path::Path;
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 use crate::error::{IpcError, Result};
+
+/// Limiar acima do qual qualquer travessia de IPC vira `tracing::warn!`.
+pub const SLOW_IPC_THRESHOLD: Duration = Duration::from_millis(50);
 
 pub struct ProcessHandle {
     child: Child,
@@ -32,16 +36,26 @@ impl ProcessHandle {
         let stderr = child.stderr.take().ok_or(IpcError::ProcessNotRunning)?;
         let stdin = child.stdin.take().ok_or(IpcError::ProcessNotRunning)?;
 
-        let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(100);
+        let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(1000);
 
         tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(line) = stdin_rx.recv().await {
+                let start = Instant::now();
+                let len = line.len();
                 if stdin.write_all(line.as_bytes()).await.is_err() {
                     break;
                 }
                 if stdin.flush().await.is_err() {
                     break;
+                }
+                let elapsed = start.elapsed();
+                if elapsed > SLOW_IPC_THRESHOLD {
+                    tracing::warn!(
+                        "🐌 stdin→nanachi write {:?} ({} bytes) — pipe back-pressure?",
+                        elapsed,
+                        len
+                    );
                 }
             }
         });

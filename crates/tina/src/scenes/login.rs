@@ -103,7 +103,11 @@ impl LoginScene {
     }
 
     async fn create_account_and_login(&self) -> EyreResult<()> {
-        let account_id = format!("tina-{}", Uuid::new_v4().simple());
+        // UUIDv7: 128 bits, time-ordered (timestamp ms nos 48 bits altos),
+        // ideal pra B-tree do SQLite (inserts no fim, sem split). Stringão
+        // hifenizado padrão é debuggable e ordenação lexicográfica = ordem
+        // cronológica.
+        let account_id = Uuid::now_v7().to_string();
         self.worker.create_account(&account_id, None).await?;
 
         let accounts = self.refresh_account_list().await?;
@@ -132,7 +136,7 @@ impl LoginScene {
             .send(UIMessage::AccountSelected(account.id.clone()))
             .map_err(|e: UiSendError| eyre!(e))?;
 
-        if account.auth_state.is_some() {
+        if account.phone_number.is_some() {
             self.tx
                 .send(UIMessage::ShowInApp)
                 .map_err(|e: UiSendError| eyre!(e))?;
