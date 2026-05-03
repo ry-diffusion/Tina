@@ -125,6 +125,9 @@ pub struct MainPage {
     /// Title shown in the content headerbar (matches the selected tab).
     current_chat_name: String,
     current_chat_kind: String,
+    /// Number of open chat tabs. Drives whether the headerbar shows
+    /// avatar + name centred (single tab) or the tab bar (multi).
+    tab_count: usize,
 }
 
 /// Map raw chat kind strings to a human label for the header subtitle.
@@ -314,28 +317,41 @@ impl SimpleComponent for MainPage {
                         },
                     },
 
-                    pack_start = &adw::Avatar {
-                        set_size: 28,
-                        set_show_initials: true,
-                        set_margin_start: 4,
-                        #[watch]
-                        set_text: Some(&model.current_chat_name),
-                        #[watch]
-                        set_visible: !model.current_chat_name.is_empty(),
-                        #[watch]
-                        set_tooltip_text: Some(&if model.current_chat_kind.is_empty() {
-                            model.current_chat_name.clone()
-                        } else {
-                            format!("{} · {}", model.current_chat_name, kind_label(&model.current_chat_kind))
-                        }),
-                    },
-
-                    // The tab bar IS the title widget — Builder / Console
-                    // pattern. Each tab shows the chat name, and dragging
-                    // a tab out into a window goes through AdwTabView's
-                    // create-window signal.
+                    // Title widget: when a single chat is open, show
+                    // avatar + name + kind centred (messenger style);
+                    // when multiple chats are open, show the tab bar
+                    // instead so the user can switch.
                     #[wrap(Some)]
-                    set_title_widget = &model.tab_bar.clone(),
+                    set_title_widget = &gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 8,
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
+
+                        adw::Avatar {
+                            set_size: 30,
+                            set_show_initials: true,
+                            #[watch]
+                            set_visible: model.tab_count == 1
+                                && !model.current_chat_name.is_empty(),
+                            #[watch]
+                            set_text: Some(&model.current_chat_name),
+                        },
+
+                        adw::WindowTitle {
+                            #[watch]
+                            set_visible: model.tab_count == 1,
+                            #[watch]
+                            set_title: &model.current_chat_name,
+                            #[watch]
+                            set_subtitle: kind_label(&model.current_chat_kind),
+                        },
+
+                        model.tab_bar.clone() -> adw::TabBar {
+                            #[watch]
+                            set_visible: model.tab_count >= 2,
+                        },
+                    },
                 },
 
                 #[wrap(Some)]
@@ -474,6 +490,7 @@ impl SimpleComponent for MainPage {
             search: String::new(),
             current_chat_name: String::new(),
             current_chat_kind: String::new(),
+            tab_count: 0,
         };
 
         let chat_listbox = model.chats.widget();
@@ -568,6 +585,7 @@ impl SimpleComponent for MainPage {
                     self.tab_view.set_selected_page(&page);
                     self.open_tabs.insert(chat_id.clone(), (controller, page));
                 }
+                self.tab_count = self.open_tabs.len();
                 // Refresh the header for the now-selected chat.
                 self.current_chat_name = name;
                 self.current_chat_kind = kind;
@@ -617,6 +635,7 @@ impl SimpleComponent for MainPage {
                     drop(controller);
                 }
                 self.chat_meta.remove(&chat_id);
+                self.tab_count = self.open_tabs.len();
                 if self.open_tabs.is_empty() {
                     self.current_chat_name.clear();
                     self.current_chat_kind.clear();
