@@ -162,6 +162,19 @@ impl TinaWorker {
         Ok(())
     }
 
+    /// Solicita o profile picture de um JID. Sempre dispara IPC — o nanachi
+    /// é quem faz dedup por sha256 do binário antes de baixar de novo.
+    pub async fn fetch_avatar(&self, account_id: &str, jid: &str) -> Result<()> {
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::FetchAvatar {
+                account_id: account_id.to_string(),
+                jid: jid.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
     /// Solicita download de mídia. Faz dedup local primeiro: se outra
     /// mensagem com o mesmo sha256 já tem `media_path`, reaproveita esse
     /// caminho sem chamar o nanachi.
@@ -584,6 +597,8 @@ fn event_kind(e: &IpcEvent) -> &'static str {
         IpcEvent::MediaDownloadProgress { .. } => "MediaDownloadProgress",
         IpcEvent::MediaDownloaded { .. } => "MediaDownloaded",
         IpcEvent::MediaDownloadFailed { .. } => "MediaDownloadFailed",
+        IpcEvent::AvatarUpdated { .. } => "AvatarUpdated",
+        IpcEvent::AvatarFailed { .. } => "AvatarFailed",
         IpcEvent::CommandResult { .. } => "CommandResult",
     }
 }
@@ -744,6 +759,38 @@ async fn handle_realtime_event(
                 .send(WorkerEvent::MediaDownloadFailed {
                     account_id,
                     message_id,
+                    error,
+                })
+                .await;
+        }
+
+        IpcEvent::AvatarUpdated {
+            account_id,
+            jid,
+            path,
+        } => {
+            // Persist before forwarding so the UI's next list_chat_rows
+            // already returns the path.
+            if let Err(e) = db.set_avatar_path(&account_id, &jid, &path).await {
+                tracing::error!("set_avatar_path: {e}");
+            }
+            let _ = event_tx
+                .send(WorkerEvent::AvatarReady {
+                    account_id,
+                    jid,
+                    path,
+                })
+                .await;
+        }
+        IpcEvent::AvatarFailed {
+            account_id,
+            jid,
+            error,
+        } => {
+            let _ = event_tx
+                .send(WorkerEvent::AvatarFailed {
+                    account_id,
+                    jid,
                     error,
                 })
                 .await;

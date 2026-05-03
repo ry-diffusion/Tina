@@ -84,6 +84,9 @@ pub enum MainInput {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    /// A profile picture finished downloading; refresh sidebar/headerbar
+    /// for any chat that resolves to this JID.
+    AvatarReady { jid: String, path: String },
 }
 
 #[derive(Debug)]
@@ -95,6 +98,7 @@ pub enum MainOutput {
     RequestLogout,
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestFetchAvatar(String),
 }
 
 pub struct MainPage {
@@ -128,6 +132,14 @@ pub struct MainPage {
     /// Number of open chat tabs. Drives whether the headerbar shows
     /// avatar + name centred (single tab) or the tab bar (multi).
     tab_count: usize,
+    /// JID of the currently-selected chat, used to filter incoming
+    /// AvatarReady events for the headerbar.
+    current_chat_id: Option<String>,
+    /// Local cache path of the headerbar avatar (when downloaded).
+    current_chat_avatar: Option<String>,
+    /// JIDs we've already issued FetchAvatar for in this session, to
+    /// avoid spamming the worker on every ChatsUpserted batch.
+    avatar_requested: std::collections::HashSet<String>,
 }
 
 /// Map raw chat kind strings to a human label for the header subtitle.
@@ -336,6 +348,12 @@ impl SimpleComponent for MainPage {
                                 && !model.current_chat_name.is_empty(),
                             #[watch]
                             set_text: Some(&model.current_chat_name),
+                            #[watch]
+                            set_custom_image: model.current_chat_avatar
+                                .as_deref()
+                                .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                                .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                                .as_ref(),
                         },
 
                         adw::WindowTitle {
@@ -343,8 +361,8 @@ impl SimpleComponent for MainPage {
                             set_visible: model.tab_count == 1,
                             #[watch]
                             set_title: &model.current_chat_name,
-                            #[watch]
-                            set_subtitle: kind_label(&model.current_chat_kind),
+                            // Subtitle removed — the kind label was
+                            // redundant with the avatar's tooltip.
                         },
 
                         model.tab_bar.clone() -> adw::TabBar {
@@ -498,6 +516,9 @@ impl SimpleComponent for MainPage {
             current_chat_name: String::new(),
             current_chat_kind: String::new(),
             tab_count: 0,
+            current_chat_id: None,
+            current_chat_avatar: None,
+            avatar_requested: std::collections::HashSet::new(),
         };
 
         let chat_listbox = model.chats.widget();
@@ -512,6 +533,17 @@ impl SimpleComponent for MainPage {
                 self.phone = phone;
             }
             MainInput::ChatsUpserted(rows) => {
+                // Trigger avatar fetches for any new chat ids we haven't
+                // asked the worker about yet, before consuming `rows`.
+                for r in &rows {
+                    if r.avatar_path.is_some() {
+                        continue;
+                    }
+                    if self.avatar_requested.insert(r.chat_id.clone()) {
+                        let _ = sender
+                            .output(MainOutput::RequestFetchAvatar(r.chat_id.clone()));
+                    }
+                }
                 self.apply_chats_upserted(rows);
             }
             MainInput::SearchChanged(text) => {
@@ -596,6 +628,21 @@ impl SimpleComponent for MainPage {
                 // Refresh the header for the now-selected chat.
                 self.current_chat_name = name;
                 self.current_chat_kind = kind;
+                self.current_chat_id = Some(chat_id.clone());
+                // Look up the cached avatar path from the sidebar's
+                // factory; if missing, request a fresh fetch.
+                self.current_chat_avatar = self
+                    .chats
+                    .guard()
+                    .iter()
+                    .find(|f| f.item.chat_id == chat_id)
+                    .and_then(|f| f.item.avatar_path.clone());
+                if self.current_chat_avatar.is_none()
+                    && self.avatar_requested.insert(chat_id.clone())
+                {
+                    let _ =
+                        sender.output(MainOutput::RequestFetchAvatar(chat_id.clone()));
+                }
             }
             MainInput::ChatOpened { chat_id: None, .. } => {
                 // Service told us "no chat open" — leave tabs as-is.
@@ -690,6 +737,37 @@ impl SimpleComponent for MainPage {
             }
             MainInput::RequestLoadOlder { chat_id, before_ts } => {
                 let _ = sender.output(MainOutput::RequestLoadOlder { chat_id, before_ts });
+            }
+            MainInput::AvatarReady { jid, path } => {
+                // Sidebar: patch any factory item whose chat_id resolves
+                // to the same alias the worker just wrote. We use chat_id
+                // = jid because the chat list and the worker use the same
+                // canonical aliasing.
+                let indices: Vec<usize> = self
+                    .chats
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        if f.item.chat_id == jid {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !indices.is_empty() {
+                    let mut guard = self.chats.guard();
+                    for idx in indices {
+                        if let Some(slot) = guard.get_mut(idx) {
+                            slot.item.avatar_path = Some(path.clone());
+                        }
+                    }
+                }
+                // Headerbar: refresh if the affected chat is the focused one.
+                if self.current_chat_id.as_deref() == Some(jid.as_str()) {
+                    self.current_chat_avatar = Some(path);
+                }
             }
             MainInput::OlderMessagesLoaded {
                 chat_id,

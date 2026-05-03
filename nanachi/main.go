@@ -161,6 +161,22 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 			}
 		}()
 
+	case "FetchAvatar":
+		var p struct {
+			AccountID string `json:"account_id"`
+			JID       string `json:"jid"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		emitCommandResult(msg.ID, true, nil, nil)
+		go func() {
+			if err := fetchAvatar(mgr, p.AccountID, p.JID); err != nil {
+				emitAvatarFailed(p.AccountID, p.JID, err.Error())
+			}
+		}()
+
 	case "Shutdown":
 		emitCommandResult(msg.ID, true, nil, nil)
 		mgr.shutdown()

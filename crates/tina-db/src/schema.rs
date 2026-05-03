@@ -3,7 +3,8 @@
 /// Histórico:
 /// - v2: schema inicial com aliases canônicos.
 /// - v3: campos de mídia (mimetype, dims, duração, sha256 pra dedup).
-pub const SCHEMA_VERSION: i64 = 3;
+/// - v4: avatar_path em chats e contacts (cache local de profile pics).
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS chats (
     kind TEXT NOT NULL,                              -- 'dm','group','newsletter','broadcast','status','unknown'
     display_name TEXT,                               -- preenchido p/ groups/newsletters; NULL p/ DM (resolvido via JOIN)
     avatar_url TEXT,
+    avatar_path TEXT,                                -- caminho local do profile pic em cache
     last_message_id TEXT,
     last_message_preview TEXT,
     last_message_ts INTEGER,
@@ -64,6 +66,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     business_name TEXT,
     verified_name TEXT,
     avatar_url TEXT,
+    avatar_path TEXT,
     status TEXT,
     is_local INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
@@ -135,6 +138,11 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT
 );
+"#;
+
+pub const MIGRATION_V3_TO_V4: &str = r#"
+ALTER TABLE chats ADD COLUMN avatar_path TEXT;
+ALTER TABLE contacts ADD COLUMN avatar_path TEXT;
 "#;
 
 /// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda

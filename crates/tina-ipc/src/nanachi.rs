@@ -201,6 +201,7 @@ fn command_kind(c: &IpcCommand) -> &'static str {
         IpcCommand::SendMessage { .. } => "SendMessage",
         IpcCommand::Reconcile { .. } => "Reconcile",
         IpcCommand::DownloadMedia { .. } => "DownloadMedia",
+        IpcCommand::FetchAvatar { .. } => "FetchAvatar",
         IpcCommand::Shutdown => "Shutdown",
     }
 }

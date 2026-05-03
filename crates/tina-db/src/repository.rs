@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::error::{DbError, Result};
 use crate::models::{Account, Chat, ChatKind, ChatRow, Contact, Message, MessageRow};
-use crate::schema::{MIGRATION_V2_TO_V3, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION};
+use crate::schema::{MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION};
 
 pub struct TinaDb {
     pool: Pool<Sqlite>,
@@ -75,6 +75,12 @@ impl TinaDb {
             2 => {
                 tracing::info!("Migrating tina.db from v2 → v3 (adding media columns)");
                 sqlx::raw_sql(MIGRATION_V2_TO_V3).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            3 => {
+                tracing::info!("Migrating tina.db from v3 → v4 (adding avatar_path)");
+                sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             other => {
@@ -1309,6 +1315,44 @@ impl TinaDb {
         Ok(path)
     }
 
+    /// Persiste o caminho local do profile pic. Atualiza tanto `chats`
+    /// (se a entidade for um chat de grupo/canal) quanto `contacts` (DM)
+    /// — o resolver da chat list via JOIN ainda funciona em ambos.
+    pub async fn set_avatar_path(
+        &self,
+        account_id: &str,
+        jid: &str,
+        path: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE chats SET avatar_path = ?, updated_at = strftime('%s','now')
+             WHERE account_id = ? AND chat_id IN (
+                SELECT chat_id FROM chat_aliases WHERE account_id = ? AND alias_jid = ?
+             )",
+        )
+        .bind(path)
+        .bind(account_id)
+        .bind(account_id)
+        .bind(jid)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE contacts SET avatar_path = ?, updated_at = strftime('%s','now')
+             WHERE account_id = ? AND contact_id IN (
+                SELECT contact_id FROM contact_aliases WHERE account_id = ? AND alias_jid = ?
+             )",
+        )
+        .bind(path)
+        .bind(account_id)
+        .bind(account_id)
+        .bind(jid)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn count_messages_for_chat(
         &self,
         account_id: &str,
@@ -1668,6 +1712,7 @@ fn chat_row_select_clause(filter_by_ids: bool) -> String {
                 c.chat_id
             ) AS name,
             COALESCE(c.avatar_url, ct.avatar_url) AS avatar_url,
+            COALESCE(c.avatar_path, ct.avatar_path) AS avatar_path,
             c.last_message_preview,
             c.last_message_ts,
             c.last_message_from_me,

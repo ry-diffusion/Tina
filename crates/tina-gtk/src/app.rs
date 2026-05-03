@@ -90,6 +90,11 @@ pub enum AppMsg {
         chat_id: String,
         before_ts: i64,
     },
+    AvatarReady {
+        jid: String,
+        path: String,
+    },
+    RequestFetchAvatar(String),
 
     // From the UI:
     OpenChatNew(String),
@@ -176,6 +181,7 @@ impl SimpleComponent for AppModel {
                 MainOutput::RequestLoadOlder { chat_id, before_ts } => {
                     AppMsg::RequestLoadOlder { chat_id, before_ts }
                 }
+                MainOutput::RequestFetchAvatar(jid) => AppMsg::RequestFetchAvatar(jid),
             });
 
         let model = AppModel {
@@ -313,6 +319,12 @@ impl SimpleComponent for AppModel {
                     before_ts,
                     limit: 50,
                 });
+            }
+            AppMsg::RequestFetchAvatar(jid) => {
+                self.service.handle.send(Cmd::FetchAvatar { jid });
+            }
+            AppMsg::AvatarReady { jid, path } => {
+                let _ = self.main.sender().send(MainInput::AvatarReady { jid, path });
             }
             AppMsg::OlderMessagesLoaded {
                 chat_id,

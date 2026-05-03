@@ -228,6 +228,22 @@ func emitMediaDownloadFailed(accountID, messageID, err string) {
 	})
 }
 
+func emitAvatarUpdated(accountID, jid, path string) {
+	emit("AvatarUpdated", map[string]any{
+		"account_id": accountID,
+		"jid":        jid,
+		"path":       path,
+	})
+}
+
+func emitAvatarFailed(accountID, jid, err string) {
+	emit("AvatarFailed", map[string]any{
+		"account_id": accountID,
+		"jid":        jid,
+		"error":      err,
+	})
+}
+
 func emitCommandResult(commandID string, success bool, data any, errStr *string) {
 	emit("CommandResult", map[string]any{
 		"command_id": commandID,

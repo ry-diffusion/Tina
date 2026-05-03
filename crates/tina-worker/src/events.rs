@@ -56,4 +56,16 @@ pub enum WorkerEvent {
         message_id: String,
         error: String,
     },
+
+    /// Profile picture finished downloading (or was found in cache).
+    AvatarReady {
+        account_id: String,
+        jid: String,
+        path: String,
+    },
+    AvatarFailed {
+        account_id: String,
+        jid: String,
+        error: String,
+    },
 }

@@ -19,6 +19,12 @@ pub enum IpcCommand {
         account_id: String,
         message_id: String,
     },
+    /// Pede ao nanachi pra obter (e baixar, se necessário) a profile
+    /// picture de um JID. Resultado vira AvatarUpdated/Failed.
+    FetchAvatar {
+        account_id: String,
+        jid: String,
+    },
     Shutdown,
 }
 
@@ -70,6 +76,17 @@ pub enum IpcEvent {
     MediaDownloadFailed {
         account_id: String,
         message_id: String,
+        error: String,
+    },
+
+    AvatarUpdated {
+        account_id: String,
+        jid: String,
+        path: String,
+    },
+    AvatarFailed {
+        account_id: String,
+        jid: String,
         error: String,
     },
 

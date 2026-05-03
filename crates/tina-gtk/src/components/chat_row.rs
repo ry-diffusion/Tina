@@ -23,6 +23,7 @@ pub struct ChatRowItem {
     pub last_ts: i64,
     pub unread: i64,
     pub pinned: bool,
+    pub avatar_path: Option<String>,
 }
 
 impl ChatRowItem {
@@ -47,6 +48,7 @@ impl ChatRowItem {
             last_ts,
             unread: row.unread_count,
             pinned: row.pinned,
+            avatar_path: row.avatar_path.clone(),
         }
     }
 }
@@ -86,6 +88,14 @@ impl FactoryComponent for ChatRowFactory {
                     set_size: 40,
                     set_text: Some(&self.item.name),
                     set_show_initials: true,
+                    // When the local avatar cache has the file, swap the
+                    // initials for the actual picture. AdwAvatar handles
+                    // the round-cropping for us.
+                    set_custom_image: self.item.avatar_path
+                        .as_deref()
+                        .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                        .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                        .as_ref(),
                 },
 
                 gtk::Box {

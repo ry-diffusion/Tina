@@ -37,6 +37,9 @@ pub enum Cmd {
     Repair,
     /// Trigger an async media download for a specific message.
     DownloadMedia { message_id: String },
+    /// Fetch a profile picture for the given JID (chat_id, contact_id,
+    /// etc — anything that resolves through the worker's aliases).
+    FetchAvatar { jid: String },
     /// Lazy-load older messages (page back). The UI passes the timestamp
     /// of its currently-oldest row; the worker returns the next batch
     /// strictly older than that.
@@ -236,6 +239,13 @@ async fn run(
                     Err(e) => error!("load_older: {e}"),
                 }
             }
+            Cmd::FetchAvatar { jid } => {
+                let acc = selected.lock().await.clone();
+                let Some(account_id) = acc else { continue };
+                if let Err(e) = worker.fetch_avatar(&account_id, &jid).await {
+                    error!("fetch_avatar: {e}");
+                }
+            }
             Cmd::DownloadMedia { message_id } => {
                 let acc = selected.lock().await.clone();
                 let Some(account_id) = acc else { continue };
@@ -382,6 +392,12 @@ async fn forward_events(
                 message_id, error, ..
             } => {
                 let _ = app.send(AppMsg::MediaDownloadFailed { message_id, error });
+            }
+            WorkerEvent::AvatarReady { jid, path, .. } => {
+                let _ = app.send(AppMsg::AvatarReady { jid, path });
+            }
+            WorkerEvent::AvatarFailed { jid, error, .. } => {
+                tracing::warn!(%jid, %error, "avatar fetch failed");
             }
         }
     }
