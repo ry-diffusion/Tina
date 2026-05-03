@@ -83,6 +83,10 @@ pub enum ChatAreaInput {
     /// chats. Selecting a tab inside a pane already does this via
     /// PaneTabSelected, but a click in an empty pane needs its own path.
     PaneFocused(usize),
+    /// Adaptive: window narrowed below the split threshold. Move every
+    /// pane 1 tab back into pane 0 so they don't end up stranded in a
+    /// hidden pane the user can't reach without widening again.
+    AutoMergePane1,
     /// Forwarded from a ChatTab.
     SendFromTab {
         chat_id: String,
@@ -133,8 +137,13 @@ struct Pane {
     avatar: adw::Avatar,
     title: adw::WindowTitle,
     /// Move-to-other-split button. Disabled when this pane has no tab
-    /// to move (an empty pane can't split anywhere).
+    /// to move (an empty pane can't split anywhere). Hidden when the
+    /// chat area is narrow (split is unavailable in compact layout).
     split_btn: gtk::Button,
+    /// Sidebar toggle (only present on pane 0). Hidden when narrow,
+    /// since AdwNavigationSplitView already provides a back button via
+    /// the navigation page header.
+    toggle_btn: Option<gtk::ToggleButton>,
     /// Mirrors the currently-selected tab's chat_id so the single-tab
     /// header can render the right avatar+name.
     current_chat_id: Option<String>,
@@ -151,6 +160,9 @@ pub struct ChatArea {
     open_tabs: HashMap<String, (Controller<ChatTab>, adw::TabPage, usize)>,
     chat_meta: HashMap<String, (String, String)>,
     paned: gtk::Paned,
+    /// Revealer wrapping pane 1, used to slide the second split in/out
+    /// instead of toggling visibility instantly.
+    pane1_revealer: gtk::Revealer,
     /// Pane that receives "open in current" clicks and new chats. Updated
     /// whenever a tab is selected in a pane (selection ⇒ implicit focus).
     focused_pane: usize,
@@ -167,12 +179,19 @@ impl SimpleComponent for ChatArea {
 
     view! {
         #[root]
-        gtk::Paned {
-            set_orientation: gtk::Orientation::Horizontal,
-            set_resize_start_child: true,
-            set_resize_end_child: true,
-            set_shrink_start_child: false,
-            set_shrink_end_child: false,
+        adw::BreakpointBin {
+            set_width_request: 360,
+            set_height_request: 200,
+
+            #[wrap(Some)]
+            #[name(paned)]
+            set_child = &gtk::Paned {
+                set_orientation: gtk::Orientation::Horizontal,
+                set_resize_start_child: true,
+                set_resize_end_child: true,
+                set_shrink_start_child: false,
+                set_shrink_end_child: false,
+            },
         }
     }
 
@@ -184,20 +203,54 @@ impl SimpleComponent for ChatArea {
         let pane0 = build_pane(0, &sender);
         let pane1 = build_pane(1, &sender);
 
-        // Pane 1 starts hidden; the Paned will collapse to just pane 0
-        // until the user moves a tab over.
-        pane1.toolbar_view.set_visible(false);
+        // Wrap pane 1 in a Revealer so toggling the split slides instead
+        // of snapping. SlideLeft = the new content slides in from the
+        // right edge (toward the centre divider), which is the natural
+        // direction for a "right pane appearing".
+        let pane1_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideLeft)
+            .transition_duration(250)
+            .reveal_child(false)
+            .child(&pane1.toolbar_view)
+            .build();
 
-        root.set_start_child(Some(&pane0.toolbar_view));
-        root.set_end_child(Some(&pane1.toolbar_view));
-        let paned = root.clone();
         let widgets = view_output!();
+        widgets.paned.set_start_child(Some(&pane0.toolbar_view));
+        widgets.paned.set_end_child(Some(&pane1_revealer));
+
+        // Adaptive narrow mode:
+        //   1. Hide the toggle-sidebar button on pane 0's header — the
+        //      AdwNavigationPage already exposes a Back button, so it's
+        //      redundant.
+        //   2. Hide both panes' split-move buttons — split layout is
+        //      unavailable in compact width.
+        //   3. Collapse the Revealer (pane 1 slides out).
+        //   4. On apply, also auto-merge any pane 1 tabs back into pane
+        //      0 so they aren't stranded in an inaccessible pane.
+        let bp = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 700sp")
+                .expect("hardcoded breakpoint condition is well-formed"),
+        );
+        bp.add_setter(&pane1_revealer, "reveal-child", Some(&false.to_value()));
+        if let Some(toggle) = &pane0.toggle_btn {
+            bp.add_setter(toggle, "visible", Some(&false.to_value()));
+        }
+        bp.add_setter(&pane0.split_btn, "visible", Some(&false.to_value()));
+        bp.add_setter(&pane1.split_btn, "visible", Some(&false.to_value()));
+        {
+            let s = sender.input_sender().clone();
+            bp.connect_apply(move |_| {
+                let _ = s.send(ChatAreaInput::AutoMergePane1);
+            });
+        }
+        root.add_breakpoint(bp);
 
         let model = ChatArea {
             panes: [pane0, pane1],
             open_tabs: HashMap::new(),
             chat_meta: HashMap::new(),
-            paned,
+            paned: widgets.paned.clone(),
+            pane1_revealer,
             focused_pane: 0,
             avatars: init.avatars,
             media: init.media,
@@ -402,6 +455,28 @@ impl SimpleComponent for ChatArea {
             ChatAreaInput::PaneFocused(idx) => {
                 self.focused_pane = idx;
             }
+            ChatAreaInput::AutoMergePane1 => {
+                // Drain pane 1 → pane 0 by transferring every page in
+                // the natural order. After this, pane 1 is empty and
+                // refresh_pane_visibility will collapse the revealer.
+                while self.panes[1].tab_view.n_pages() > 0 {
+                    let page = self.panes[1].tab_view.nth_page(0);
+                    let chat_id = page.keyword().map(|s| s.to_string()).unwrap_or_default();
+                    let dest = self.panes[0].tab_view.n_pages();
+                    self.panes[1]
+                        .tab_view
+                        .transfer_page(&page, &self.panes[0].tab_view, dest);
+                    if !chat_id.is_empty() {
+                        if let Some(entry) = self.open_tabs.get_mut(&chat_id) {
+                            entry.2 = 0;
+                        }
+                    }
+                }
+                self.focused_pane = 0;
+                self.refresh_pane_visibility();
+                self.refresh_pane_header(0);
+                self.refresh_pane_header(1);
+            }
             ChatAreaInput::MoveTabToOtherPane(from) => {
                 let to = 1 - from;
                 let Some(page) = self.panes[from].tab_view.selected_page() else {
@@ -451,15 +526,18 @@ impl ChatArea {
         self.panes[idx].tab_view.n_pages()
     }
 
-    /// Hide pane 1 when empty (so the Paned divider disappears too) and
-    /// ensure pane 0 is always visible. Also keeps the window's close
-    /// button visible on exactly one header — whichever pane is the
-    /// rightmost-visible one — so the X never accidentally lives on a
-    /// header that the user might mistake for "close this tab".
+    /// Reveal pane 1 only when it has tabs (so the Paned divider
+    /// disappears too). Also keeps the window's close button visible on
+    /// exactly one header — whichever pane is the rightmost-visible one
+    /// — so the X never accidentally lives on a header that the user
+    /// might mistake for "close this tab".
     fn refresh_pane_visibility(&self) {
         let p1_visible = self.pane_tab_count(1) > 0;
         self.panes[0].toolbar_view.set_visible(true);
-        self.panes[1].toolbar_view.set_visible(p1_visible);
+        // Drive the Revealer instead of toolbar_view's visibility directly
+        // — the Revealer slides the pane in/out and resizes the Paned
+        // divider along with it.
+        self.pane1_revealer.set_reveal_child(p1_visible);
         // Window controls live only on the rightmost visible pane.
         self.panes[0].header.set_show_end_title_buttons(!p1_visible);
         self.panes[1].header.set_show_end_title_buttons(p1_visible);
@@ -534,7 +612,7 @@ fn build_pane(idx: usize, sender: &ComponentSender<ChatArea>) -> Pane {
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&stack));
 
-    if idx == 0 {
+    let toggle_btn = if idx == 0 {
         let toggle = gtk::ToggleButton::builder()
             .icon_name("sidebar-show-symbolic")
             .active(true)
@@ -545,7 +623,10 @@ fn build_pane(idx: usize, sender: &ComponentSender<ChatArea>) -> Pane {
             let _ = s.send(ChatAreaOutput::ToggleSidebar(btn.is_active()));
         });
         header.pack_start(&toggle);
-    }
+        Some(toggle)
+    } else {
+        None
+    };
 
     // "Move to other split" — same icon both panes; the model figures out
     // which way is "other" based on which pane fired the event.
@@ -622,6 +703,7 @@ fn build_pane(idx: usize, sender: &ComponentSender<ChatArea>) -> Pane {
         avatar,
         title,
         split_btn,
+        toggle_btn,
         current_chat_id: None,
         current_chat_name: String::new(),
         current_chat_avatar: None,

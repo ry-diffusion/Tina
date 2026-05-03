@@ -18,6 +18,13 @@ mod qr;
 mod service;
 mod time;
 
+/// Constants for the icons we bundle via relm4-icons-build (see `build.rs`).
+/// Both shipped (icon-development-kit feature) and custom icons are loaded
+/// into the GResource embedded in the binary.
+pub mod icon_names {
+    include!(concat!(env!("OUT_DIR"), "/icon_names.rs"));
+}
+
 use std::path::PathBuf;
 
 use color_eyre::eyre::Context;
@@ -64,7 +71,7 @@ fn main() -> color_eyre::Result<()> {
     let nanachi_dir = find_nanachi_dir().wrap_err("locating nanachi dir")?;
 
     let app = RelmApp::new(APP_ID);
-    relm4_icons::initialize_icons();
+    relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
     relm4::set_global_css(components::message_bubble::MESSAGE_ROW_CSS);
     app.run::<app::AppModel>(app::AppInit { nanachi_dir });
     Ok(())

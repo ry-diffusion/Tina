@@ -6,6 +6,7 @@
 // events to whichever child cares (often both, e.g. AvatarReady) and
 // forwards user intents back up to `app.rs`.
 
+use adw::prelude::*;
 use relm4::Controller;
 use relm4::prelude::*;
 use tina_db::{ChatRow, MessageRow};
@@ -86,10 +87,12 @@ pub struct MainPage {
     service: ServiceHandle,
     sidebar: Controller<Sidebar>,
     chat_area: Controller<ChatArea>,
-    /// Stashed clone of the `AdwOverlaySplitView` root so we can toggle
-    /// `show-sidebar` from within `update` (the toggle lives inside the
-    /// chat area headerbar and bubbles up as an output).
-    split_view: adw::OverlaySplitView,
+    /// `AdwNavigationSplitView` running the sidebar+content split. We
+    /// stash a clone so the toggle button (in the chat area's headerbar)
+    /// can drive `show-content` when the layout is collapsed (narrow
+    /// width). When wide, both panes are always shown and the toggle
+    /// is a visual no-op.
+    split_view: adw::NavigationSplitView,
 }
 
 #[relm4::component(pub)]
@@ -100,16 +103,31 @@ impl SimpleComponent for MainPage {
 
     view! {
         #[root]
-        adw::OverlaySplitView {
-            set_min_sidebar_width: 280.0,
-            set_max_sidebar_width: 380.0,
-            set_sidebar_width_fraction: 0.27,
+        adw::BreakpointBin {
+            set_width_request: 360,
+            set_height_request: 200,
 
             #[wrap(Some)]
-            set_sidebar = model.sidebar.widget(),
+            #[name(split_view)]
+            set_child = &adw::NavigationSplitView {
+                set_min_sidebar_width: 280.0,
+                set_max_sidebar_width: 380.0,
+                set_sidebar_width_fraction: 0.27,
 
-            #[wrap(Some)]
-            set_content = model.chat_area.widget(),
+                #[wrap(Some)]
+                set_sidebar = &adw::NavigationPage {
+                    set_title: "Tina",
+                    set_tag: Some("sidebar"),
+                    set_child: Some(model.sidebar.widget()),
+                },
+
+                #[wrap(Some)]
+                set_content = &adw::NavigationPage {
+                    set_title: "Chat",
+                    set_tag: Some("content"),
+                    set_child: Some(model.chat_area.widget()),
+                },
+            },
         }
     }
 
@@ -135,10 +153,28 @@ impl SimpleComponent for MainPage {
             service: init.service,
             sidebar,
             chat_area,
-            split_view: root.clone(),
+            split_view: adw::NavigationSplitView::new(),
         };
 
         let widgets = view_output!();
+        // Replace the placeholder split_view in the model with the one
+        // the macro just built so external callers (and the chat-area
+        // toggle handler) operate on the live widget.
+        let model = MainPage {
+            split_view: widgets.split_view.clone(),
+            ..model
+        };
+
+        // Adaptive collapse: below ~600sp the split view becomes a
+        // navigation stack (sidebar pushes to content), matching the
+        // GNOME HIG adaptive layout pattern.
+        let bp = adw::Breakpoint::new(
+            adw::BreakpointCondition::parse("max-width: 600sp")
+                .expect("hardcoded breakpoint condition is well-formed"),
+        );
+        bp.add_setter(&widgets.split_view, "collapsed", Some(&true.to_value()));
+        root.add_breakpoint(bp);
+
         ComponentParts { model, widgets }
     }
 
@@ -254,9 +290,14 @@ impl SimpleComponent for MainPage {
                         .chat_area
                         .sender()
                         .send(ChatAreaInput::OpenInCurrent(id));
+                    // Drive the navigation when collapsed (narrow): pushes
+                    // to the content page with the standard slide animation.
+                    // No-op when uncollapsed since both panes are shown.
+                    self.split_view.set_show_content(true);
                 }
                 SidebarOutput::OpenInNewTab(id) => {
                     let _ = self.chat_area.sender().send(ChatAreaInput::OpenInNewTab(id));
+                    self.split_view.set_show_content(true);
                 }
                 SidebarOutput::RequestRepair => {
                     let _ = sender.output(MainOutput::RequestRepair);
@@ -270,7 +311,11 @@ impl SimpleComponent for MainPage {
             },
             MainInput::FromChatArea(out) => match out {
                 ChatAreaOutput::ToggleSidebar(show) => {
-                    self.split_view.set_show_sidebar(show);
+                    // NavigationSplitView has no sidebar visibility property
+                    // when uncollapsed (both panes always shown). When it's
+                    // collapsed the equivalent gesture is "go back to the
+                    // sidebar page", i.e. show_content=false.
+                    self.split_view.set_show_content(!show);
                 }
                 ChatAreaOutput::OpenChatNew(id) => {
                     let _ = sender.output(MainOutput::OpenChatNew(id));

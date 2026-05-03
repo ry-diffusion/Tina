@@ -8,16 +8,14 @@ name = "tina-gtk"
 path = "src/main.rs"
 
 [dependencies]
-relm4 = { version = "0.9", features = ["libadwaita", "gnome_46"] }
-relm4-components = "0.9"
-relm4-icons = "0.9"
-# Standard Adwaita icon-theme names cover everything we use in v1; drop the
-# relm4-icons dep to avoid pinning specific icon features.
-gtk = { version = "0.9", package = "gtk4", features = ["v4_14"] }
-adw = { version = "0.7", package = "libadwaita", features = ["v1_6"] }
-gdk = { version = "0.9", package = "gdk4" }
-glib = "0.20"
-gio = "0.20"
+relm4 = { version = "0.11", features = ["libadwaita", "gnome_50"] }
+relm4-components = "0.11"
+relm4-icons = { version = "0.11", features = ["icon-development-kit"] }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
+adw = { version = "0.9", package = "libadwaita", features = ["v1_9"] }
+gdk = { version = "0.11", package = "gdk4" }
+glib = "0.22"
+gio = "0.22"
 
 tokio = { workspace = true }
 color-eyre.workspace = true
@@ -34,3 +32,6 @@ tina-core = { path = "../tina-core" }
 tina-worker = { path = "../tina-worker" }
 tina-db = { path = "../tina-db" }
 phonenumber = "0.3.9"
+
+[build-dependencies]
+relm4-icons-build = "0.11"
