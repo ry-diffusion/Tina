@@ -1,5 +1,9 @@
 /// Versão lógica do schema. Incrementar quando houver mudança incompatível.
-pub const SCHEMA_VERSION: i64 = 2;
+///
+/// Histórico:
+/// - v2: schema inicial com aliases canônicos.
+/// - v3: campos de mídia (mimetype, dims, duração, sha256 pra dedup).
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -101,6 +105,19 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp INTEGER NOT NULL,
     is_from_me INTEGER NOT NULL DEFAULT 0,
     raw_json TEXT,
+    -- Mídia. Campos populados quando a mensagem é image/audio/video/sticker/
+    -- document. `media_sha256` é hash do conteúdo claro (decodificado);
+    -- usado pra dedup (mesmo arquivo enviado em vários chats vira um path
+    -- só na cache). `media_path` fica NULL até o download concluir.
+    media_mimetype TEXT,
+    media_filename TEXT,
+    media_duration_secs INTEGER,
+    media_width INTEGER,
+    media_height INTEGER,
+    media_size_bytes INTEGER,
+    media_sha256 TEXT,
+    media_path TEXT,
+    media_status TEXT NOT NULL DEFAULT 'none',  -- 'none'|'pending'|'downloading'|'done'|'failed'
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(account_id, message_id),
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
@@ -109,6 +126,35 @@ CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(account_id, chat_id, ti
 -- Acelera merge_contacts_tx (UPDATE messages SET sender_contact_id = ? WHERE
 -- sender_contact_id = ?). Sem ele, full scan da tabela inteira por merge.
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(account_id, sender_contact_id);
+-- Lookup por hash pra dedup: encontra outras mensagens que apontam pro
+-- mesmo arquivo já baixado.
+CREATE INDEX IF NOT EXISTS idx_messages_media_sha ON messages(media_sha256)
+    WHERE media_sha256 IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT
+);
+"#;
+
+/// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda
+/// dentro de uma transação no caller.
+pub const MIGRATION_V2_TO_V3: &str = r#"
+ALTER TABLE messages ADD COLUMN media_mimetype TEXT;
+ALTER TABLE messages ADD COLUMN media_filename TEXT;
+ALTER TABLE messages ADD COLUMN media_duration_secs INTEGER;
+ALTER TABLE messages ADD COLUMN media_width INTEGER;
+ALTER TABLE messages ADD COLUMN media_height INTEGER;
+ALTER TABLE messages ADD COLUMN media_size_bytes INTEGER;
+ALTER TABLE messages ADD COLUMN media_sha256 TEXT;
+ALTER TABLE messages ADD COLUMN media_path TEXT;
+ALTER TABLE messages ADD COLUMN media_status TEXT NOT NULL DEFAULT 'none';
+CREATE INDEX IF NOT EXISTS idx_messages_media_sha ON messages(media_sha256)
+    WHERE media_sha256 IS NOT NULL;
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT
+);
 "#;
 
 /// SQL para apagar todas as tabelas (usado quando `user_version` muda).

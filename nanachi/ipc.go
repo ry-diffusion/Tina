@@ -71,6 +71,19 @@ type MessageData struct {
 	Timestamp   int64   `json:"timestamp"`
 	IsFromMe    bool    `json:"is_from_me"`
 	RawJSON     *string `json:"raw_json,omitempty"`
+	// Metadados de mídia (apenas para image/audio/video/sticker/document).
+	// Preenchidos pelo extrator a partir do proto sem baixar o arquivo;
+	// o download em si é uma operação separada (DownloadMedia).
+	MediaMimetype     *string `json:"media_mimetype,omitempty"`
+	MediaFilename     *string `json:"media_filename,omitempty"`
+	MediaDurationSecs *int64  `json:"media_duration_secs,omitempty"`
+	MediaWidth        *int64  `json:"media_width,omitempty"`
+	MediaHeight       *int64  `json:"media_height,omitempty"`
+	MediaSizeBytes    *int64  `json:"media_size_bytes,omitempty"`
+	// SHA256 hex (64 chars) do conteúdo decodificado, vindo do proto
+	// (FileSHA256). Permite que múltiplas mensagens reaproveitem o mesmo
+	// download em cache.
+	MediaSHA256 *string `json:"media_sha256,omitempty"`
 }
 
 // Writer protege stdout de escritas concorrentes (cada goroutine de evento

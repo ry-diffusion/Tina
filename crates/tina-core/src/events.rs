@@ -83,4 +83,22 @@ pub struct MessageData {
     pub timestamp: i64,
     pub is_from_me: bool,
     pub raw_json: Option<String>,
+    /// Metadados de mídia extraídos do proto. Vêm preenchidos pra
+    /// image/audio/video/sticker/document; ausentes pra texto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_mimetype: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_duration_secs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_width: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_height: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_size_bytes: Option<i64>,
+    /// SHA256 hex (64 chars) do conteúdo claro. Usado pra deduplicar
+    /// downloads (mesmo arquivo enviado em vários chats vira 1 file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_sha256: Option<String>,
 }

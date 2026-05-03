@@ -391,6 +391,7 @@ func mapMessage(evt *events.Message) *MessageData {
 	if content != "" {
 		md.Content = &content
 	}
+	applyMedia(&md, extractMedia(evt.Message))
 	return &md
 }
 
@@ -422,5 +423,6 @@ func mapWebMessageInfo(chat types.JID, wmi *waWeb.WebMessageInfo) *MessageData {
 	if content != "" {
 		md.Content = &content
 	}
+	applyMedia(&md, extractMedia(wmi.GetMessage()))
 	return &md
 }

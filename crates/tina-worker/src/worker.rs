@@ -369,6 +369,13 @@ async fn flush(
                 timestamp: m.timestamp,
                 is_from_me: m.is_from_me,
                 raw_json: m.raw_json.as_deref(),
+                media_mimetype: m.media_mimetype.as_deref(),
+                media_filename: m.media_filename.as_deref(),
+                media_duration_secs: m.media_duration_secs,
+                media_width: m.media_width,
+                media_height: m.media_height,
+                media_size_bytes: m.media_size_bytes,
+                media_sha256: m.media_sha256.as_deref(),
             })
             .collect();
 

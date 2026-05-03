@@ -130,6 +130,17 @@ pub struct MessageBatchInput<'a> {
     pub timestamp: i64,
     pub is_from_me: bool,
     pub raw_json: Option<&'a str>,
+    /// Metadados de mídia (NULL para texto). Vêm do nanachi extraindo do
+    /// proto sem baixar — o download real é separado e atualiza a linha.
+    pub media_mimetype: Option<&'a str>,
+    pub media_filename: Option<&'a str>,
+    pub media_duration_secs: Option<i64>,
+    pub media_width: Option<i64>,
+    pub media_height: Option<i64>,
+    pub media_size_bytes: Option<i64>,
+    /// Hash sha256 do conteúdo claro. Mesmo arquivo enviado em vários chats
+    /// gera o mesmo hash → cache deduplica.
+    pub media_sha256: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +185,15 @@ pub struct MessageRow {
     pub message_type: String,
     pub timestamp: i64,
     pub is_from_me: bool,
+    pub media_mimetype: Option<String>,
+    pub media_filename: Option<String>,
+    pub media_duration_secs: Option<i64>,
+    pub media_width: Option<i64>,
+    pub media_height: Option<i64>,
+    pub media_size_bytes: Option<i64>,
+    pub media_sha256: Option<String>,
+    pub media_path: Option<String>,
+    pub media_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -188,6 +208,15 @@ pub struct Message {
     pub timestamp: i64,
     pub is_from_me: bool,
     pub raw_json: Option<String>,
+    pub media_mimetype: Option<String>,
+    pub media_filename: Option<String>,
+    pub media_duration_secs: Option<i64>,
+    pub media_width: Option<i64>,
+    pub media_height: Option<i64>,
+    pub media_size_bytes: Option<i64>,
+    pub media_sha256: Option<String>,
+    pub media_path: Option<String>,
+    pub media_status: String,
     pub created_at: i64,
 }
 

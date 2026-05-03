@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::error::{DbError, Result};
 use crate::models::{Account, Chat, ChatKind, ChatRow, Contact, Message, MessageRow};
-use crate::schema::{SCHEMA, SCHEMA_DROP, SCHEMA_VERSION};
+use crate::schema::{MIGRATION_V2_TO_V3, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION};
 
 pub struct TinaDb {
     pool: Pool<Sqlite>,
@@ -59,16 +59,34 @@ impl TinaDb {
             .fetch_one(&pool)
             .await?;
 
-        if current != SCHEMA_VERSION {
-            tracing::warn!(
-                "Schema version mismatch (db={}, expected={}). Dropping and recreating tables.",
-                current,
-                SCHEMA_VERSION
-            );
-            sqlx::raw_sql(SCHEMA_DROP).execute(&pool).await?;
+        // Pra cada par (from, to) suportado, aplica ALTER TABLE in-place.
+        // Versões mais antigas (sem migração escrita) caem no fallback de
+        // drop+recreate.
+        match current {
+            0 => {
+                // Banco novo — só cria.
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            v if v == SCHEMA_VERSION => {
+                // Já na versão atual; garante que objetos novos (índices,
+                // tabelas adicionadas via "IF NOT EXISTS") existam.
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            2 => {
+                tracing::info!("Migrating tina.db from v2 → v3 (adding media columns)");
+                sqlx::raw_sql(MIGRATION_V2_TO_V3).execute(&pool).await?;
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            other => {
+                tracing::warn!(
+                    "Unsupported schema version (db={}, expected={}). Recreating from scratch.",
+                    other,
+                    SCHEMA_VERSION
+                );
+                sqlx::raw_sql(SCHEMA_DROP).execute(&pool).await?;
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
         }
-
-        sqlx::raw_sql(SCHEMA).execute(&pool).await?;
         sqlx::query(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))
             .execute(&pool)
             .await?;
@@ -602,9 +620,15 @@ impl TinaDb {
         const MSG_INSERT_CHUNK: usize = 200;
         let now = now_ts();
         for chunk in pending.chunks(MSG_INSERT_CHUNK) {
-            let row_tpl = "(?,?,?,?,?,?,?,?,?,?)";
+            // 17 binds/row: 10 base + 7 media (status default vem do schema).
+            let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
             let mut sql = String::from(
-                "INSERT OR IGNORE INTO messages (account_id, message_id, chat_id, sender_contact_id, content, message_type, timestamp, is_from_me, raw_json, created_at) VALUES ",
+                "INSERT OR IGNORE INTO messages (\
+                    account_id, message_id, chat_id, sender_contact_id, content, \
+                    message_type, timestamp, is_from_me, raw_json, created_at, \
+                    media_mimetype, media_filename, media_duration_secs, \
+                    media_width, media_height, media_size_bytes, media_sha256\
+                 ) VALUES ",
             );
             sql.push_str(&repeat_csv(row_tpl, chunk.len()));
             let mut q = sqlx::query(&sql);
@@ -620,7 +644,14 @@ impl TinaDb {
                     .bind(m.timestamp)
                     .bind(m.is_from_me)
                     .bind(m.raw_json)
-                    .bind(now);
+                    .bind(now)
+                    .bind(m.media_mimetype)
+                    .bind(m.media_filename)
+                    .bind(m.media_duration_secs)
+                    .bind(m.media_width)
+                    .bind(m.media_height)
+                    .bind(m.media_size_bytes)
+                    .bind(m.media_sha256);
             }
             q.execute(&mut *tx).await?;
         }
@@ -1049,7 +1080,16 @@ impl TinaDb {
                  m.content,
                  m.message_type,
                  m.timestamp,
-                 m.is_from_me
+                 m.is_from_me,
+                 m.media_mimetype,
+                 m.media_filename,
+                 m.media_duration_secs,
+                 m.media_width,
+                 m.media_height,
+                 m.media_size_bytes,
+                 m.media_sha256,
+                 m.media_path,
+                 m.media_status
                FROM messages m
                LEFT JOIN contacts ct
                  ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -1090,7 +1130,16 @@ impl TinaDb {
                  m.content,
                  m.message_type,
                  m.timestamp,
-                 m.is_from_me
+                 m.is_from_me,
+                 m.media_mimetype,
+                 m.media_filename,
+                 m.media_duration_secs,
+                 m.media_width,
+                 m.media_height,
+                 m.media_size_bytes,
+                 m.media_sha256,
+                 m.media_path,
+                 m.media_status
                FROM messages m
                LEFT JOIN contacts ct
                  ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
