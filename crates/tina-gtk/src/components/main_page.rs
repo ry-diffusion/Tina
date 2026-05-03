@@ -66,6 +66,16 @@ pub enum MainInput {
     Repair,
     Logout,
     SearchChanged(String),
+    MediaReady {
+        message_ids: Vec<String>,
+        path: String,
+        mimetype: Option<String>,
+    },
+    MediaFailed {
+        message_id: String,
+    },
+    /// Bubble in some tab clicked "Tap to download".
+    RequestMediaDownload(String),
 }
 
 #[derive(Debug)]
@@ -75,6 +85,7 @@ pub enum MainOutput {
     SendText { chat_id: String, text: String },
     RequestRepair,
     RequestLogout,
+    RequestMediaDownload(String),
 }
 
 pub struct MainPage {
@@ -534,6 +545,9 @@ impl SimpleComponent for MainPage {
                                 MainInput::SendFromTab { chat_id, text }
                             }
                             ChatTabOutput::Close { chat_id } => MainInput::TabClosed(chat_id),
+                            ChatTabOutput::RequestMediaDownload(id) => {
+                                MainInput::RequestMediaDownload(id)
+                            }
                         });
                     let widget = controller.widget().clone();
                     let page = self.tab_view.append(&widget);
@@ -586,6 +600,32 @@ impl SimpleComponent for MainPage {
             }
             MainInput::Logout => {
                 let _ = sender.output(MainOutput::RequestLogout);
+            }
+            MainInput::MediaReady {
+                message_ids,
+                path,
+                mimetype,
+            } => {
+                // Broadcast: any tab that currently shows one of these
+                // message_ids needs to re-render its bubble. Cheap because
+                // each tab indexes by id internally.
+                for (_, (controller, _)) in self.open_tabs.iter() {
+                    let _ = controller.sender().send(ChatTabInput::MediaReady {
+                        message_ids: message_ids.clone(),
+                        path: path.clone(),
+                        mimetype: mimetype.clone(),
+                    });
+                }
+            }
+            MainInput::MediaFailed { message_id } => {
+                for (_, (controller, _)) in self.open_tabs.iter() {
+                    let _ = controller
+                        .sender()
+                        .send(ChatTabInput::MediaFailed(message_id.clone()));
+                }
+            }
+            MainInput::RequestMediaDownload(id) => {
+                let _ = sender.output(MainOutput::RequestMediaDownload(id));
             }
             MainInput::SetRepairing(r) => {
                 self.repairing = r;

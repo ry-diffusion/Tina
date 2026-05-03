@@ -11,6 +11,14 @@ pub enum IpcCommand {
     /// de upsert. Usado pra reconstruir a tabela do tina a partir do que o
     /// whatsmeow.db já sabe — sem precisar de re-pareamento.
     Reconcile { account_id: String },
+    /// Pede ao nanachi pra baixar+decryptar a mídia de uma mensagem
+    /// específica. O nanachi consulta sua cache in-memory (populada quando
+    /// a mensagem chegou); mensagens vindas antes do app start exigem
+    /// reconcile/restart pra repopular a cache.
+    DownloadMedia {
+        account_id: String,
+        message_id: String,
+    },
     Shutdown,
 }
 
@@ -41,6 +49,29 @@ pub enum IpcEvent {
     },
 
     Error { account_id: Option<String>, error: String },
+
+    /// Progresso de download de mídia. `total = 0` ⇒ desconhecido.
+    MediaDownloadProgress {
+        account_id: String,
+        message_id: String,
+        current: i64,
+        total: i64,
+    },
+    /// Sucesso: arquivo persistido em `path`. `sha256` permite a worker
+    /// propagar o mesmo path para outras mensagens com o mesmo conteúdo
+    /// (dedup).
+    MediaDownloaded {
+        account_id: String,
+        message_id: String,
+        path: String,
+        sha256: Option<String>,
+        mimetype: Option<String>,
+    },
+    MediaDownloadFailed {
+        account_id: String,
+        message_id: String,
+        error: String,
+    },
 
     CommandResult { command_id: String, success: bool, data: Option<serde_json::Value>, error: Option<String> },
 }

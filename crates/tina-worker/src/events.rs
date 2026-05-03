@@ -34,4 +34,26 @@ pub enum WorkerEvent {
     },
 
     Error { account_id: Option<String>, error: String },
+
+    /// Progresso ao vivo de um download de mídia.
+    MediaDownloadProgress {
+        account_id: String,
+        message_id: String,
+        current: i64,
+        total: i64,
+    },
+    /// Mídia disponível em disco. `affected_message_ids` carrega todos os
+    /// IDs cujo bubble agora deve apontar pra `path` (dedup por sha256
+    /// resolvido pelo worker).
+    MediaReady {
+        account_id: String,
+        affected_message_ids: Vec<String>,
+        path: String,
+        mimetype: Option<String>,
+    },
+    MediaDownloadFailed {
+        account_id: String,
+        message_id: String,
+        error: String,
+    },
 }

@@ -200,6 +200,7 @@ fn command_kind(c: &IpcCommand) -> &'static str {
         IpcCommand::Logout { .. } => "Logout",
         IpcCommand::SendMessage { .. } => "SendMessage",
         IpcCommand::Reconcile { .. } => "Reconcile",
+        IpcCommand::DownloadMedia { .. } => "DownloadMedia",
         IpcCommand::Shutdown => "Shutdown",
     }
 }

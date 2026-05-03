@@ -36,6 +36,9 @@ func (c *Client) handleEvent(rawEvt any) {
 
 	case *events.Message:
 		if md := mapMessage(evt); md != nil {
+			// Cache the proto for later DownloadMedia requests. Cheap when
+			// it's a non-media payload (rememberForDownload short-circuits).
+			rememberForDownload(c.accountID, md.MessageID, evt.Message)
 			emitMessages(c.accountID, []MessageData{*md})
 		}
 		// Persiste o sender com push_name quando disponível. É o caminho
@@ -204,6 +207,7 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 			}
 			md := mapWebMessageInfo(chatJID, wmi)
 			if md != nil {
+				rememberForDownload(c.accountID, md.MessageID, wmi.GetMessage())
 				msgs = append(msgs, *md)
 			}
 			// Aproveita o push name embutido no WebMessageInfo — é a

@@ -201,6 +201,33 @@ func emitError(accountID *string, err string) {
 	})
 }
 
+func emitMediaDownloadProgress(accountID, messageID string, current, total int64) {
+	emit("MediaDownloadProgress", map[string]any{
+		"account_id": accountID,
+		"message_id": messageID,
+		"current":    current,
+		"total":      total,
+	})
+}
+
+func emitMediaDownloaded(accountID, messageID, path, sha256hex, mimetype string) {
+	emit("MediaDownloaded", map[string]any{
+		"account_id": accountID,
+		"message_id": messageID,
+		"path":       path,
+		"sha256":     strPtr(sha256hex),
+		"mimetype":   strPtr(mimetype),
+	})
+}
+
+func emitMediaDownloadFailed(accountID, messageID, err string) {
+	emit("MediaDownloadFailed", map[string]any{
+		"account_id": accountID,
+		"message_id": messageID,
+		"error":      err,
+	})
+}
+
 func emitCommandResult(commandID string, success bool, data any, errStr *string) {
 	emit("CommandResult", map[string]any{
 		"command_id": commandID,

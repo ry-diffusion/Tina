@@ -142,6 +142,25 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 		}
 		emitCommandResult(msg.ID, ok, nil, errStr)
 
+	case "DownloadMedia":
+		var p struct {
+			AccountID string `json:"account_id"`
+			MessageID string `json:"message_id"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		// Download é sempre async pra não bloquear o loop de IPC; o
+		// CommandResult sai imediatamente como "aceito", e o resultado
+		// real chega via MediaDownloaded / MediaDownloadFailed.
+		emitCommandResult(msg.ID, true, nil, nil)
+		go func() {
+			if err := downloadMedia(mgr, p.AccountID, p.MessageID); err != nil {
+				emitMediaDownloadFailed(p.AccountID, p.MessageID, err.Error())
+			}
+		}()
+
 	case "Shutdown":
 		emitCommandResult(msg.ID, true, nil, nil)
 		mgr.shutdown()

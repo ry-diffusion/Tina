@@ -162,6 +162,73 @@ impl TinaWorker {
         Ok(())
     }
 
+    /// Solicita download de mídia. Faz dedup local primeiro: se outra
+    /// mensagem com o mesmo sha256 já tem `media_path`, reaproveita esse
+    /// caminho sem chamar o nanachi.
+    pub async fn download_media(&self, account_id: &str, message_id: &str) -> Result<()> {
+        if let Some(row) = self
+            .db
+            .get_message_rows_by_ids(account_id, &[message_id.to_string()])
+            .await?
+            .into_iter()
+            .next()
+        {
+            if let Some(path) = row.media_path.as_deref() {
+                if std::path::Path::new(path).exists() {
+                    let _ = self
+                        .event_tx
+                        .send(WorkerEvent::MediaReady {
+                            account_id: account_id.to_string(),
+                            affected_message_ids: vec![message_id.to_string()],
+                            path: path.to_string(),
+                            mimetype: row.media_mimetype.clone(),
+                        })
+                        .await;
+                    return Ok(());
+                }
+            }
+            if let Some(sha) = row.media_sha256.as_deref() {
+                if let Some(existing_path) =
+                    self.db.find_existing_media_path(account_id, sha).await?
+                {
+                    let affected = self
+                        .db
+                        .apply_media_downloaded(
+                            account_id,
+                            message_id,
+                            &existing_path,
+                            Some(sha),
+                            row.media_mimetype.as_deref(),
+                        )
+                        .await?;
+                    let _ = self
+                        .event_tx
+                        .send(WorkerEvent::MediaReady {
+                            account_id: account_id.to_string(),
+                            affected_message_ids: affected,
+                            path: existing_path,
+                            mimetype: row.media_mimetype.clone(),
+                        })
+                        .await;
+                    return Ok(());
+                }
+            }
+        }
+
+        // Marca como downloading pra UI exibir spinner enquanto IPC volta.
+        self.db
+            .set_media_status(account_id, message_id, "downloading")
+            .await?;
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::DownloadMedia {
+                account_id: account_id.to_string(),
+                message_id: message_id.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
     // ---- Chat-list / messages para a UI ----
 
     pub async fn list_chat_rows(&self, account_id: &str) -> Result<Vec<ChatRow>> {
@@ -489,6 +556,9 @@ fn event_kind(e: &IpcEvent) -> &'static str {
         IpcEvent::HistorySyncComplete { .. } => "HistorySyncComplete",
         IpcEvent::ReconcileProgress { .. } => "ReconcileProgress",
         IpcEvent::Error { .. } => "Error",
+        IpcEvent::MediaDownloadProgress { .. } => "MediaDownloadProgress",
+        IpcEvent::MediaDownloaded { .. } => "MediaDownloaded",
+        IpcEvent::MediaDownloadFailed { .. } => "MediaDownloadFailed",
         IpcEvent::CommandResult { .. } => "CommandResult",
     }
 }
@@ -586,6 +656,71 @@ async fn handle_realtime_event(
         IpcEvent::Error { account_id, error } => {
             let _ = event_tx
                 .send(WorkerEvent::Error { account_id, error })
+                .await;
+        }
+
+        IpcEvent::MediaDownloadProgress {
+            account_id,
+            message_id,
+            current,
+            total,
+        } => {
+            let _ = event_tx
+                .send(WorkerEvent::MediaDownloadProgress {
+                    account_id,
+                    message_id,
+                    current,
+                    total,
+                })
+                .await;
+        }
+
+        IpcEvent::MediaDownloaded {
+            account_id,
+            message_id,
+            path,
+            sha256,
+            mimetype,
+        } => {
+            // Persiste no DB (com dedup pra todas as mensagens com mesmo
+            // sha256) e emite MediaReady com a lista completa de IDs.
+            let affected = db
+                .apply_media_downloaded(
+                    &account_id,
+                    &message_id,
+                    &path,
+                    sha256.as_deref(),
+                    mimetype.as_deref(),
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("apply_media_downloaded: {e}");
+                    vec![message_id.clone()]
+                });
+            let _ = event_tx
+                .send(WorkerEvent::MediaReady {
+                    account_id,
+                    affected_message_ids: affected,
+                    path,
+                    mimetype,
+                })
+                .await;
+        }
+
+        IpcEvent::MediaDownloadFailed {
+            account_id,
+            message_id,
+            error,
+        } => {
+            let _ = db
+                .set_media_status(&account_id, &message_id, "failed")
+                .await;
+            let _ = event_tx
+                .send(WorkerEvent::MediaDownloadFailed {
+                    account_id,
+                    message_id,
+                    error,
+                })
                 .await;
         }
 

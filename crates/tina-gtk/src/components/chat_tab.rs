@@ -12,16 +12,32 @@ use crate::components::message_bubble::{MessageBubble, MessageItem};
 
 #[derive(Debug)]
 pub enum ChatTabInput {
-    SetMeta { name: String, kind: String },
+    SetMeta {
+        name: String,
+        kind: String,
+    },
     Reset(Vec<MessageRow>),
     Append(Vec<MessageRow>),
     Send,
+    /// Forwarded from `MainPage` when a media download finishes (or comes
+    /// pre-resolved by dedup). The tab walks its factory and patches any
+    /// matching bubble in-place.
+    MediaReady {
+        message_ids: Vec<String>,
+        path: String,
+        mimetype: Option<String>,
+    },
+    MediaFailed(String),
+    /// A bubble emitted "tap to download". Forward up to MainPage so the
+    /// service worker actually issues the IPC command.
+    RequestMediaDownload(String),
 }
 
 #[derive(Debug)]
 pub enum ChatTabOutput {
     Send { chat_id: String, text: String },
     Close { chat_id: String },
+    RequestMediaDownload(String),
 }
 
 pub struct ChatTabInit {
@@ -103,7 +119,11 @@ impl SimpleComponent for ChatTab {
     ) -> ComponentParts<Self> {
         let mut messages = FactoryVecDeque::builder()
             .launch(gtk::ListBox::default())
-            .forward(sender.input_sender(), |_| ChatTabInput::Send);
+            .forward(sender.input_sender(), |o| match o {
+                crate::components::message_bubble::MessageBubbleOut::DownloadRequested(id) => {
+                    ChatTabInput::RequestMediaDownload(id)
+                }
+            });
 
         // Seed with initial history.
         {
@@ -176,6 +196,64 @@ impl SimpleComponent for ChatTab {
                     text: trimmed.to_string(),
                 });
                 self.composer_buffer.set_text("");
+            }
+            ChatTabInput::MediaReady {
+                message_ids,
+                path,
+                mimetype,
+            } => {
+                let id_set: std::collections::HashSet<&String> = message_ids.iter().collect();
+                let mut guard = self.messages.guard();
+                // FactoryVecDeque doesn't expose mut iter; rebuild by index.
+                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                for (idx, fac) in guard.iter().enumerate() {
+                    if id_set.contains(&fac.item.id) {
+                        let mut new_item = fac.item.clone();
+                        new_item.media_path = Some(path.clone());
+                        new_item.media_status = "done".into();
+                        if new_item.media_mimetype.is_none() {
+                            new_item.media_mimetype = mimetype.clone();
+                        }
+                        to_replace.push((idx, new_item));
+                    }
+                }
+                for (idx, item) in to_replace {
+                    guard.remove(idx);
+                    guard.insert(idx, item);
+                }
+            }
+            ChatTabInput::MediaFailed(message_id) => {
+                let mut guard = self.messages.guard();
+                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                for (idx, fac) in guard.iter().enumerate() {
+                    if fac.item.id == message_id {
+                        let mut new_item = fac.item.clone();
+                        new_item.media_status = "failed".into();
+                        to_replace.push((idx, new_item));
+                    }
+                }
+                for (idx, item) in to_replace {
+                    guard.remove(idx);
+                    guard.insert(idx, item);
+                }
+            }
+            ChatTabInput::RequestMediaDownload(id) => {
+                // Optimistically mark downloading immediately for snappy UI;
+                // worker confirms via MediaReady (or rolls back via MediaFailed).
+                let mut guard = self.messages.guard();
+                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                for (idx, fac) in guard.iter().enumerate() {
+                    if fac.item.id == id {
+                        let mut new_item = fac.item.clone();
+                        new_item.media_status = "downloading".into();
+                        to_replace.push((idx, new_item));
+                    }
+                }
+                for (idx, item) in to_replace {
+                    guard.remove(idx);
+                    guard.insert(idx, item);
+                }
+                let _ = sender.output(ChatTabOutput::RequestMediaDownload(id));
             }
         }
     }

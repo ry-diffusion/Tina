@@ -66,6 +66,22 @@ pub enum AppMsg {
     FatalError(String),
     Toast(String),
 
+    MediaDownloadProgress {
+        message_id: String,
+        current: i64,
+        total: i64,
+    },
+    MediaReady {
+        message_ids: Vec<String>,
+        path: String,
+        mimetype: Option<String>,
+    },
+    MediaDownloadFailed {
+        message_id: String,
+        error: String,
+    },
+    RequestMediaDownload(String),
+
     // From the UI:
     OpenChatNew(String),
     FocusChat(Option<String>),
@@ -147,6 +163,7 @@ impl SimpleComponent for AppModel {
                 MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
                 MainOutput::RequestRepair => AppMsg::RequestRepair,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
+                MainOutput::RequestMediaDownload(id) => AppMsg::RequestMediaDownload(id),
             });
 
         let model = AppModel {
@@ -274,6 +291,30 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::RequestLogout => {
                 self.service.handle.send(Cmd::Logout);
+            }
+            AppMsg::RequestMediaDownload(message_id) => {
+                self.service.handle.send(Cmd::DownloadMedia { message_id });
+            }
+            AppMsg::MediaDownloadProgress { .. } => {
+                // No-op at app root; routed to the focused tab via MainPage.
+            }
+            AppMsg::MediaReady {
+                message_ids,
+                path,
+                mimetype,
+            } => {
+                let _ = self.main.sender().send(MainInput::MediaReady {
+                    message_ids,
+                    path,
+                    mimetype,
+                });
+            }
+            AppMsg::MediaDownloadFailed { message_id, error } => {
+                self.toast(format!("Download failed: {error}"));
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::MediaFailed { message_id });
             }
         }
     }

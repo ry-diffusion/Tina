@@ -35,6 +35,8 @@ pub enum Cmd {
     SendText { chat_id: String, text: String },
     /// Trigger reconcile (whatsmeow → tina).
     Repair,
+    /// Trigger an async media download for a specific message.
+    DownloadMedia { message_id: String },
     /// Logout the active account.
     Logout,
     /// Shut down the worker thread.
@@ -175,6 +177,17 @@ async fn run(
                     let _ = app.send(AppMsg::RepairEnded);
                 }
             }
+            Cmd::DownloadMedia { message_id } => {
+                let acc = selected.lock().await.clone();
+                let Some(account_id) = acc else { continue };
+                if let Err(e) = worker.download_media(&account_id, &message_id).await {
+                    error!("download_media: {e}");
+                    let _ = app.send(AppMsg::MediaDownloadFailed {
+                        message_id,
+                        error: e.to_string(),
+                    });
+                }
+            }
             Cmd::Logout => {
                 let acc = selected.lock().await.clone();
                 if let Some(account_id) = acc {
@@ -276,6 +289,35 @@ async fn forward_events(
             WorkerEvent::Error { error, .. } => {
                 error!(%error, "worker error");
                 let _ = app.send(AppMsg::Toast(error));
+            }
+            WorkerEvent::MediaDownloadProgress {
+                message_id,
+                current,
+                total,
+                ..
+            } => {
+                let _ = app.send(AppMsg::MediaDownloadProgress {
+                    message_id,
+                    current,
+                    total,
+                });
+            }
+            WorkerEvent::MediaReady {
+                affected_message_ids,
+                path,
+                mimetype,
+                ..
+            } => {
+                let _ = app.send(AppMsg::MediaReady {
+                    message_ids: affected_message_ids,
+                    path,
+                    mimetype,
+                });
+            }
+            WorkerEvent::MediaDownloadFailed {
+                message_id, error, ..
+            } => {
+                let _ = app.send(AppMsg::MediaDownloadFailed { message_id, error });
             }
         }
     }
