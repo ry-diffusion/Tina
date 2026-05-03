@@ -81,6 +81,15 @@ pub enum AppMsg {
         error: String,
     },
     RequestMediaDownload(String),
+    OlderMessagesLoaded {
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_top: bool,
+    },
+    RequestLoadOlder {
+        chat_id: String,
+        before_ts: i64,
+    },
 
     // From the UI:
     OpenChatNew(String),
@@ -164,6 +173,9 @@ impl SimpleComponent for AppModel {
                 MainOutput::RequestRepair => AppMsg::RequestRepair,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
                 MainOutput::RequestMediaDownload(id) => AppMsg::RequestMediaDownload(id),
+                MainOutput::RequestLoadOlder { chat_id, before_ts } => {
+                    AppMsg::RequestLoadOlder { chat_id, before_ts }
+                }
             });
 
         let model = AppModel {
@@ -294,6 +306,24 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::RequestMediaDownload(message_id) => {
                 self.service.handle.send(Cmd::DownloadMedia { message_id });
+            }
+            AppMsg::RequestLoadOlder { chat_id, before_ts } => {
+                self.service.handle.send(Cmd::LoadOlder {
+                    chat_id,
+                    before_ts,
+                    limit: 50,
+                });
+            }
+            AppMsg::OlderMessagesLoaded {
+                chat_id,
+                messages,
+                reached_top,
+            } => {
+                let _ = self.main.sender().send(MainInput::OlderMessagesLoaded {
+                    chat_id,
+                    messages,
+                    reached_top,
+                });
             }
             AppMsg::MediaDownloadProgress { .. } => {
                 // No-op at app root; routed to the focused tab via MainPage.

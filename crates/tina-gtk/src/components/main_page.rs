@@ -76,6 +76,14 @@ pub enum MainInput {
     },
     /// Bubble in some tab clicked "Tap to download".
     RequestMediaDownload(String),
+    /// Tab scrolled near the top and is requesting an older page.
+    RequestLoadOlder { chat_id: String, before_ts: i64 },
+    /// Older messages came back from the worker; route to the tab.
+    OlderMessagesLoaded {
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_top: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -86,6 +94,7 @@ pub enum MainOutput {
     RequestRepair,
     RequestLogout,
     RequestMediaDownload(String),
+    RequestLoadOlder { chat_id: String, before_ts: i64 },
 }
 
 pub struct MainPage {
@@ -548,6 +557,9 @@ impl SimpleComponent for MainPage {
                             ChatTabOutput::RequestMediaDownload(id) => {
                                 MainInput::RequestMediaDownload(id)
                             }
+                            ChatTabOutput::RequestLoadOlder { chat_id, before_ts } => {
+                                MainInput::RequestLoadOlder { chat_id, before_ts }
+                            }
                         });
                     let widget = controller.widget().clone();
                     let page = self.tab_view.append(&widget);
@@ -638,6 +650,21 @@ impl SimpleComponent for MainPage {
             }
             MainInput::RequestMediaDownload(id) => {
                 let _ = sender.output(MainOutput::RequestMediaDownload(id));
+            }
+            MainInput::RequestLoadOlder { chat_id, before_ts } => {
+                let _ = sender.output(MainOutput::RequestLoadOlder { chat_id, before_ts });
+            }
+            MainInput::OlderMessagesLoaded {
+                chat_id,
+                messages,
+                reached_top,
+            } => {
+                if let Some((controller, _)) = self.open_tabs.get(&chat_id) {
+                    let _ = controller.sender().send(ChatTabInput::PrependOlder {
+                        messages,
+                        reached_top,
+                    });
+                }
             }
             MainInput::SetRepairing(r) => {
                 self.repairing = r;

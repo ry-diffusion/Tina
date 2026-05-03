@@ -657,12 +657,19 @@ impl TinaDb {
         }
 
         // Marca affected_chat e active_inserted só p/ as que de fato entraram.
+        // Também acumula por chat para que o dispatcher possa emitir
+        // MessagesAppended para qualquer chat com tab aberta.
+        let mut new_per_chat: HashMap<String, Vec<String>> = HashMap::new();
         for p in &pending {
             let m = &messages[p.idx];
             if existing_ids.contains(&m.message_id) {
                 continue; // já existia, não conta
             }
             affected_chats.insert(p.chat_id.clone());
+            new_per_chat
+                .entry(p.chat_id.clone())
+                .or_default()
+                .push(m.message_id.to_string());
             if let Some(active) = active_chat {
                 if active == p.chat_id {
                     active_inserted.push(m.message_id.to_string());
@@ -702,7 +709,56 @@ impl TinaDb {
         Ok(crate::MessageBatchResult {
             affected_chat_ids: affected_chats.into_iter().collect(),
             active_chat_message_ids: active_inserted,
+            new_message_ids_per_chat: new_per_chat,
         })
+    }
+
+    /// Páginação para trás: mensagens com `timestamp < before_ts` (ou todas
+    /// as mais antigas se for None), em ordem ASC. Usado para virtualização
+    /// na UI — quando o usuário scrolla pro topo, pedimos o próximo lote
+    /// mais antigo.
+    pub async fn get_message_rows_before(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        before_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<MessageRow>> {
+        let rows = sqlx::query_as::<_, MessageRow>(
+            r#"SELECT
+                 m.message_id,
+                 m.chat_id,
+                 m.sender_contact_id,
+                 COALESCE(ct.contact_name, ct.push_name, ct.verified_name, ct.business_name, ct.phone_number) AS sender_name,
+                 m.content,
+                 m.message_type,
+                 m.timestamp,
+                 m.is_from_me,
+                 m.media_mimetype,
+                 m.media_filename,
+                 m.media_duration_secs,
+                 m.media_width,
+                 m.media_height,
+                 m.media_size_bytes,
+                 m.media_sha256,
+                 m.media_path,
+                 m.media_status
+               FROM messages m
+               LEFT JOIN contacts ct
+                 ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
+               WHERE m.account_id = ? AND m.chat_id = ? AND m.timestamp < ?
+               ORDER BY m.timestamp DESC
+               LIMIT ?"#,
+        )
+        .bind(account_id)
+        .bind(chat_id)
+        .bind(before_ts)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut rows = rows;
+        rows.reverse();
+        Ok(rows)
     }
 
     /// Aplica todos os contatos em UMA transação **com multi-row INSERT**.

@@ -147,6 +147,11 @@ pub struct MessageBatchInput<'a> {
 pub struct MessageBatchResult {
     pub affected_chat_ids: Vec<String>,
     pub active_chat_message_ids: Vec<String>,
+    /// Per-chat list of message_ids that were genuinely inserted (not
+    /// already in the table). Lets the dispatcher emit MessagesAppended
+    /// for every chat whose tab might be open, avoiding alias-mismatch
+    /// silent drops.
+    pub new_message_ids_per_chat: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Input para `run_contacts_batch`. Borrowed pra zero alocação extra.

@@ -37,6 +37,14 @@ pub enum Cmd {
     Repair,
     /// Trigger an async media download for a specific message.
     DownloadMedia { message_id: String },
+    /// Lazy-load older messages (page back). The UI passes the timestamp
+    /// of its currently-oldest row; the worker returns the next batch
+    /// strictly older than that.
+    LoadOlder {
+        chat_id: String,
+        before_ts: i64,
+        limit: i64,
+    },
     /// Logout the active account.
     Logout,
     /// Shut down the worker thread.
@@ -143,8 +151,12 @@ async fn run(
                     .as_ref()
                     .map(|r| (r.name.clone(), r.kind.clone()))
                     .unwrap_or_else(|| (id.clone(), "unknown".into()));
+                // Initial page is small (50). The chat tab will lazy-load
+                // older batches as the user scrolls up; keeping the
+                // first paint cheap matters more than guaranteeing the
+                // whole history is in memory.
                 let messages = worker
-                    .get_message_rows(&account_id, &id, 200, 0)
+                    .get_message_rows(&account_id, &id, 50, 0)
                     .await
                     .unwrap_or_default();
                 let _ = app.send(AppMsg::ChatOpened {
@@ -201,6 +213,27 @@ async fn run(
                 if let Err(e) = worker.reconcile_account(&account_id).await {
                     error!("reconcile: {e}");
                     let _ = app.send(AppMsg::RepairEnded);
+                }
+            }
+            Cmd::LoadOlder {
+                chat_id,
+                before_ts,
+                limit,
+            } => {
+                let acc = selected.lock().await.clone();
+                let Some(account_id) = acc else { continue };
+                match worker
+                    .get_message_rows_before(&account_id, &chat_id, before_ts, limit)
+                    .await
+                {
+                    Ok(messages) => {
+                        let _ = app.send(AppMsg::OlderMessagesLoaded {
+                            chat_id,
+                            messages,
+                            reached_top: false,
+                        });
+                    }
+                    Err(e) => error!("load_older: {e}"),
                 }
             }
             Cmd::DownloadMedia { message_id } => {

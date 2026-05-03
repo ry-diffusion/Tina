@@ -20,18 +20,22 @@ pub enum ChatTabInput {
     Reset(Vec<MessageRow>),
     Append(Vec<MessageRow>),
     Send,
-    /// Forwarded from `MainPage` when a media download finishes (or comes
-    /// pre-resolved by dedup). The tab walks its factory and patches any
-    /// matching bubble in-place.
     MediaReady {
         message_ids: Vec<String>,
         path: String,
         mimetype: Option<String>,
     },
     MediaFailed(String),
-    /// A bubble emitted "tap to download". Forward up to MainPage so the
-    /// service worker actually issues the IPC command.
     RequestMediaDownload(String),
+    /// VAdjustment crossed the load-more threshold. Internal trigger.
+    NearTop,
+    /// Older page came back from the worker. `reached_top = true` means
+    /// the worker returned fewer rows than requested → we've loaded the
+    /// entire history; stop trying.
+    PrependOlder {
+        messages: Vec<MessageRow>,
+        reached_top: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -39,6 +43,7 @@ pub enum ChatTabOutput {
     Send { chat_id: String, text: String },
     Close { chat_id: String },
     RequestMediaDownload(String),
+    RequestLoadOlder { chat_id: String, before_ts: i64 },
 }
 
 pub struct ChatTabInit {
@@ -55,18 +60,17 @@ pub struct ChatTab {
     messages: FactoryVecDeque<MessageBubble>,
     composer_buffer: gtk::EntryBuffer,
     last_sender: Option<String>,
-    /// Held so we can scroll to the bottom on Append. Captured from the
-    /// view! macro via `#[name(scroll)]`.
     scroll: Option<gtk::ScrolledWindow>,
-    /// Dedup against the worker emitting the same row twice (e.g. when the
-    /// dispatcher AND a manual fetch-after-send both fire MessagesAppended
-    /// for the same id). Keyed by message_id.
     seen_message_ids: std::collections::HashSet<String>,
-    /// Guard against accidental double-submit when GTK fires two activate
-    /// events back-to-back (Enter on the entry + the focus-driven default
-    /// activation, etc.). We refuse to re-output the same body within 1
-    /// second.
     last_send: Option<(String, std::time::Instant)>,
+    /// Timestamp of the OLDEST message currently in the factory; used as
+    /// the cursor for LoadOlder requests.
+    oldest_ts: Option<i64>,
+    /// True while a LoadOlder request is in flight. Prevents the scroll
+    /// listener from firing the same request 60×/s.
+    loading_older: bool,
+    /// Latched once the worker returns fewer rows than requested.
+    reached_top: bool,
 }
 
 #[relm4::component(pub)]
@@ -159,6 +163,8 @@ impl SimpleComponent for ChatTab {
             seen.insert(r.message_id.clone());
         }
 
+        let oldest_ts = init.initial.iter().map(|r| r.timestamp).min();
+
         let mut model = ChatTab {
             chat_id: init.chat_id,
             name: init.name,
@@ -169,11 +175,29 @@ impl SimpleComponent for ChatTab {
             scroll: None,
             seen_message_ids: seen,
             last_send: None,
+            oldest_ts,
+            loading_older: false,
+            reached_top: false,
         };
 
         let messages_list = model.messages.widget();
         let widgets = view_output!();
         model.scroll = Some(widgets.scroll.clone());
+
+        // Scroll listener for lazy-load: when the user scrolls within
+        // 2× page-size of the top, ask the parent for an older page.
+        // The Input::NearTop handler debounces via `loading_older`.
+        {
+            let scroll = widgets.scroll.clone();
+            let input = sender.input_sender().clone();
+            scroll.vadjustment().connect_value_changed(move |adj| {
+                let value = adj.value();
+                let page = adj.page_size();
+                if value < page * 2.0 && adj.upper() > page * 2.0 {
+                    let _ = input.send(ChatTabInput::NearTop);
+                }
+            });
+        }
 
         ComponentParts { model, widgets }
     }
@@ -185,6 +209,9 @@ impl SimpleComponent for ChatTab {
                 self.kind = kind;
             }
             ChatTabInput::Reset(rows) => {
+                self.oldest_ts = rows.iter().map(|r| r.timestamp).min();
+                self.reached_top = rows.len() < 50;
+                self.loading_older = false;
                 {
                     let mut guard = self.messages.guard();
                     guard.clear();
@@ -349,6 +376,73 @@ impl SimpleComponent for ChatTab {
                 if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
                     let adj = scroll.vadjustment();
                     glib::idle_add_local_once(move || adj.set_value(v));
+                }
+            }
+            ChatTabInput::NearTop => {
+                if self.loading_older || self.reached_top {
+                    return;
+                }
+                let Some(before_ts) = self.oldest_ts else {
+                    return;
+                };
+                self.loading_older = true;
+                tracing::info!(
+                    chat = %self.chat_id,
+                    before_ts,
+                    "ChatTab: requesting older page",
+                );
+                let _ = sender.output(ChatTabOutput::RequestLoadOlder {
+                    chat_id: self.chat_id.clone(),
+                    before_ts,
+                });
+            }
+            ChatTabInput::PrependOlder {
+                messages,
+                reached_top,
+            } => {
+                self.loading_older = false;
+                if reached_top || messages.len() < 50 {
+                    self.reached_top = true;
+                }
+                if messages.is_empty() {
+                    return;
+                }
+                // Preserve scroll position: capture (upper, value) before,
+                // then after layout settles, set value = old_value +
+                // (new_upper - old_upper). The user stays on the same
+                // content while history grows above.
+                let saved = self
+                    .scroll
+                    .as_ref()
+                    .map(|s| (s.vadjustment().upper(), s.vadjustment().value()));
+
+                let new_oldest = messages.iter().map(|r| r.timestamp).min();
+                if let Some(t) = new_oldest {
+                    self.oldest_ts = Some(match self.oldest_ts {
+                        Some(prev) => prev.min(t),
+                        None => t,
+                    });
+                }
+
+                {
+                    let mut guard = self.messages.guard();
+                    // Insert oldest first (reversed iteration so push_front
+                    // builds correct chronological order).
+                    for row in messages.iter().rev() {
+                        if !self.seen_message_ids.insert(row.message_id.clone()) {
+                            continue;
+                        }
+                        guard.push_front(MessageItem::from_row(row, false));
+                    }
+                }
+
+                if let (Some(scroll), Some((old_upper, old_value))) = (self.scroll.clone(), saved) {
+                    glib::idle_add_local_once(move || {
+                        let adj = scroll.vadjustment();
+                        let new_upper = adj.upper();
+                        let delta = new_upper - old_upper;
+                        adj.set_value(old_value + delta);
+                    });
                 }
             }
             ChatTabInput::RequestMediaDownload(id) => {

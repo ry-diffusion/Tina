@@ -262,6 +262,22 @@ impl TinaWorker {
             .await?)
     }
 
+    /// Página anterior: mensagens com timestamp estritamente menor que
+    /// `before_ts`, em ordem ASC. Usado pela UI quando o usuário scrolla
+    /// pro topo do thread e queremos carregar mais histórico.
+    pub async fn get_message_rows_before(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        before_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<tina_db::MessageRow>> {
+        Ok(self
+            .db
+            .get_message_rows_before(account_id, chat_id, before_ts, limit)
+            .await?)
+    }
+
     pub async fn get_chat(&self, account_id: &str, chat_id: &str) -> Result<Option<tina_db::Chat>> {
         Ok(self.db.get_chat(account_id, chat_id).await?)
     }
@@ -455,50 +471,32 @@ async fn flush(
             .or_default()
             .extend(res.affected_chat_ids);
 
-        // Diagnostics: surface why a flush did or did not emit
-        // MessagesAppended. Useful when chat_id resolution mismatches the
-        // UI's active chat (e.g., LID vs PN).
-        match (
-            active_chat_for_account.as_deref(),
-            res.active_chat_message_ids.is_empty(),
-        ) {
-            (Some(chat_id), false) => {
-                tracing::info!(
-                    chat = chat_id,
-                    count = res.active_chat_message_ids.len(),
-                    "dispatcher: emitting MessagesAppended",
-                );
-                let rows = db
-                    .get_message_rows_by_ids(&account_id, &res.active_chat_message_ids)
-                    .await?;
-                if !rows.is_empty() {
-                    let _ = event_tx
-                        .send(WorkerEvent::MessagesAppended {
-                            account_id: account_id.clone(),
-                            chat_id: chat_id.to_string(),
-                            messages: rows,
-                        })
-                        .await;
-                }
+        // Emit MessagesAppended for EVERY chat that received new rows in
+        // this flush, not just `active_chat`. The previous "match active
+        // chat only" logic dropped real-time deltas silently when LID-vs-PN
+        // alias resolution gave the new message a different canonical
+        // chat_id than the one the user opened the tab with. The UI dedups
+        // by message_id, so handing rows to a tab that already has them is
+        // essentially free.
+        for (chat_id, msg_ids) in res.new_message_ids_per_chat {
+            if msg_ids.is_empty() {
+                continue;
             }
-            (Some(chat_id), true) => {
-                // WARN so it shows up in default log levels — this is the
-                // smoking-gun symptom of an active_chat / chat_id mismatch
-                // (the user reported new messages not rendering live).
-                tracing::warn!(
-                    active_chat = chat_id,
-                    msg_inputs = inputs.len(),
-                    "dispatcher: flush had active_chat but no message matched (alias mismatch?)",
-                );
-            }
-            (None, _) => {
-                tracing::debug!(
-                    affected = "tracked",
-                    msg_inputs = inputs.len(),
-                    "dispatcher: flush had no active chat",
-                );
+            let rows = db.get_message_rows_by_ids(&account_id, &msg_ids).await?;
+            if !rows.is_empty() {
+                let _ = event_tx
+                    .send(WorkerEvent::MessagesAppended {
+                        account_id: account_id.clone(),
+                        chat_id,
+                        messages: rows,
+                    })
+                    .await;
             }
         }
+        // active_chat_message_ids is still produced by the DB layer for
+        // future use (e.g. read-receipt tracking) but no longer drives the
+        // event flow.
+        let _ = (active_chat_for_account, res.active_chat_message_ids);
     }
 
     // 2. Contatos.
