@@ -4,7 +4,8 @@
 /// - v2: schema inicial com aliases canônicos.
 /// - v3: campos de mídia (mimetype, dims, duração, sha256 pra dedup).
 /// - v4: avatar_path em chats e contacts (cache local de profile pics).
-pub const SCHEMA_VERSION: i64 = 4;
+/// - v5: last_message_type + last_message_duration_secs em chats (preview).
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS chats (
     last_message_ts INTEGER,
     last_message_from_me INTEGER NOT NULL DEFAULT 0,
     last_sender_contact_id TEXT,
+    last_message_type TEXT,                          -- 'text','image','audio','video','sticker','document'
+    last_message_duration_secs INTEGER,              -- preenchido só pra audio/video
     unread_count INTEGER NOT NULL DEFAULT 0,
     pinned INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
@@ -143,6 +146,11 @@ CREATE TABLE IF NOT EXISTS settings (
 pub const MIGRATION_V3_TO_V4: &str = r#"
 ALTER TABLE chats ADD COLUMN avatar_path TEXT;
 ALTER TABLE contacts ADD COLUMN avatar_path TEXT;
+"#;
+
+pub const MIGRATION_V4_TO_V5: &str = r#"
+ALTER TABLE chats ADD COLUMN last_message_type TEXT;
+ALTER TABLE chats ADD COLUMN last_message_duration_secs INTEGER;
 "#;
 
 /// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda

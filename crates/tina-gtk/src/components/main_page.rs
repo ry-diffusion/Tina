@@ -329,46 +329,47 @@ impl SimpleComponent for MainPage {
                         },
                     },
 
-                    // Title widget: when a single chat is open, show
-                    // avatar + name + kind centred (messenger style);
-                    // when multiple chats are open, show the tab bar
-                    // instead so the user can switch.
+                    // Title widget: a Stack switches between a single-
+                    // chat layout (avatar + name centred) and the multi-
+                    // chat tab bar. Stack-switching is more reliable
+                    // than per-child set_visible bindings because
+                    // existing-widget references don't always re-evaluate
+                    // their #[watch] bindings inside relm4's view! macro.
                     #[wrap(Some)]
-                    set_title_widget = &gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 8,
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-
-                        adw::Avatar {
-                            set_size: 30,
-                            set_show_initials: true,
-                            #[watch]
-                            set_visible: model.tab_count == 1
-                                && !model.current_chat_name.is_empty(),
-                            #[watch]
-                            set_text: Some(&model.current_chat_name),
-                            #[watch]
-                            set_custom_image: model.current_chat_avatar
-                                .as_deref()
-                                .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
-                                .map(|t| t.upcast::<gtk::gdk::Paintable>())
-                                .as_ref(),
+                    set_title_widget = &gtk::Stack {
+                        #[watch]
+                        set_visible_child_name: if model.tab_count >= 2 {
+                            "multi"
+                        } else {
+                            "single"
                         },
 
-                        adw::WindowTitle {
-                            #[watch]
-                            set_visible: model.tab_count == 1,
-                            #[watch]
-                            set_title: &model.current_chat_name,
-                            // Subtitle removed — the kind label was
-                            // redundant with the avatar's tooltip.
+                        add_named[Some("single")] = &gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 8,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+
+                            adw::Avatar {
+                                set_size: 30,
+                                set_show_initials: true,
+                                #[watch]
+                                set_text: Some(&model.current_chat_name),
+                                #[watch]
+                                set_custom_image: model.current_chat_avatar
+                                    .as_deref()
+                                    .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                                    .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                                    .as_ref(),
+                            },
+
+                            adw::WindowTitle {
+                                #[watch]
+                                set_title: &model.current_chat_name,
+                            },
                         },
 
-                        model.tab_bar.clone() -> adw::TabBar {
-                            #[watch]
-                            set_visible: model.tab_count >= 2,
-                        },
+                        add_named[Some("multi")] = &model.tab_bar.clone(),
                     },
                 },
 

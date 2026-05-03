@@ -97,6 +97,8 @@ pub struct Chat {
     pub last_message_ts: Option<i64>,
     pub last_message_from_me: bool,
     pub last_sender_contact_id: Option<String>,
+    pub last_message_type: Option<String>,
+    pub last_message_duration_secs: Option<i64>,
     pub unread_count: i64,
     pub pinned: bool,
     pub archived: bool,
@@ -117,6 +119,8 @@ pub struct ChatRow {
     pub last_message_preview: Option<String>,
     pub last_message_ts: Option<i64>,
     pub last_message_from_me: bool,
+    pub last_message_type: Option<String>,
+    pub last_message_duration_secs: Option<i64>,
     pub unread_count: i64,
     pub pinned: bool,
 }

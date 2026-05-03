@@ -28,7 +28,39 @@ pub struct ChatRowItem {
 
 impl ChatRowItem {
     pub fn from_row(row: &ChatRow) -> Self {
-        let preview = row.last_message_preview.clone().unwrap_or_default();
+        let raw = row.last_message_preview.clone().unwrap_or_default();
+        // Format the preview WhatsApp-style: emoji per media type +
+        // duration when relevant. Falls back to the raw text payload
+        // for plain messages.
+        let mtype = row.last_message_type.as_deref().unwrap_or("");
+        let preview = match mtype {
+            "image" => "📷 Foto".to_string(),
+            "audio" => match row.last_message_duration_secs {
+                Some(s) if s > 0 => format!("🎤 {}:{:02}", s / 60, s % 60),
+                _ => "🎤 Mensagem de voz".to_string(),
+            },
+            "video" => match row.last_message_duration_secs {
+                Some(s) if s > 0 => format!("🎬 Vídeo {}:{:02}", s / 60, s % 60),
+                _ => "🎬 Vídeo".to_string(),
+            },
+            "sticker" => "🎴 Figurinha".to_string(),
+            "document" => "📄 Documento".to_string(),
+            "contact" => "👤 Contato".to_string(),
+            "location" => "📍 Localização".to_string(),
+            // Fallback: bracketed-placeholder pattern-match for chats
+            // that haven't been re-flushed under v5 yet.
+            _ => match raw.as_str() {
+                "[Image]" => "📷 Foto".to_string(),
+                "[Audio]" => "🎤 Mensagem de voz".to_string(),
+                "[Video]" => "🎬 Vídeo".to_string(),
+                "[Sticker]" => "🎴 Figurinha".to_string(),
+                "[Document]" => "📄 Documento".to_string(),
+                "[Contact]" => "👤 Contato".to_string(),
+                "[Location]" => "📍 Localização".to_string(),
+                "[Live Location]" => "📍 Localização em tempo real".to_string(),
+                other => other.to_string(),
+            },
+        };
         let preview = if row.last_message_from_me && !preview.is_empty() {
             format!("Você: {preview}")
         } else {

@@ -5,7 +5,10 @@ use std::path::PathBuf;
 
 use crate::error::{DbError, Result};
 use crate::models::{Account, Chat, ChatKind, ChatRow, Contact, Message, MessageRow};
-use crate::schema::{MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION};
+use crate::schema::{
+    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, SCHEMA, SCHEMA_DROP,
+    SCHEMA_VERSION,
+};
 
 pub struct TinaDb {
     pool: Pool<Sqlite>,
@@ -73,14 +76,21 @@ impl TinaDb {
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             2 => {
-                tracing::info!("Migrating tina.db from v2 → v3 (adding media columns)");
+                tracing::info!("Migrating tina.db from v2 → v5");
                 sqlx::raw_sql(MIGRATION_V2_TO_V3).execute(&pool).await?;
                 sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             3 => {
-                tracing::info!("Migrating tina.db from v3 → v4 (adding avatar_path)");
+                tracing::info!("Migrating tina.db from v3 → v5");
                 sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            4 => {
+                tracing::info!("Migrating tina.db from v4 → v5 (preview type+duration)");
+                sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             other => {
@@ -508,6 +518,8 @@ impl TinaDb {
             placeholder: &'static str,
             from_me: bool,
             sender_contact_id: Option<String>,
+            message_type: &'a str,
+            duration_secs: Option<i64>,
         }
         let mut latest: HashMap<String, Latest<'_>> = HashMap::new();
 
@@ -576,6 +588,8 @@ impl TinaDb {
                         placeholder,
                         from_me: msg.is_from_me,
                         sender_contact_id: sender_contact_id.clone(),
+                        message_type: msg.message_type,
+                        duration_secs: msg.media_duration_secs,
                     });
                 }
                 Entry::Occupied(mut o) => {
@@ -587,6 +601,8 @@ impl TinaDb {
                             placeholder,
                             from_me: msg.is_from_me,
                             sender_contact_id: sender_contact_id.clone(),
+                            message_type: msg.message_type,
+                            duration_secs: msg.media_duration_secs,
                         });
                     }
                 }
@@ -693,6 +709,8 @@ impl TinaDb {
                        last_message_ts = ?,
                        last_message_from_me = ?,
                        last_sender_contact_id = ?,
+                       last_message_type = ?,
+                       last_message_duration_secs = ?,
                        updated_at = ?
                    WHERE account_id = ? AND chat_id = ?
                      AND (last_message_ts IS NULL OR last_message_ts <= ?)"#,
@@ -702,6 +720,8 @@ impl TinaDb {
             .bind(l.ts)
             .bind(l.from_me)
             .bind(&l.sender_contact_id)
+            .bind(l.message_type)
+            .bind(l.duration_secs)
             .bind(now_ts())
             .bind(account_id)
             .bind(chat_id)
@@ -1716,6 +1736,8 @@ fn chat_row_select_clause(filter_by_ids: bool) -> String {
             c.last_message_preview,
             c.last_message_ts,
             c.last_message_from_me,
+            c.last_message_type,
+            c.last_message_duration_secs,
             c.unread_count,
             c.pinned
            FROM chats c
