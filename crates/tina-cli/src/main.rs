@@ -178,7 +178,7 @@ fn handle_event(event: WorkerEvent) {
             mimetype,
         } => {
             println!(
-                "\n📥 Media ready for {} (messages {:?}): {} (mimetype: {})",
+                "\n📥 Media ready for {} (messages {:?}): {} (mimetype: {:?})",
                 account_id, affected_message_ids, path, mimetype
             );
         }

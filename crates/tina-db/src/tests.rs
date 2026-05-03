@@ -492,6 +492,13 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             timestamp: 100,
             is_from_me: false,
             raw_json: None,
+            media_mimetype: None,
+            media_filename: None,
+            media_duration_secs: None,
+            media_width: None,
+            media_height: None,
+            media_size_bytes: None,
+            media_sha256: None,
         },
         MessageBatchInput {
             message_id: "m2",
@@ -502,6 +509,13 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             timestamp: 300, // mais nova
             is_from_me: false,
             raw_json: None,
+            media_mimetype: None,
+            media_filename: None,
+            media_duration_secs: None,
+            media_width: None,
+            media_height: None,
+            media_size_bytes: None,
+            media_sha256: None,
         },
         MessageBatchInput {
             message_id: "m3",
@@ -512,12 +526,16 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             timestamp: 200,
             is_from_me: false,
             raw_json: None,
+            media_mimetype: None,
+            media_filename: None,
+            media_duration_secs: None,
+            media_width: None,
+            media_height: None,
+            media_size_bytes: None,
+            media_sha256: None,
         },
     ];
-    let res = db
-        .run_message_batch("acc1", None, &messages)
-        .await
-        .unwrap();
+    let res = db.run_message_batch("acc1", None, &messages).await.unwrap();
     assert_eq!(res.affected_chat_ids, vec![PN.to_string()]);
 
     // Last message do chat = a com timestamp 300.
@@ -543,6 +561,13 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             timestamp: 100,
             is_from_me: false,
             raw_json: None,
+            media_mimetype: None,
+            media_filename: None,
+            media_duration_secs: None,
+            media_width: None,
+            media_height: None,
+            media_size_bytes: None,
+            media_sha256: None,
         },
         MessageBatchInput {
             message_id: "m-other",
@@ -553,6 +578,13 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             timestamp: 100,
             is_from_me: true,
             raw_json: None,
+            media_mimetype: None,
+            media_filename: None,
+            media_duration_secs: None,
+            media_width: None,
+            media_height: None,
+            media_size_bytes: None,
+            media_sha256: None,
         },
     ];
     let res = db
@@ -575,6 +607,13 @@ async fn run_message_batch_skips_duplicates_via_insert_or_ignore() {
         timestamp: 100,
         is_from_me: false,
         raw_json: None,
+        media_mimetype: None,
+        media_filename: None,
+        media_duration_secs: None,
+        media_width: None,
+        media_height: None,
+        media_size_bytes: None,
+        media_sha256: None,
     };
     let r1 = db.run_message_batch("acc1", None, &[msg]).await.unwrap();
     assert_eq!(r1.affected_chat_ids.len(), 1);

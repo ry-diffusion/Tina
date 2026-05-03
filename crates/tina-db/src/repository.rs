@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use crate::error::{DbError, Result};
 use crate::models::{Account, Chat, ChatKind, ChatRow, Contact, Message, MessageRow};
 use crate::schema::{
-    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, SCHEMA, SCHEMA_DROP,
-    SCHEMA_VERSION,
+    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION,
 };
 
 pub struct TinaDb {
@@ -43,7 +42,10 @@ impl TinaDb {
         // WAL: leitores não bloqueiam escritas e vice-versa. NORMAL: fsync
         // só em checkpoint (perda máxima ≈ último commit em queda de força,
         // aceitável p/ chat). Ganho ~5-10× em throughput de write.
-        sqlx::query("PRAGMA journal_mode = WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await
+            .ok();
         sqlx::query("PRAGMA synchronous = NORMAL")
             .execute(&pool)
             .await
@@ -196,11 +198,13 @@ impl TinaDb {
     }
 
     pub async fn clear_account_identity(&self, account_id: &str) -> Result<()> {
-        sqlx::query("UPDATE accounts SET phone_number = NULL, jid = NULL, updated_at = ? WHERE id = ?")
-            .bind(now_ts())
-            .bind(account_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE accounts SET phone_number = NULL, jid = NULL, updated_at = ? WHERE id = ?",
+        )
+        .bind(now_ts())
+        .bind(account_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -255,13 +259,13 @@ impl TinaDb {
     }
 
     pub async fn get_chat(&self, account_id: &str, chat_id: &str) -> Result<Option<Chat>> {
-        Ok(sqlx::query_as::<_, Chat>(
-            "SELECT * FROM chats WHERE account_id = ? AND chat_id = ?",
+        Ok(
+            sqlx::query_as::<_, Chat>("SELECT * FROM chats WHERE account_id = ? AND chat_id = ?")
+                .bind(account_id)
+                .bind(chat_id)
+                .fetch_optional(&self.pool)
+                .await?,
         )
-        .bind(account_id)
-        .bind(chat_id)
-        .fetch_optional(&self.pool)
-        .await?)
     }
 
     pub async fn set_chat_display_name(
@@ -329,11 +333,18 @@ impl TinaDb {
             .await?)
     }
 
-    pub async fn get_chat_rows(&self, account_id: &str, chat_ids: &[String]) -> Result<Vec<ChatRow>> {
+    pub async fn get_chat_rows(
+        &self,
+        account_id: &str,
+        chat_ids: &[String],
+    ) -> Result<Vec<ChatRow>> {
         if chat_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = std::iter::repeat("?").take(chat_ids.len()).collect::<Vec<_>>().join(",");
+        let placeholders = std::iter::repeat("?")
+            .take(chat_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
         let q = chat_row_select_clause(true).replace("__IDS__", &placeholders);
         let mut query = sqlx::query_as::<_, ChatRow>(&q).bind(account_id);
         for id in chat_ids {
@@ -850,7 +861,7 @@ impl TinaDb {
         for (chunk_idx, chunk) in contacts.chunks(CONTACT_CHUNK).enumerate() {
             let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?)";
             let mut sql = String::from(
-                "INSERT INTO contacts (account_id, contact_id, pn_jid, lid_jid, phone_number, push_name, contact_name, verified_name, avatar_url, status, is_local, created_at, updated_at) VALUES "
+                "INSERT INTO contacts (account_id, contact_id, pn_jid, lid_jid, phone_number, push_name, contact_name, verified_name, avatar_url, status, is_local, created_at, updated_at) VALUES ",
             );
             sql.push_str(&repeat_csv(row_tpl, chunk.len()));
             sql.push_str(
@@ -962,9 +973,8 @@ impl TinaDb {
         // 2. Bulk INSERT em `chat_aliases` (self-aliases — chunks de 500).
         const CHAT_ALIAS_CHUNK: usize = 500;
         for chunk in groups.chunks(CHAT_ALIAS_CHUNK) {
-            let mut sql = String::from(
-                "INSERT INTO chat_aliases (account_id, alias_jid, chat_id) VALUES ",
-            );
+            let mut sql =
+                String::from("INSERT INTO chat_aliases (account_id, alias_jid, chat_id) VALUES ");
             sql.push_str(&repeat_csv("(?,?,?)", chunk.len()));
             sql.push_str(" ON CONFLICT(account_id, alias_jid) DO NOTHING");
             let mut q = sqlx::query(&sql);
@@ -1243,14 +1253,12 @@ impl TinaDb {
         message_id: &str,
         status: &str,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE messages SET media_status = ? WHERE account_id = ? AND message_id = ?",
-        )
-        .bind(status)
-        .bind(account_id)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE messages SET media_status = ? WHERE account_id = ? AND message_id = ?")
+            .bind(status)
+            .bind(account_id)
+            .bind(message_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -1338,12 +1346,7 @@ impl TinaDb {
     /// Persiste o caminho local do profile pic. Atualiza tanto `chats`
     /// (se a entidade for um chat de grupo/canal) quanto `contacts` (DM)
     /// — o resolver da chat list via JOIN ainda funciona em ambos.
-    pub async fn set_avatar_path(
-        &self,
-        account_id: &str,
-        jid: &str,
-        path: &str,
-    ) -> Result<()> {
+    pub async fn set_avatar_path(&self, account_id: &str, jid: &str, path: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "UPDATE chats SET avatar_path = ?, updated_at = strftime('%s','now')
@@ -1373,11 +1376,7 @@ impl TinaDb {
         Ok(())
     }
 
-    pub async fn count_messages_for_chat(
-        &self,
-        account_id: &str,
-        chat_id: &str,
-    ) -> Result<i64> {
+    pub async fn count_messages_for_chat(&self, account_id: &str, chat_id: &str) -> Result<i64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM messages WHERE account_id = ? AND chat_id = ?",
         )
@@ -1489,11 +1488,13 @@ async fn lookup_alias<'e, E>(
 where
     E: sqlx::Executor<'e, Database = Sqlite>,
 {
-    let table = if is_chat { "chat_aliases" } else { "contact_aliases" };
+    let table = if is_chat {
+        "chat_aliases"
+    } else {
+        "contact_aliases"
+    };
     let col = if is_chat { "chat_id" } else { "contact_id" };
-    let sql = format!(
-        "SELECT {col} FROM {table} WHERE account_id = ? AND alias_jid = ?"
-    );
+    let sql = format!("SELECT {col} FROM {table} WHERE account_id = ? AND alias_jid = ?");
     let row = sqlx::query(&sql)
         .bind(account_id)
         .bind(alias_jid)
