@@ -4,6 +4,7 @@
 // renders whatever it's been handed.
 
 use adw::prelude::*;
+use gtk::glib;
 use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 use tina_db::MessageRow;
@@ -54,6 +55,9 @@ pub struct ChatTab {
     messages: FactoryVecDeque<MessageBubble>,
     composer_buffer: gtk::EntryBuffer,
     last_sender: Option<String>,
+    /// Held so we can scroll to the bottom on Append. Captured from the
+    /// view! macro via `#[name(scroll)]`.
+    scroll: Option<gtk::ScrolledWindow>,
 }
 
 #[relm4::component(pub)]
@@ -140,17 +144,19 @@ impl SimpleComponent for ChatTab {
             }
         }
 
-        let model = ChatTab {
+        let mut model = ChatTab {
             chat_id: init.chat_id,
             name: init.name,
             kind: init.kind,
             messages,
             composer_buffer: gtk::EntryBuffer::default(),
             last_sender: None,
+            scroll: None,
         };
 
         let messages_list = model.messages.widget();
         let widgets = view_output!();
+        model.scroll = Some(widgets.scroll.clone());
 
         ComponentParts { model, widgets }
     }
@@ -175,14 +181,31 @@ impl SimpleComponent for ChatTab {
                 }
             }
             ChatTabInput::Append(rows) => {
-                let mut guard = self.messages.guard();
-                for row in &rows {
-                    let show = !row.is_from_me
-                        && self.kind != "dm"
-                        && self.last_sender.as_deref()
-                            != Some(row.sender_name.as_deref().unwrap_or(""));
-                    self.last_sender = row.sender_name.clone();
-                    guard.push_back(MessageItem::from_row(row, show));
+                tracing::debug!(
+                    chat = %self.chat_id,
+                    count = rows.len(),
+                    "ChatTab::Append"
+                );
+                if rows.is_empty() {
+                    return;
+                }
+                {
+                    let mut guard = self.messages.guard();
+                    for row in &rows {
+                        let show = !row.is_from_me
+                            && self.kind != "dm"
+                            && self.last_sender.as_deref()
+                                != Some(row.sender_name.as_deref().unwrap_or(""));
+                        self.last_sender = row.sender_name.clone();
+                        guard.push_back(MessageItem::from_row(row, show));
+                    }
+                }
+                // Auto-scroll to bottom on append so the user sees the
+                // newly-arrived message without manually scrolling.
+                if let Some(adj) = self.scroll.as_ref().map(|s| s.vadjustment()) {
+                    glib::idle_add_local_once(move || {
+                        adj.set_value(adj.upper() - adj.page_size());
+                    });
                 }
             }
             ChatTabInput::Send => {

@@ -265,6 +265,11 @@ async fn forward_events(
             WorkerEvent::MessagesAppended {
                 chat_id, messages, ..
             } => {
+                tracing::info!(
+                    chat = %chat_id,
+                    count = messages.len(),
+                    "service: MessagesAppended → AppMsg",
+                );
                 let _ = app.send(AppMsg::MessagesAppended { chat_id, messages });
             }
             WorkerEvent::HistorySyncComplete { messages_count, .. } => {

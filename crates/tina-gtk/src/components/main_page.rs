@@ -564,8 +564,20 @@ impl SimpleComponent for MainPage {
                 // Service told us "no chat open" — leave tabs as-is.
             }
             MainInput::MessagesAppended { chat_id, messages } => {
+                tracing::info!(
+                    chat = %chat_id,
+                    count = messages.len(),
+                    open_tabs = self.open_tabs.len(),
+                    has_tab = self.open_tabs.contains_key(&chat_id),
+                    "main: MessagesAppended → tab",
+                );
                 if let Some((controller, _)) = self.open_tabs.get(&chat_id) {
                     let _ = controller.sender().send(ChatTabInput::Append(messages));
+                } else {
+                    tracing::warn!(
+                        chat = %chat_id,
+                        "MessagesAppended received for chat with no open tab",
+                    );
                 }
             }
             MainInput::TabSelected(chat_id) => {
