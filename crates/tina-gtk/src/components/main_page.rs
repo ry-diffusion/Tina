@@ -363,8 +363,15 @@ impl SimpleComponent for MainPage {
                         glib::Propagation::Stop
                     },
                     connect_selected_page_notify[sender] => move |view| {
+                        // `keyword()` is empty for a just-appended page
+                        // whose set_keyword hasn't run yet. Skip these
+                        // transient notifications; the real one with the
+                        // chat_id arrives once we've finished configuring
+                        // the page in the ChatOpened handler.
                         let id = view.selected_page()
-                            .and_then(|p| p.keyword().map(|s| s.to_string()));
+                            .and_then(|p| p.keyword())
+                            .map(|s| s.to_string())
+                            .filter(|s| !s.is_empty());
                         sender.input(MainInput::TabSelected(id));
                     },
                 },
@@ -616,16 +623,20 @@ impl SimpleComponent for MainPage {
                         self.current_chat_name = name.clone();
                         self.current_chat_kind = kind.clone();
                     }
-                    // The newly-selected tab may be transitioning from
-                    // unrealised to realised; nudge it to sticky-bottom
-                    // so the user lands on the latest message instead
-                    // of wherever the listbox happened to allocate.
                     if let Some((controller, _)) = self.open_tabs.get(id) {
                         let _ = controller.sender().send(ChatTabInput::StickToBottom);
                     }
-                } else {
+                } else if self.open_tabs.is_empty() {
                     self.current_chat_name.clear();
                     self.current_chat_kind.clear();
+                } else {
+                    // Spurious selected-page-notify (most often the one
+                    // that fires immediately after `tab_view.append`,
+                    // BEFORE we've set the new page's keyword). Keep the
+                    // current title intact instead of blanking the
+                    // headerbar — the keyword-bearing notify will arrive
+                    // moments later.
+                    return;
                 }
                 let _ = sender.output(MainOutput::FocusChat(chat_id));
             }
