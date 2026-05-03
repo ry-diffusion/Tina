@@ -39,6 +39,9 @@ pub enum ChatTabInput {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    /// User switched into this tab. Force sticky-bottom + a deferred
+    /// scroll so the freshly-realised page lands on the latest message.
+    StickToBottom,
 }
 
 #[derive(Debug)]
@@ -499,6 +502,32 @@ impl SimpleComponent for ChatTab {
                             path: None,
                             status: "failed".into(),
                             mimetype: None,
+                        },
+                    );
+                }
+            }
+            ChatTabInput::StickToBottom => {
+                self.bottomed.set(true);
+                if let Some(scroll) = self.scroll.clone() {
+                    // The page may have only just been realised by
+                    // AdwTabView selecting it — schedule both an idle
+                    // and a 50ms timeout so we catch the layout pass.
+                    let s1 = scroll.clone();
+                    glib::idle_add_local_once(move || {
+                        let adj = s1.vadjustment();
+                        let target = adj.upper() - adj.page_size();
+                        if target >= 0.0 {
+                            adj.set_value(target);
+                        }
+                    });
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(50),
+                        move || {
+                            let adj = scroll.vadjustment();
+                            let target = adj.upper() - adj.page_size();
+                            if target >= 0.0 {
+                                adj.set_value(target);
+                            }
                         },
                     );
                 }

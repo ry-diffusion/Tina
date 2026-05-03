@@ -598,6 +598,13 @@ impl SimpleComponent for MainPage {
                         self.current_chat_name = name.clone();
                         self.current_chat_kind = kind.clone();
                     }
+                    // The newly-selected tab may be transitioning from
+                    // unrealised to realised; nudge it to sticky-bottom
+                    // so the user lands on the latest message instead
+                    // of wherever the listbox happened to allocate.
+                    if let Some((controller, _)) = self.open_tabs.get(id) {
+                        let _ = controller.sender().send(ChatTabInput::StickToBottom);
+                    }
                 } else {
                     self.current_chat_name.clear();
                     self.current_chat_kind.clear();

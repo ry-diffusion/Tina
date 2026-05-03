@@ -234,10 +234,6 @@ impl FactoryComponent for MessageBubble {
                     },
 
                     gtk::Overlay {
-                        // The same overlay holds either the actual media
-                        // or the square placeholder, so the bubble has the
-                        // exact same external dimensions before and after
-                        // download — no layout shift on click.
                         #[wrap(Some)]
                         set_child = &gtk::Frame {
                             add_css_class: "card",
@@ -246,30 +242,33 @@ impl FactoryComponent for MessageBubble {
                                 if self.item.message_type == "sticker" { 128 } else { 210 },
                             ),
 
-                            // Loaded image / sticker.
+                            // Loaded image / sticker. #[watch] so the
+                            // visibility flips when MediaReady arrives.
                             gtk::Picture {
+                                #[watch]
                                 set_visible: self.item.has_local_file()
                                     && matches!(
                                         self.item.message_type.as_str(),
                                         "image" | "sticker"
                                     ),
+                                #[watch]
                                 set_filename: self.item.media_path.as_deref(),
                                 set_can_shrink: true,
                             },
                         },
 
-                        // Loaded video — same edge-to-edge slot.
                         add_overlay = &gtk::Video {
+                            #[watch]
                             set_visible: self.item.has_local_file()
                                 && self.item.message_type == "video",
+                            #[watch]
                             set_filename: self.item.media_path
                                 .as_deref()
                                 .filter(|_| self.item.message_type == "video"),
                         },
 
-                        // Placeholder backdrop: faded type icon as the
-                        // background of the empty slot.
                         add_overlay = &gtk::Image {
+                            #[watch]
                             set_visible: !self.item.has_local_file(),
                             set_icon_name: Some(self.item.placeholder_icon()),
                             set_pixel_size: 56,
@@ -278,18 +277,20 @@ impl FactoryComponent for MessageBubble {
                             add_css_class: "dim-label",
                         },
 
-                        // Centred circular download / retry button.
                         add_overlay = &gtk::Button {
+                            #[watch]
                             set_visible: !self.item.has_local_file()
                                 && self.item.media_status != "downloading",
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
+                            #[watch]
                             set_icon_name: match self.item.media_status.as_str() {
                                 "failed" => "view-refresh-symbolic",
                                 _ => "folder-download-symbolic",
                             },
                             add_css_class: "circular",
                             add_css_class: "osd",
+                            #[watch]
                             set_tooltip_text: Some(match self.item.media_status.as_str() {
                                 "failed" => "Retry download",
                                 _ => "Download",
@@ -301,8 +302,8 @@ impl FactoryComponent for MessageBubble {
                             },
                         },
 
-                        // Spinner while in flight.
                         add_overlay = &gtk::Spinner {
+                            #[watch]
                             set_visible: !self.item.has_local_file()
                                 && self.item.media_status == "downloading",
                             set_halign: gtk::Align::Center,
@@ -312,8 +313,8 @@ impl FactoryComponent for MessageBubble {
                             set_height_request: 32,
                         },
 
-                        // Bottom-left pill: dimensions / size (placeholder only).
                         add_overlay = &gtk::Box {
+                            #[watch]
                             set_visible: !self.item.has_local_file()
                                 && !self.item.media_summary.is_empty(),
                             set_halign: gtk::Align::Start,
@@ -393,6 +394,7 @@ impl FactoryComponent for MessageBubble {
                         // text. ── Compact row: audio / document not yet
                         // downloaded.
                         gtk::Box {
+                            #[watch]
                             set_visible: !self.item.has_local_file()
                                 && matches!(
                                     self.item.message_type.as_str(),
@@ -428,11 +430,14 @@ impl FactoryComponent for MessageBubble {
                             },
 
                             gtk::Button {
+                                #[watch]
                                 set_visible: self.item.media_status != "downloading",
+                                #[watch]
                                 set_icon_name: match self.item.media_status.as_str() {
                                     "failed" => "view-refresh-symbolic",
                                     _ => "folder-download-symbolic",
                                 },
+                                #[watch]
                                 set_tooltip_text: Some(match self.item.media_status.as_str() {
                                     "failed" => "Retry download",
                                     _ => "Download",
@@ -448,6 +453,7 @@ impl FactoryComponent for MessageBubble {
                             },
 
                             gtk::Spinner {
+                                #[watch]
                                 set_visible: self.item.media_status == "downloading",
                                 set_spinning: true,
                                 set_valign: gtk::Align::Center,
@@ -458,8 +464,10 @@ impl FactoryComponent for MessageBubble {
 
                         // ── Audio downloaded: inline MediaControls.
                         gtk::MediaControls {
+                            #[watch]
                             set_visible: self.item.has_local_file()
                                 && self.item.message_type == "audio",
+                            #[watch]
                             set_media_stream: self.item.media_path
                                 .as_deref()
                                 .filter(|_| self.item.message_type == "audio")
@@ -469,6 +477,7 @@ impl FactoryComponent for MessageBubble {
 
                         // ── Document downloaded: open externally.
                         gtk::Button {
+                            #[watch]
                             set_visible: self.item.has_local_file()
                                 && self.item.message_type == "document",
                             set_label: "Open externally",
