@@ -44,9 +44,10 @@ pub struct TinaWorker {
     nanachi: Arc<RwLock<NanachiManager>>,
     event_tx: mpsc::Sender<WorkerEvent>,
     event_rx: Option<mpsc::Receiver<WorkerEvent>>,
-    /// Chat atualmente em foco na UI. Quando definido, mensagens novas para
-    /// ele saem como `MessagesAppended` além do `ChatsUpserted` padrão.
-    active_chat: Arc<RwLock<Option<(String /*account*/, String /*chat_id*/)>>>,
+    /// Chats atualmente abertos como tab na UI, por conta. Apenas chats
+    /// presentes aqui recebem `MessagesAppended` no flush — durante sync,
+    /// dezenas de chats fechados receberiam eventos inúteis e a UI travava.
+    open_chats: Arc<RwLock<HashMap<String /*account*/, HashSet<String /*chat_id*/>>>>,
 }
 
 impl TinaWorker {
@@ -59,7 +60,7 @@ impl TinaWorker {
             nanachi: Arc::new(RwLock::new(nanachi)),
             event_tx,
             event_rx: Some(event_rx),
-            active_chat: Arc::new(RwLock::new(None)),
+            open_chats: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -76,8 +77,8 @@ impl TinaWorker {
         if let Some(rx) = ipc_rx {
             let db = self.db.clone();
             let event_tx = self.event_tx.clone();
-            let active_chat = self.active_chat.clone();
-            tokio::spawn(dispatcher_loop(db, event_tx, active_chat, outstanding, rx));
+            let open_chats = self.open_chats.clone();
+            tokio::spawn(dispatcher_loop(db, event_tx, open_chats, outstanding, rx));
         }
         Ok(())
     }
@@ -303,12 +304,31 @@ impl TinaWorker {
         Ok(rows.into_iter().next())
     }
 
-    /// UI define o chat atualmente aberto (ou None quando volta pra lista).
-    /// Enquanto definido, novas mensagens daquele chat saem como
-    /// `MessagesAppended` para renderização incremental.
-    pub async fn set_active_chat(&self, account_id: &str, chat_id: Option<&str>) {
-        let mut guard = self.active_chat.write().await;
-        *guard = chat_id.map(|c| (account_id.to_string(), c.to_string()));
+    /// UI registra um chat como aberto (tab nova). Enquanto presente,
+    /// mensagens novas saem como `MessagesAppended` para renderização
+    /// incremental; chats ausentes do set são silenciosamente ignorados
+    /// no flush — a UI já tem o snapshot via `ChatsUpserted`.
+    pub async fn add_open_chat(&self, account_id: &str, chat_id: &str) {
+        let mut guard = self.open_chats.write().await;
+        guard
+            .entry(account_id.to_string())
+            .or_default()
+            .insert(chat_id.to_string());
+    }
+
+    pub async fn remove_open_chat(&self, account_id: &str, chat_id: &str) {
+        let mut guard = self.open_chats.write().await;
+        if let Some(set) = guard.get_mut(account_id) {
+            set.remove(chat_id);
+            if set.is_empty() {
+                guard.remove(account_id);
+            }
+        }
+    }
+
+    pub async fn clear_open_chats(&self, account_id: &str) {
+        let mut guard = self.open_chats.write().await;
+        guard.remove(account_id);
     }
 }
 
@@ -322,7 +342,7 @@ impl TinaWorker {
 async fn dispatcher_loop(
     db: Arc<TinaDb>,
     event_tx: mpsc::Sender<WorkerEvent>,
-    active_chat: Arc<RwLock<Option<(String, String)>>>,
+    open_chats: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     outstanding: Arc<std::sync::Mutex<HashMap<String, tina_ipc::CommandTiming>>>,
     mut raw_rx: mpsc::Receiver<String>,
 ) {
@@ -395,7 +415,7 @@ async fn dispatcher_loop(
                         deadline = Some(tokio::time::Instant::now() + FLUSH_WINDOW);
                     }
                     if buffer.total_count() >= FLUSH_THRESHOLD {
-                        if let Err(e) = flush(&db, &event_tx, &active_chat, &mut buffer).await {
+                        if let Err(e) = flush(&db, &event_tx, &open_chats, &mut buffer).await {
                             tracing::error!("flush error: {}", e);
                         }
                         deadline = None;
@@ -412,7 +432,7 @@ async fn dispatcher_loop(
                 }
             }
             _ = timer, if deadline.is_some() => {
-                if let Err(e) = flush(&db, &event_tx, &active_chat, &mut buffer).await {
+                if let Err(e) = flush(&db, &event_tx, &open_chats, &mut buffer).await {
                     tracing::error!("flush error: {}", e);
                 }
                 deadline = None;
@@ -422,7 +442,7 @@ async fn dispatcher_loop(
 
     // Drain final ao fechar.
     if !buffer.is_empty() {
-        let _ = flush(&db, &event_tx, &active_chat, &mut buffer).await;
+        let _ = flush(&db, &event_tx, &open_chats, &mut buffer).await;
     }
 }
 
@@ -431,7 +451,7 @@ async fn dispatcher_loop(
 async fn flush(
     db: &TinaDb,
     event_tx: &mpsc::Sender<WorkerEvent>,
-    active_chat: &Arc<RwLock<Option<(String, String)>>>,
+    open_chats: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     buffer: &mut DirtyBuffer,
 ) -> Result<()> {
     let started = Instant::now();
@@ -440,15 +460,12 @@ async fn flush(
     let count_groups: usize = buffer.groups.values().map(|v| v.len()).sum();
 
     let mut affected: HashMap<String, HashSet<String>> = HashMap::new();
-    let active = active_chat.read().await.clone();
+    let open_snapshot = open_chats.read().await.clone();
 
     // 1. Mensagens (criam chats, registram senders).
     let messages = std::mem::take(&mut buffer.messages);
     for (account_id, msgs) in messages {
-        let active_chat_for_account = active
-            .as_ref()
-            .filter(|(a, _)| a == &account_id)
-            .map(|(_, c)| c.clone());
+        let open_for_account = open_snapshot.get(&account_id);
 
         let inputs: Vec<tina_db::MessageBatchInput<'_>> = msgs
             .iter()
@@ -476,7 +493,7 @@ async fn flush(
             .collect();
 
         let res = db
-            .run_message_batch(&account_id, active_chat_for_account.as_deref(), &inputs)
+            .run_message_batch(&account_id, None, &inputs)
             .await?;
 
         affected
@@ -484,15 +501,20 @@ async fn flush(
             .or_default()
             .extend(res.affected_chat_ids);
 
-        // Emit MessagesAppended for EVERY chat that received new rows in
-        // this flush, not just `active_chat`. The previous "match active
-        // chat only" logic dropped real-time deltas silently when LID-vs-PN
-        // alias resolution gave the new message a different canonical
-        // chat_id than the one the user opened the tab with. The UI dedups
-        // by message_id, so handing rows to a tab that already has them is
-        // essentially free.
+        // Emit MessagesAppended SOMENTE para chats abertos como tab. Durante
+        // history sync, dezenas de chats fechados recebem rows novas — emitir
+        // para todos enchia o canal e fazia a UI travar mesmo descartando do
+        // outro lado. O snapshot de chats já chega via ChatsUpserted; chats
+        // fechados re-carregam via OpenChat quando o usuário abrir a tab.
+        let Some(open_set) = open_for_account else {
+            let _ = res.active_chat_message_ids;
+            continue;
+        };
         for (chat_id, msg_ids) in res.new_message_ids_per_chat {
             if msg_ids.is_empty() {
+                continue;
+            }
+            if !open_set.contains(&chat_id) {
                 continue;
             }
             let rows = db.get_message_rows_by_ids(&account_id, &msg_ids).await?;
@@ -506,10 +528,7 @@ async fn flush(
                     .await;
             }
         }
-        // active_chat_message_ids is still produced by the DB layer for
-        // future use (e.g. read-receipt tracking) but no longer drives the
-        // event flow.
-        let _ = (active_chat_for_account, res.active_chat_message_ids);
+        let _ = res.active_chat_message_ids;
     }
 
     // 2. Contatos.

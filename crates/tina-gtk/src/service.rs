@@ -24,13 +24,15 @@ pub enum Cmd {
     Initialize,
     /// Re-emits the latest snapshot of chats for the active account.
     LoadChats,
-    /// Open (or re-load) a chat: fetches metadata + last 200 messages and
-    /// emits `AppMsg::ChatOpened`. Use `FocusChat` for the cheap "user just
-    /// switched tabs" case.
+    /// Open (or re-load) a chat: fetches metadata + last 200 messages,
+    /// adds the chat to the worker's open-tab set, and emits
+    /// `AppMsg::ChatOpened`. Membership in the set is what gates whether
+    /// new sync rows for that chat get pushed to the UI as
+    /// `MessagesAppended` (vs silently merged into the DB).
     OpenChat(String),
-    /// Tell the worker which open chat is currently focused — drives where
-    /// `MessagesAppended` events are routed. `None` = no chat focused.
-    FocusChat(Option<String>),
+    /// UI closed a tab — drop the chat from the worker's open-tab set so
+    /// future sync rows for it stop firing `MessagesAppended`.
+    CloseChat(String),
     /// Send a plain-text message to a chat.
     SendText { chat_id: String, text: String },
     /// Trigger reconcile (whatsmeow → tina).
@@ -148,7 +150,7 @@ async fn run(
             Cmd::OpenChat(id) => {
                 let acc = selected.lock().await.clone();
                 let Some(account_id) = acc else { continue };
-                worker.set_active_chat(&account_id, Some(&id)).await;
+                worker.add_open_chat(&account_id, &id).await;
                 let row = worker.get_chat_row(&account_id, &id).await.ok().flatten();
                 let (name, kind) = row
                     .as_ref()
@@ -169,12 +171,10 @@ async fn run(
                     messages,
                 });
             }
-            Cmd::FocusChat(chat_id) => {
+            Cmd::CloseChat(chat_id) => {
                 let acc = selected.lock().await.clone();
                 let Some(account_id) = acc else { continue };
-                worker
-                    .set_active_chat(&account_id, chat_id.as_deref())
-                    .await;
+                worker.remove_open_chat(&account_id, &chat_id).await;
             }
             Cmd::SendText { chat_id, text } => {
                 let acc = selected.lock().await.clone();
@@ -260,6 +260,7 @@ async fn run(
             Cmd::Logout => {
                 let acc = selected.lock().await.clone();
                 if let Some(account_id) = acc {
+                    worker.clear_open_chats(&account_id).await;
                     if let Err(e) = worker.logout_account(&account_id).await {
                         error!("logout: {e}");
                     }

@@ -18,7 +18,9 @@ pub enum WorkerEvent {
     /// Snapshot completo (lista inicial) ou parcial (após batch) de chats.
     ChatsUpserted { account_id: String, rows: Vec<ChatRow> },
 
-    /// Mensagens novas para o chat ativo (subscrito via `set_active_chat`).
+    /// Mensagens novas para um chat com tab aberta na UI (registrado via
+    /// `add_open_chat`). Chats fechados não geram este evento durante sync —
+    /// a UI lê os snapshots via `ChatsUpserted` e re-fetch ao abrir.
     /// `messages` já vêm com `sender_name` resolvido.
     MessagesAppended {
         account_id: String,

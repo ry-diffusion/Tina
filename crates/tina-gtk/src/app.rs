@@ -100,7 +100,7 @@ pub enum AppMsg {
 
     // From the UI:
     OpenChatNew(String),
-    FocusChat(Option<String>),
+    CloseChat(String),
     SendText {
         chat_id: String,
         text: String,
@@ -175,7 +175,7 @@ impl SimpleComponent for AppModel {
             })
             .forward(sender.input_sender(), |o| match o {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),
-                MainOutput::FocusChat(id) => AppMsg::FocusChat(id),
+                MainOutput::CloseChat(id) => AppMsg::CloseChat(id),
                 MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
                 MainOutput::RequestRepair => AppMsg::RequestRepair,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
@@ -321,8 +321,8 @@ impl SimpleComponent for AppModel {
             AppMsg::OpenChatNew(id) => {
                 self.service.handle.send(Cmd::OpenChat(id));
             }
-            AppMsg::FocusChat(id) => {
-                self.service.handle.send(Cmd::FocusChat(id));
+            AppMsg::CloseChat(id) => {
+                self.service.handle.send(Cmd::CloseChat(id));
             }
             AppMsg::SendText { chat_id, text } => {
                 self.service.handle.send(Cmd::SendText { chat_id, text });
