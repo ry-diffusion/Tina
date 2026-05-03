@@ -129,7 +129,7 @@ func downloadable(m *waE2E.Message) (whatsmeow.DownloadableMessage, string, stri
 //     atomic-renames into place, and emits success.
 //
 // Progress events are emitted in chunks (every ~64KB) to avoid flooding IPC.
-func downloadMedia(mgr *Manager, accountID, messageID string) error {
+func downloadMedia(mgr *Manager, accountID, messageID string, rawJSON *string) error {
 	mgr.mu.Lock()
 	client := mgr.clients[accountID]
 	mgr.mu.Unlock()
@@ -137,13 +137,34 @@ func downloadMedia(mgr *Manager, accountID, messageID string) error {
 		return errors.New("account not connected")
 	}
 
-	cached, ok := downloadCache.Load(downloadKey(accountID, messageID))
-	if !ok {
-		return fmt.Errorf("message %s not in download cache (likely from before app start; re-receive or wait for sync)", messageID)
+	// Hot path: in-memory cache populated by `rememberForDownload` when
+	// the message arrived during this process lifetime.
+	var msg *waE2E.Message
+	if cached, ok := downloadCache.Load(downloadKey(accountID, messageID)); ok {
+		m, ok := cached.(*waE2E.Message)
+		if !ok || m == nil {
+			return errors.New("download cache corrupted")
+		}
+		msg = m
 	}
-	msg, ok := cached.(*waE2E.Message)
-	if !ok || msg == nil {
-		return errors.New("download cache corrupted")
+
+	// Cold path: rehydrate the proto from the raw_json the Rust side
+	// persisted at receive time and passed back to us with the command.
+	// Required for any chat row that predates this process — without it,
+	// reopening the app would lose access to all previous-day media.
+	if msg == nil && rawJSON != nil && *rawJSON != "" {
+		m, err := unmarshalProto(*rawJSON)
+		if err != nil {
+			return fmt.Errorf("rehydrate proto from raw_json: %w", err)
+		}
+		msg = m
+		// Repopulate cache so subsequent retries on the same message
+		// hit the hot path.
+		downloadCache.Store(downloadKey(accountID, messageID), msg)
+	}
+
+	if msg == nil {
+		return fmt.Errorf("message %s not in download cache and no raw_json provided", messageID)
 	}
 
 	dl, kind, mimetype := downloadable(msg)

@@ -16,6 +16,11 @@ use tina_db::ChatRow;
 
 use crate::components::chat_row::{ChatRowFactory, ChatRowItem};
 use crate::components::profile_menu::{ProfileMenu, ProfileMenuInput, ProfileMenuOutput};
+use crate::inventory::AvatarInventory;
+
+pub struct SidebarInit {
+    pub avatars: AvatarInventory,
+}
 
 #[derive(Debug)]
 pub enum SidebarInput {
@@ -68,13 +73,12 @@ pub struct Sidebar {
     user_jid: Option<String>,
     #[allow(dead_code)]
     search: String,
-    /// JIDs we've already issued FetchAvatar for in this session.
-    avatar_requested: std::collections::HashSet<String>,
+    avatars: AvatarInventory,
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for Sidebar {
-    type Init = ();
+    type Init = SidebarInit;
     type Input = SidebarInput;
     type Output = SidebarOutput;
 
@@ -151,7 +155,7 @@ impl SimpleComponent for Sidebar {
     }
 
     fn init(
-        _init: Self::Init,
+        init: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -175,7 +179,7 @@ impl SimpleComponent for Sidebar {
             repair_indeterminate: true,
             user_jid: None,
             search: String::new(),
-            avatar_requested: std::collections::HashSet::new(),
+            avatars: init.avatars,
         };
 
         let chat_listbox = model.chats.widget();
@@ -192,18 +196,38 @@ impl SimpleComponent for Sidebar {
                 push_name,
             } => {
                 self.user_jid = jid.clone();
+                // Hydrate from inventory if some sibling already fetched
+                // it; otherwise issue a fetch so the profile menu paints
+                // the real picture instead of initials.
+                if let Some(j) = jid.as_deref() {
+                    if !j.is_empty() {
+                        if let Some(p) = self.avatars.get(j) {
+                            let _ =
+                                self.profile.sender().send(ProfileMenuInput::SetAvatar(p));
+                        } else if self.avatars.needs_fetch(j) {
+                            let _ = sender
+                                .output(SidebarOutput::RequestFetchAvatar(j.to_string()));
+                        }
+                    }
+                }
                 let _ = self.profile.sender().send(ProfileMenuInput::SetIdentity {
                     phone,
                     jid,
                     push_name,
                 });
             }
-            SidebarInput::ChatsUpserted(rows) => {
-                for r in &rows {
-                    if r.avatar_path.is_some() {
-                        continue;
+            SidebarInput::ChatsUpserted(mut rows) => {
+                // Hydrate rows that lack a stored avatar from the shared
+                // inventory before deciding whether to ask the worker —
+                // a sibling component (chat header, message row) may have
+                // already fetched it.
+                for r in &mut rows {
+                    if r.avatar_path.is_none() {
+                        if let Some(p) = self.avatars.get(&r.chat_id) {
+                            r.avatar_path = Some(p);
+                        }
                     }
-                    if self.avatar_requested.insert(r.chat_id.clone()) {
+                    if r.avatar_path.is_none() && self.avatars.needs_fetch(&r.chat_id) {
                         let _ =
                             sender.output(SidebarOutput::RequestFetchAvatar(r.chat_id.clone()));
                     }
@@ -236,6 +260,7 @@ impl SimpleComponent for Sidebar {
                 self.repair_indeterminate = indeterminate;
             }
             SidebarInput::AvatarReady { jid, path } => {
+                self.avatars.put(jid.clone(), path.clone());
                 let indices: Vec<usize> = self
                     .chats
                     .guard()

@@ -20,6 +20,12 @@ use relm4::prelude::*;
 use tina_db::MessageRow;
 
 use crate::components::chat_tab::{ChatTab, ChatTabInit, ChatTabInput, ChatTabOutput};
+use crate::inventory::{AvatarInventory, MediaInventory};
+
+pub struct ChatAreaInit {
+    pub avatars: AvatarInventory,
+    pub media: MediaInventory,
+}
 
 #[derive(Debug)]
 pub enum ChatAreaInput {
@@ -68,6 +74,11 @@ pub enum ChatAreaInput {
     RequestMediaDownload(String),
     /// Forwarded from a ChatTab.
     RequestLoadOlder { chat_id: String, before_ts: i64 },
+    /// Forwarded from a ChatTab — sender-avatar fetch.
+    RequestFetchAvatar(String),
+    /// Identity arrived (or changed). Stored for new tabs + forwarded
+    /// to existing ones so from_me rows pick up the user avatar.
+    SetUserJid(Option<String>),
 }
 
 #[derive(Debug)]
@@ -105,11 +116,14 @@ pub struct ChatArea {
     current_chat_id: Option<String>,
     /// Local cache path of the headerbar avatar (when downloaded).
     current_chat_avatar: Option<String>,
+    avatars: AvatarInventory,
+    media: MediaInventory,
+    user_jid: Option<String>,
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for ChatArea {
-    type Init = ();
+    type Init = ChatAreaInit;
     type Input = ChatAreaInput;
     type Output = ChatAreaOutput;
 
@@ -190,7 +204,7 @@ impl SimpleComponent for ChatArea {
     }
 
     fn init(
-        _init: Self::Init,
+        init: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -210,6 +224,9 @@ impl SimpleComponent for ChatArea {
             tab_count: 0,
             current_chat_id: None,
             current_chat_avatar: None,
+            avatars: init.avatars,
+            media: init.media,
+            user_jid: None,
         };
 
         let widgets = view_output!();
@@ -265,6 +282,9 @@ impl SimpleComponent for ChatArea {
                             name: name.clone(),
                             kind: kind.clone(),
                             initial: messages,
+                            avatars: self.avatars.clone(),
+                            media: self.media.clone(),
+                            user_jid: self.user_jid.clone(),
                         })
                         .forward(sender.input_sender(), |o| match o {
                             ChatTabOutput::Send { chat_id, text } => {
@@ -276,6 +296,9 @@ impl SimpleComponent for ChatArea {
                             }
                             ChatTabOutput::RequestLoadOlder { chat_id, before_ts } => {
                                 ChatAreaInput::RequestLoadOlder { chat_id, before_ts }
+                            }
+                            ChatTabOutput::RequestFetchAvatar(jid) => {
+                                ChatAreaInput::RequestFetchAvatar(jid)
                             }
                         });
                     let widget = controller.widget().clone();
@@ -289,10 +312,12 @@ impl SimpleComponent for ChatArea {
                 self.current_chat_name = name;
                 self.current_chat_kind = kind;
                 self.current_chat_id = Some(chat_id.clone());
-                // Worker fetcher is cached on disk — request unconditionally
-                // and let it be a no-op when the file's already there.
-                self.current_chat_avatar = None;
-                let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(chat_id));
+                // Inventory hit ⇒ render immediately. Miss ⇒ ask worker
+                // (deduped by the inventory itself).
+                self.current_chat_avatar = self.avatars.get(&chat_id);
+                if self.current_chat_avatar.is_none() && self.avatars.needs_fetch(&chat_id) {
+                    let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(chat_id));
+                }
             }
             ChatAreaInput::MessagesAppended { chat_id, messages } => {
                 if let Some((controller, _)) = self.open_tabs.get(&chat_id) {
@@ -321,7 +346,9 @@ impl SimpleComponent for ChatArea {
                 path,
                 mimetype,
             } => {
-                for (_, (controller, _)) in self.open_tabs.iter() {
+                self.media
+                    .set_ready(&message_ids, &path, mimetype.as_deref());
+                for (controller, _) in self.open_tabs.values() {
                     let _ = controller.sender().send(ChatTabInput::MediaReady {
                         message_ids: message_ids.clone(),
                         path: path.clone(),
@@ -330,15 +357,26 @@ impl SimpleComponent for ChatArea {
                 }
             }
             ChatAreaInput::MediaFailed { message_id } => {
-                for (_, (controller, _)) in self.open_tabs.iter() {
+                self.media.set_failed(&message_id);
+                for (controller, _) in self.open_tabs.values() {
                     let _ = controller
                         .sender()
                         .send(ChatTabInput::MediaFailed(message_id.clone()));
                 }
             }
             ChatAreaInput::AvatarReady { jid, path } => {
+                self.avatars.put(jid.clone(), path.clone());
                 if self.current_chat_id.as_deref() == Some(jid.as_str()) {
-                    self.current_chat_avatar = Some(path);
+                    self.current_chat_avatar = Some(path.clone());
+                }
+                // Broadcast to every open tab — sender avatars in message
+                // rows live there, and the inventory write above lets new
+                // tabs read it on open without a refetch.
+                for (controller, _) in self.open_tabs.values() {
+                    let _ = controller.sender().send(ChatTabInput::AvatarReady {
+                        jid: jid.clone(),
+                        path: path.clone(),
+                    });
                 }
             }
             ChatAreaInput::TabSelected(chat_id) => {
@@ -381,6 +419,17 @@ impl SimpleComponent for ChatArea {
             }
             ChatAreaInput::RequestLoadOlder { chat_id, before_ts } => {
                 let _ = sender.output(ChatAreaOutput::RequestLoadOlder { chat_id, before_ts });
+            }
+            ChatAreaInput::RequestFetchAvatar(jid) => {
+                let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(jid));
+            }
+            ChatAreaInput::SetUserJid(jid) => {
+                self.user_jid = jid.clone();
+                for (controller, _) in self.open_tabs.values() {
+                    let _ = controller
+                        .sender()
+                        .send(ChatTabInput::SetUserJid(jid.clone()));
+                }
             }
         }
     }

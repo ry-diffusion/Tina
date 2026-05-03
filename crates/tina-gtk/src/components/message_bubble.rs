@@ -1,24 +1,150 @@
-// Single message bubble inside the chat thread.
+// One row in the message thread, Dissent-style: no bubbles, uniform
+// left-aligned layout. Two visual modes:
 //
-// Two visual modes:
-//   * Image-as-bubble — downloaded images and stickers render edge-to-edge
-//     (no card frame), with an OSD timestamp overlaid on the bottom-right
-//     and the caption rendered below. Mirrors WhatsApp's photo style.
-//   * Standard bubble — text, audio, video, document and any non-yet-
-//     downloaded media. Wrapped in a regular AdwCard frame.
+//   * cozy — avatar slot (left) + header (sender name + timestamp) +
+//     content. Used as the first message in a sender's run.
+//   * collapsed — empty avatar-width slot whose only contents is a
+//     timestamp shown on hover, plus the content. Used for runs of
+//     messages from the same sender within ~10 minutes.
 //
-// Un-downloaded image/video/sticker render as a square placeholder with a
-// big download circular button in the centre (also WhatsApp-style); audio
-// and document fall back to a compact horizontal row.
+// Hover/focus highlighting is driven by a `.message-box` CSS class
+// (registered via `set_global_css` at app start). The factory itself is
+// dumb — `ChatTab` decides cozy-vs-collapsed when constructing each
+// `MessageItem`.
 
 use adw::prelude::*;
 use gtk::gio;
+use gtk::glib;
 use relm4::FactorySender;
 use relm4::factory::{DynamicIndex, FactoryComponent};
 use relm4::prelude::*;
 use tina_db::MessageRow;
 
 use crate::time::format_message_time;
+
+/// Width of the left "gutter" column (avatar OR hover-timestamp).
+/// Matches the avatar size + horizontal margins so cozy and collapsed
+/// rows line up vertically along the content edge.
+pub const GUTTER_WIDTH: i32 = 56;
+const AVATAR_SIZE: i32 = 36;
+
+/// Inline media heights. Videos get more vertical room because portrait
+/// shoot (TikToks, Reels) is the dominant case in chat.
+const IMAGE_HEIGHT: i32 = 360;
+const VIDEO_HEIGHT: i32 = 480;
+const STICKER_SIZE: i32 = 128;
+
+/// Open a Discord/WhatsApp-style media overlay: an `adw::Dialog`
+/// (libadwaita's canonical "in-window modal") that presents over the
+/// app's main window with the media filling the body, a HeaderBar
+/// carrying Save / Open-externally actions, and Escape / close button
+/// to dismiss.
+///
+/// `anchor` is any widget inside the parent window — `adw::Dialog`
+/// walks the tree up to find the AdwApplicationWindow it should attach
+/// to. We use the clicked widget itself.
+pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message_type: String) {
+    let dialog = adw::Dialog::builder()
+        .content_width(1100)
+        .content_height(800)
+        .build();
+
+    let header = adw::HeaderBar::new();
+    header.set_show_end_title_buttons(true);
+    header.set_title_widget(Some(&adw::WindowTitle::new(
+        match message_type.as_str() {
+            "video" => "Video",
+            "sticker" => "Sticker",
+            _ => "Image",
+        },
+        &short_filename(&path),
+    )));
+
+    // "Open externally" — hands the file to the system handler. Useful
+    // for video editors / image viewers / external default apps.
+    {
+        let btn = gtk::Button::from_icon_name("document-open-symbolic");
+        btn.set_tooltip_text(Some("Open externally"));
+        btn.add_css_class("flat");
+        let p = path.clone();
+        btn.connect_clicked(move |_| {
+            let file = gio::File::for_path(&p);
+            let launcher = gtk::FileLauncher::new(Some(&file));
+            launcher.launch(gtk::Window::NONE, gio::Cancellable::NONE, |_| {});
+        });
+        header.pack_end(&btn);
+    }
+
+    // "Save as…" — copies the cached file into a user-chosen location.
+    {
+        let btn = gtk::Button::from_icon_name("document-save-symbolic");
+        btn.set_tooltip_text(Some("Save as…"));
+        btn.add_css_class("flat");
+        let p = path.clone();
+        let anchor_weak = anchor.upcast_ref::<gtk::Widget>().downgrade();
+        btn.connect_clicked(move |_| {
+            let save = gtk::FileDialog::builder()
+                .title("Save media")
+                .initial_name(default_save_name(&p))
+                .modal(true)
+                .build();
+            let parent_window = anchor_weak
+                .upgrade()
+                .and_then(|w| w.root())
+                .and_then(|r| r.downcast::<gtk::Window>().ok());
+            let src = std::path::PathBuf::from(&p);
+            save.save(parent_window.as_ref(), gio::Cancellable::NONE, move |res| {
+                let Ok(file) = res else { return };
+                let Some(dest) = file.path() else { return };
+                if let Err(e) = std::fs::copy(&src, &dest) {
+                    tracing::warn!(?dest, error = %e, "lightbox: save copy failed");
+                }
+            });
+        });
+        header.pack_end(&btn);
+    }
+
+    let body: gtk::Widget = match message_type.as_str() {
+        "video" => {
+            let video = gtk::Video::for_filename(Some(std::path::Path::new(&path)));
+            video.set_autoplay(true);
+            video.set_hexpand(true);
+            video.set_vexpand(true);
+            video.upcast()
+        }
+        _ => {
+            let pic = gtk::Picture::for_filename(&path);
+            pic.set_can_shrink(true);
+            pic.set_content_fit(gtk::ContentFit::Contain);
+            pic.set_hexpand(true);
+            pic.set_vexpand(true);
+            pic.upcast()
+        }
+    };
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&body));
+
+    dialog.set_child(Some(&toolbar));
+    dialog.present(Some(anchor.upcast_ref::<gtk::Widget>()));
+}
+
+fn short_filename(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn default_save_name(path: &str) -> String {
+    let base = short_filename(path);
+    if base.is_empty() {
+        "media".to_string()
+    } else {
+        base
+    }
+}
 
 #[derive(Debug)]
 pub enum MessageBubbleOut {
@@ -27,17 +153,18 @@ pub enum MessageBubbleOut {
 
 #[derive(Debug, Clone)]
 pub enum MessageBubbleInput {
-    /// Mutate the item in place — preserves the row widget so the
-    /// listbox doesn't reallocate (no scroll jump on download click).
     UpdateMedia {
         path: Option<String>,
         status: String,
         mimetype: Option<String>,
     },
-    /// Local-echo bubble was confirmed by the server: replace the
-    /// temporary id (and any other "in transit" state) with the real
-    /// row data. Currently a no-op since we drop the local entirely on
-    /// match — left here so the wiring is in place.
+    /// Resolved sender avatar arrived. Setting it on the item flips the
+    /// `set_custom_image` binding so the AdwAvatar paints the picture.
+    SetAvatar(String),
+    /// Back-fill `sender_jid` on existing rows (e.g. from_me rows built
+    /// before identity was known). Lets future `AvatarReady` broadcasts
+    /// match these rows.
+    SetSenderJid(String),
     Confirmed,
 }
 
@@ -46,13 +173,15 @@ pub struct MessageItem {
     pub id: String,
     pub from_me: bool,
     pub sender_name: String,
-    pub show_sender: bool,
+    pub sender_jid: Option<String>,
+    pub sender_avatar_path: Option<String>,
+    /// `true` when the previous row in the thread had the same sender
+    /// within ~10 minutes. Suppresses the avatar/header; only the
+    /// content (and a hover-only timestamp) is shown.
+    pub is_collapsed: bool,
     pub content: String,
     pub message_type: String,
     pub timestamp: String,
-    /// Raw unix timestamp — kept alongside the formatted version so the
-    /// chat tab can recompute `oldest_ts` after dropping rows from the
-    /// top of the factory.
     pub timestamp_unix: i64,
     pub media_summary: String,
     pub media_mimetype: Option<String>,
@@ -61,10 +190,15 @@ pub struct MessageItem {
     pub media_path: Option<String>,
     pub media_status: String,
     pub media_filename: Option<String>,
+    /// Inline preview (JPEG/PNG bytes) for image/video/sticker/document.
+    /// Rendered as a `gtk::Picture` placeholder while the user hasn't
+    /// triggered the full download yet — much nicer than the generic
+    /// icon. Decoded into a `gdk::Texture` lazily by the view.
+    pub thumbnail: Option<Vec<u8>>,
 }
 
 impl MessageItem {
-    pub fn from_row(row: &MessageRow, show_sender: bool) -> Self {
+    pub fn from_row(row: &MessageRow, is_collapsed: bool) -> Self {
         let content = row.content.clone().unwrap_or_default();
         let display = if content.is_empty() {
             format!("[{}]", row.message_type)
@@ -77,7 +211,9 @@ impl MessageItem {
             sender_name: crate::format::format_jid_or_phone(
                 &row.sender_name.clone().unwrap_or_default(),
             ),
-            show_sender,
+            sender_jid: row.sender_jid.clone(),
+            sender_avatar_path: row.sender_avatar_path.clone(),
+            is_collapsed,
             content: display,
             message_type: row.message_type.clone(),
             timestamp: format_message_time(row.timestamp),
@@ -89,7 +225,18 @@ impl MessageItem {
             media_path: row.media_path.clone(),
             media_status: row.media_status.clone(),
             media_filename: row.media_filename.clone(),
+            thumbnail: row.media_thumbnail.clone(),
         }
+    }
+
+    fn thumbnail_paintable(&self) -> Option<gtk::gdk::Paintable> {
+        let bytes = self.thumbnail.as_ref()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        gtk::gdk::Texture::from_bytes(&gtk::glib::Bytes::from(bytes.as_slice()))
+            .ok()
+            .map(|t| t.upcast::<gtk::gdk::Paintable>())
     }
 
     fn is_media(&self) -> bool {
@@ -101,15 +248,6 @@ impl MessageItem {
 
     fn is_visual_media(&self) -> bool {
         matches!(self.message_type.as_str(), "image" | "video" | "sticker")
-    }
-
-    /// `true` when the bubble should drop the card frame and render the
-    /// media as the bubble itself. Applies to ANY image / sticker / video,
-    /// regardless of download state — the placeholder is also shown in the
-    /// edge-to-edge style so the visual doesn't jump when the download
-    /// resolves.
-    fn show_as_image_bubble(&self) -> bool {
-        matches!(self.message_type.as_str(), "image" | "sticker" | "video")
     }
 
     fn media_kind_label(&self) -> &'static str {
@@ -148,6 +286,29 @@ impl MessageItem {
             .map(|p| !p.is_empty())
             .unwrap_or(false)
     }
+
+    fn header_markup(&self) -> String {
+        let name = if self.from_me {
+            "You"
+        } else if self.sender_name.is_empty() {
+            "Unknown"
+        } else {
+            self.sender_name.as_str()
+        };
+        format!(
+            "<b>{}</b>  <span alpha=\"60%\" size=\"small\">{}</span>",
+            glib_markup_escape(name),
+            glib_markup_escape(&self.timestamp),
+        )
+    }
+
+    fn short_timestamp(&self) -> &str {
+        &self.timestamp
+    }
+}
+
+fn glib_markup_escape(s: &str) -> String {
+    gtk::glib::markup_escape_text(s).to_string()
 }
 
 fn build_media_summary(row: &MessageRow) -> String {
@@ -203,77 +364,108 @@ impl FactoryComponent for MessageBubble {
         gtk::ListBoxRow {
             set_activatable: false,
             set_selectable: false,
+            add_css_class: "message-row",
 
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
-                set_margin_top: 2,
-                set_margin_bottom: 2,
-                set_margin_start: 8,
-                set_margin_end: 8,
-                set_halign: if self.item.from_me {
-                    gtk::Align::End
+                set_spacing: 0,
+                add_css_class: "message-box",
+                add_css_class: if self.item.is_collapsed {
+                    "message-collapsed"
                 } else {
-                    gtk::Align::Start
+                    "message-cozy"
                 },
 
-                // ━━━━━━━━━━━ MODE A: Image-as-bubble ━━━━━━━━━━━
-                // Image (or sticker) is rendered as the bubble itself —
-                // no surrounding card, just the picture with an OSD
-                // timestamp overlaid. WhatsApp / Signal style.
+                // ── Gutter: avatar (cozy) OR hover-only timestamp (collapsed)
                 gtk::Box {
-                    set_visible: self.item.show_as_image_bubble(),
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 4,
+                    set_size_request: (GUTTER_WIDTH, -1),
+                    set_valign: gtk::Align::Start,
 
-                    gtk::Label {
-                        set_visible: self.item.show_sender
-                            && !self.item.from_me
-                            && !self.item.sender_name.is_empty(),
-                        set_label: &self.item.sender_name,
-                        set_xalign: 0.0,
-                        add_css_class: "caption-heading",
-                        add_css_class: "accent",
+                    adw::Avatar {
+                        set_visible: !self.item.is_collapsed,
+                        set_size: AVATAR_SIZE,
+                        set_show_initials: true,
+                        set_text: Some(if self.item.from_me {
+                            "You"
+                        } else if self.item.sender_name.is_empty() {
+                            "?"
+                        } else {
+                            self.item.sender_name.as_str()
+                        }),
+                        #[watch]
+                        set_custom_image: self.item.sender_avatar_path
+                            .as_deref()
+                            .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                            .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                            .as_ref(),
+                        set_margin_top: 4,
+                        add_css_class: "message-cozy-avatar",
                     },
 
+                    gtk::Label {
+                        set_visible: self.item.is_collapsed,
+                        set_label: self.item.short_timestamp(),
+                        set_xalign: 0.5,
+                        set_valign: gtk::Align::Start,
+                        set_margin_top: 4,
+                        add_css_class: "message-collapsed-timestamp",
+                    },
+                },
+
+                // ── Right column: header + content
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_hexpand: true,
+                    set_spacing: 2,
+                    set_margin_end: 12,
+
+                    gtk::Label {
+                        set_visible: !self.item.is_collapsed,
+                        set_use_markup: true,
+                        set_label: &self.item.header_markup(),
+                        set_xalign: 0.0,
+                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                        set_single_line_mode: true,
+                        add_css_class: "message-cozy-header",
+                    },
+
+                    // Image / sticker / video placeholder (not yet
+                    // downloaded). Same dimensions as the downloaded
+                    // gtk::Picture below so swapping in the real file
+                    // doesn't reflow the thread. When the proto carried
+                    // an inline thumbnail, paint it as the background;
+                    // the icon falls through only when we have nothing
+                    // better.
                     gtk::Overlay {
+                        #[watch]
+                        set_visible: self.item.is_visual_media() && !self.item.has_local_file(),
+                        set_halign: gtk::Align::Start,
                         #[wrap(Some)]
-                        set_child = &gtk::Frame {
-                            add_css_class: "card",
+                        set_child = &gtk::Picture {
                             set_size_request: (
-                                if self.item.message_type == "sticker" { 128 } else { 280 },
-                                if self.item.message_type == "sticker" { 128 } else { 210 },
+                                match self.item.message_type.as_str() {
+                                    "sticker" => STICKER_SIZE,
+                                    _ => -1,
+                                },
+                                match self.item.message_type.as_str() {
+                                    "sticker" => STICKER_SIZE,
+                                    "video" => VIDEO_HEIGHT,
+                                    _ => IMAGE_HEIGHT,
+                                },
                             ),
-
-                            // Loaded image / sticker. #[watch] so the
-                            // visibility flips when MediaReady arrives.
-                            gtk::Picture {
-                                #[watch]
-                                set_visible: self.item.has_local_file()
-                                    && matches!(
-                                        self.item.message_type.as_str(),
-                                        "image" | "sticker"
-                                    ),
-                                #[watch]
-                                set_filename: self.item.media_path.as_deref(),
-                                set_can_shrink: true,
-                            },
-                        },
-
-                        add_overlay = &gtk::Video {
                             #[watch]
-                            set_visible: self.item.has_local_file()
-                                && self.item.message_type == "video",
-                            #[watch]
-                            set_filename: self.item.media_path
-                                .as_deref()
-                                .filter(|_| self.item.message_type == "video"),
+                            set_paintable: self.item.thumbnail_paintable().as_ref(),
+                            set_can_shrink: true,
+                            add_css_class: "message-picture",
                         },
 
                         add_overlay = &gtk::Image {
                             #[watch]
-                            set_visible: !self.item.has_local_file(),
+                            set_visible: self.item.thumbnail.is_none()
+                                || self.item.thumbnail.as_ref().map(|b| b.is_empty()).unwrap_or(true),
                             set_icon_name: Some(self.item.placeholder_icon()),
-                            set_pixel_size: 56,
+                            set_pixel_size: 48,
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             add_css_class: "dim-label",
@@ -281,8 +473,7 @@ impl FactoryComponent for MessageBubble {
 
                         add_overlay = &gtk::Button {
                             #[watch]
-                            set_visible: !self.item.has_local_file()
-                                && self.item.media_status != "downloading",
+                            set_visible: self.item.media_status != "downloading",
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             #[watch]
@@ -306,213 +497,198 @@ impl FactoryComponent for MessageBubble {
 
                         add_overlay = &gtk::Spinner {
                             #[watch]
-                            set_visible: !self.item.has_local_file()
-                                && self.item.media_status == "downloading",
+                            set_visible: self.item.media_status == "downloading",
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
                             set_spinning: true,
                             set_width_request: 32,
                             set_height_request: 32,
                         },
+                    },
 
-                        add_overlay = &gtk::Box {
-                            #[watch]
-                            set_visible: !self.item.has_local_file()
-                                && !self.item.media_summary.is_empty(),
-                            set_halign: gtk::Align::Start,
-                            set_valign: gtk::Align::End,
-                            set_margin_start: 8,
-                            set_margin_bottom: 8,
-                            add_css_class: "osd",
-                            add_css_class: "card",
-                            gtk::Label {
-                                set_label: &self.item.media_summary,
-                                set_margin_start: 6,
-                                set_margin_end: 6,
-                                set_margin_top: 1,
-                                set_margin_bottom: 1,
-                                add_css_class: "caption",
-                            },
-                        },
-
-                        // Bottom-right pill: timestamp.
-                        add_overlay = &gtk::Box {
-                            set_halign: gtk::Align::End,
-                            set_valign: gtk::Align::End,
-                            set_margin_end: 8,
-                            set_margin_bottom: 8,
-                            add_css_class: "osd",
-                            add_css_class: "card",
-
-                            gtk::Label {
-                                set_label: &self.item.timestamp,
-                                set_margin_start: 8,
-                                set_margin_end: 8,
-                                set_margin_top: 2,
-                                set_margin_bottom: 2,
-                                add_css_class: "caption",
+                    // Image / sticker downloaded. Sticker swaps to a
+                    // smaller square so we don't render a giant 360-px-
+                    // tall sticker on full-resolution images. Click
+                    // opens a fullscreen lightbox.
+                    gtk::Picture {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && matches!(self.item.message_type.as_str(), "image" | "sticker"),
+                        #[watch]
+                        set_filename: self.item.media_path.as_deref(),
+                        set_can_shrink: true,
+                        set_halign: gtk::Align::Start,
+                        #[watch]
+                        set_size_request: (
+                            if self.item.message_type == "sticker" { STICKER_SIZE } else { -1 },
+                            if self.item.message_type == "sticker" { STICKER_SIZE } else { IMAGE_HEIGHT },
+                        ),
+                        add_css_class: "message-picture",
+                        set_cursor_from_name: Some("pointer"),
+                        add_controller = gtk::GestureClick {
+                            connect_released[
+                                path = self.item.media_path.clone(),
+                                kind = self.item.message_type.clone()
+                            ] => move |gesture, _, _, _| {
+                                let Some(widget) = gesture.widget() else { return };
+                                if let Some(p) = path.as_deref() {
+                                    open_media_lightbox(&widget, p.to_string(), kind.clone());
+                                }
                             },
                         },
                     },
 
-                    // Caption below the image, no bubble.
+                    // Video downloaded. Wrapped in an Overlay so we can
+                    // pin an "expand" button in the corner — clicking
+                    // the video itself toggles play/pause via the
+                    // built-in MediaControls, so a separate affordance
+                    // is needed for the lightbox.
+                    gtk::Overlay {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && self.item.message_type == "video",
+                        set_halign: gtk::Align::Start,
+
+                        #[wrap(Some)]
+                        set_child = &gtk::Video {
+                            #[watch]
+                            set_filename: self.item.media_path
+                                .as_deref()
+                                .filter(|_| self.item.message_type == "video"),
+                            set_size_request: (-1, VIDEO_HEIGHT),
+                        },
+
+                        add_overlay = &gtk::Button {
+                            set_icon_name: "view-fullscreen-symbolic",
+                            set_tooltip_text: Some("Expand"),
+                            set_halign: gtk::Align::End,
+                            set_valign: gtk::Align::Start,
+                            set_margin_top: 8,
+                            set_margin_end: 8,
+                            add_css_class: "circular",
+                            add_css_class: "osd",
+                            connect_clicked[
+                                path = self.item.media_path.clone(),
+                                kind = self.item.message_type.clone()
+                            ] => move |btn| {
+                                if let Some(p) = path.as_deref() {
+                                    open_media_lightbox(btn, p.to_string(), kind.clone());
+                                }
+                            },
+                        },
+                    },
+
+                    // Audio (downloaded).
+                    gtk::MediaControls {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && self.item.message_type == "audio",
+                        #[watch]
+                        set_media_stream: self.item.media_path
+                            .as_deref()
+                            .filter(|_| self.item.message_type == "audio")
+                            .map(|p| gtk::MediaFile::for_filename(p).upcast::<gtk::MediaStream>())
+                            .as_ref(),
+                    },
+
+                    // Audio / document not yet downloaded — compact row.
+                    gtk::Box {
+                        #[watch]
+                        set_visible: !self.item.has_local_file()
+                            && matches!(self.item.message_type.as_str(), "audio" | "document"),
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 10,
+                        set_margin_top: 4,
+                        set_margin_bottom: 4,
+
+                        gtk::Image {
+                            set_icon_name: Some(self.item.placeholder_icon()),
+                            set_pixel_size: 28,
+                            add_css_class: "dim-label",
+                        },
+
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 2,
+                            set_valign: gtk::Align::Center,
+                            set_hexpand: true,
+
+                            gtk::Label {
+                                set_label: self.item.media_kind_label(),
+                                set_xalign: 0.0,
+                                add_css_class: "heading",
+                            },
+                            gtk::Label {
+                                set_visible: !self.item.media_summary.is_empty(),
+                                set_label: &self.item.media_summary,
+                                set_xalign: 0.0,
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                            },
+                        },
+
+                        gtk::Button {
+                            #[watch]
+                            set_visible: self.item.media_status != "downloading",
+                            #[watch]
+                            set_icon_name: match self.item.media_status.as_str() {
+                                "failed" => "view-refresh-symbolic",
+                                _ => "folder-download-symbolic",
+                            },
+                            #[watch]
+                            set_tooltip_text: Some(match self.item.media_status.as_str() {
+                                "failed" => "Retry download",
+                                _ => "Download",
+                            }),
+                            add_css_class: "circular",
+                            add_css_class: "flat",
+                            set_valign: gtk::Align::Center,
+                            connect_clicked[sender, id = self.item.id.clone()] => move |_| {
+                                let _ = sender.output(
+                                    MessageBubbleOut::DownloadRequested(id.clone())
+                                );
+                            },
+                        },
+
+                        gtk::Spinner {
+                            #[watch]
+                            set_visible: self.item.media_status == "downloading",
+                            set_spinning: true,
+                            set_valign: gtk::Align::Center,
+                            set_width_request: 18,
+                            set_height_request: 18,
+                        },
+                    },
+
+                    // Document downloaded — open externally.
+                    gtk::Button {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && self.item.message_type == "document",
+                        set_label: "Open externally",
+                        set_halign: gtk::Align::Start,
+                        connect_clicked[path = self.item.media_path.clone()] => move |_| {
+                            if let Some(p) = path.as_deref() {
+                                let file = gio::File::for_path(p);
+                                let launcher = gtk::FileLauncher::new(Some(&file));
+                                launcher.launch(
+                                    gtk::Window::NONE,
+                                    gio::Cancellable::NONE,
+                                    |_| {},
+                                );
+                            }
+                        },
+                    },
+
+                    // Text / caption.
                     gtk::Label {
-                        set_visible: self.item.caption().is_some(),
-                        set_label: self.item.caption().unwrap_or(""),
+                        set_visible: !self.item.is_media() || self.item.caption().is_some(),
+                        set_label: self.item.caption().unwrap_or(&self.item.content),
                         set_xalign: 0.0,
                         set_wrap: true,
                         set_wrap_mode: gtk::pango::WrapMode::WordChar,
                         set_selectable: true,
-                        set_max_width_chars: 50,
-                    },
-                },
-
-                // ━━━━━━━━━━━ MODE B: Standard bubble ━━━━━━━━━━━
-                gtk::Frame {
-                    set_visible: !self.item.show_as_image_bubble(),
-                    add_css_class: "card",
-                    add_css_class: if self.item.from_me { "accent" } else { "view" },
-
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 4,
-                        set_margin_top: 6,
-                        set_margin_bottom: 6,
-                        set_margin_start: 10,
-                        set_margin_end: 10,
-
-                        gtk::Label {
-                            set_visible: self.item.show_sender
-                                && !self.item.from_me
-                                && !self.item.sender_name.is_empty(),
-                            set_label: &self.item.sender_name,
-                            set_xalign: 0.0,
-                            add_css_class: "caption-heading",
-                            add_css_class: "accent",
-                        },
-
-                        // Image / sticker / video are rendered in MODE A
-                        // above; here we only handle audio / document /
-                        // text. ── Compact row: audio / document not yet
-                        // downloaded.
-                        gtk::Box {
-                            #[watch]
-                            set_visible: !self.item.has_local_file()
-                                && matches!(
-                                    self.item.message_type.as_str(),
-                                    "audio" | "document"
-                                ),
-                            set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 10,
-
-                            gtk::Image {
-                                set_icon_name: Some(self.item.placeholder_icon()),
-                                set_pixel_size: 32,
-                                add_css_class: "dim-label",
-                            },
-
-                            gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 2,
-                                set_valign: gtk::Align::Center,
-                                set_hexpand: true,
-
-                                gtk::Label {
-                                    set_label: self.item.media_kind_label(),
-                                    set_xalign: 0.0,
-                                    add_css_class: "heading",
-                                },
-                                gtk::Label {
-                                    set_visible: !self.item.media_summary.is_empty(),
-                                    set_label: &self.item.media_summary,
-                                    set_xalign: 0.0,
-                                    add_css_class: "dim-label",
-                                    add_css_class: "caption",
-                                },
-                            },
-
-                            gtk::Button {
-                                #[watch]
-                                set_visible: self.item.media_status != "downloading",
-                                #[watch]
-                                set_icon_name: match self.item.media_status.as_str() {
-                                    "failed" => "view-refresh-symbolic",
-                                    _ => "folder-download-symbolic",
-                                },
-                                #[watch]
-                                set_tooltip_text: Some(match self.item.media_status.as_str() {
-                                    "failed" => "Retry download",
-                                    _ => "Download",
-                                }),
-                                add_css_class: "circular",
-                                add_css_class: "flat",
-                                set_valign: gtk::Align::Center,
-                                connect_clicked[sender, id = self.item.id.clone()] => move |_| {
-                                    let _ = sender.output(
-                                        MessageBubbleOut::DownloadRequested(id.clone())
-                                    );
-                                },
-                            },
-
-                            gtk::Spinner {
-                                #[watch]
-                                set_visible: self.item.media_status == "downloading",
-                                set_spinning: true,
-                                set_valign: gtk::Align::Center,
-                                set_width_request: 18,
-                                set_height_request: 18,
-                            },
-                        },
-
-                        // ── Audio downloaded: inline MediaControls.
-                        gtk::MediaControls {
-                            #[watch]
-                            set_visible: self.item.has_local_file()
-                                && self.item.message_type == "audio",
-                            #[watch]
-                            set_media_stream: self.item.media_path
-                                .as_deref()
-                                .filter(|_| self.item.message_type == "audio")
-                                .map(|p| gtk::MediaFile::for_filename(p).upcast::<gtk::MediaStream>())
-                                .as_ref(),
-                        },
-
-                        // ── Document downloaded: open externally.
-                        gtk::Button {
-                            #[watch]
-                            set_visible: self.item.has_local_file()
-                                && self.item.message_type == "document",
-                            set_label: "Open externally",
-                            connect_clicked[path = self.item.media_path.clone()] => move |_| {
-                                if let Some(p) = path.as_deref() {
-                                    let file = gio::File::for_path(p);
-                                    let launcher = gtk::FileLauncher::new(Some(&file));
-                                    launcher.launch(
-                                        gtk::Window::NONE,
-                                        gio::Cancellable::NONE,
-                                        |_| {},
-                                    );
-                                }
-                            },
-                        },
-
-                        // ── Caption / text.
-                        gtk::Label {
-                            set_visible: !self.item.is_media() || self.item.caption().is_some(),
-                            set_label: self.item.caption().unwrap_or(&self.item.content),
-                            set_xalign: 0.0,
-                            set_wrap: true,
-                            set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                            set_selectable: true,
-                            set_max_width_chars: 60,
-                        },
-
-                        gtk::Label {
-                            set_label: &self.item.timestamp,
-                            set_xalign: 1.0,
-                            add_css_class: "dim-label",
-                            add_css_class: "caption",
-                        },
+                        add_css_class: "message-content",
                     },
                 },
             },
@@ -536,7 +712,63 @@ impl FactoryComponent for MessageBubble {
                     self.item.media_mimetype = mimetype;
                 }
             }
+            MessageBubbleInput::SetAvatar(path) => {
+                self.item.sender_avatar_path = Some(path);
+            }
+            MessageBubbleInput::SetSenderJid(jid) => {
+                self.item.sender_jid = Some(jid);
+            }
             MessageBubbleInput::Confirmed => {}
         }
     }
 }
+
+/// CSS shipped alongside the factory. Loaded once at app start via
+/// `relm4::set_global_css`.
+pub const MESSAGE_ROW_CSS: &str = r#"
+.message-row {
+    padding: 0;
+}
+.message-box {
+    border: 2px solid transparent;
+    transition: linear 150ms background-color;
+    padding: 2px 4px;
+}
+.message-row:hover .message-box {
+    background-color: alpha(@theme_fg_color, 0.06);
+    transition: none;
+}
+.message-row:focus .message-box {
+    background-color: alpha(@theme_fg_color, 0.10);
+    transition: none;
+}
+.message-cozy {
+    padding-top: 6px;
+}
+.message-collapsed {
+    padding-top: 0;
+}
+.message-cozy-header {
+    min-height: 1.4em;
+}
+.message-cozy-avatar {
+    margin-left: 8px;
+    margin-right: 12px;
+}
+.message-collapsed-timestamp {
+    opacity: 0;
+    font-size: 0.7em;
+    color: alpha(@theme_fg_color, 0.7);
+}
+.message-row:hover .message-collapsed-timestamp,
+.message-row:focus .message-collapsed-timestamp {
+    opacity: 1;
+}
+.message-content {
+    margin-top: 1px;
+    margin-bottom: 1px;
+}
+.message-picture {
+    border-radius: 6px;
+}
+"#;

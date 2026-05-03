@@ -499,6 +499,7 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             media_height: None,
             media_size_bytes: None,
             media_sha256: None,
+            media_thumbnail: None,
         },
         MessageBatchInput {
             message_id: "m2",
@@ -516,6 +517,7 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             media_height: None,
             media_size_bytes: None,
             media_sha256: None,
+            media_thumbnail: None,
         },
         MessageBatchInput {
             message_id: "m3",
@@ -533,6 +535,7 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             media_height: None,
             media_size_bytes: None,
             media_sha256: None,
+            media_thumbnail: None,
         },
     ];
     let res = db.run_message_batch("acc1", None, &messages).await.unwrap();
@@ -568,6 +571,7 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             media_height: None,
             media_size_bytes: None,
             media_sha256: None,
+            media_thumbnail: None,
         },
         MessageBatchInput {
             message_id: "m-other",
@@ -585,6 +589,7 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             media_height: None,
             media_size_bytes: None,
             media_sha256: None,
+            media_thumbnail: None,
         },
     ];
     let res = db
@@ -614,6 +619,7 @@ async fn run_message_batch_skips_duplicates_via_insert_or_ignore() {
         media_height: None,
         media_size_bytes: None,
         media_sha256: None,
+        media_thumbnail: None,
     };
     let r1 = db.run_message_batch("acc1", None, &[msg]).await.unwrap();
     assert_eq!(r1.affected_chat_ids.len(), 1);

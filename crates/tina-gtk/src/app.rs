@@ -169,9 +169,14 @@ impl SimpleComponent for AppModel {
 
         let login = LoginPage::builder().launch(()).detach();
 
+        let avatars = crate::inventory::AvatarInventory::new();
+        let media = crate::inventory::MediaInventory::new();
+
         let main = MainPage::builder()
             .launch(crate::components::main_page::MainInit {
                 service: service.handle.clone(),
+                avatars,
+                media,
             })
             .forward(sender.input_sender(), |o| match o {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),

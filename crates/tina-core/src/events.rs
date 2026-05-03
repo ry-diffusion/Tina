@@ -1,5 +1,31 @@
 use serde::{Deserialize, Serialize};
 
+/// Go's `encoding/json` represents `[]byte` as a base64 string. Apply
+/// the same transform from this side so the round-trip is symmetric.
+mod thumbnail_base64 {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(b) => s.serialize_str(&STANDARD.encode(b)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let opt: Option<String> = Option::deserialize(d)?;
+        match opt {
+            Some(s) if !s.is_empty() => STANDARD
+                .decode(&s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            _ => Ok(None),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum IpcCommand {
@@ -11,13 +37,16 @@ pub enum IpcCommand {
     /// de upsert. Usado pra reconstruir a tabela do tina a partir do que o
     /// whatsmeow.db já sabe — sem precisar de re-pareamento.
     Reconcile { account_id: String },
-    /// Pede ao nanachi pra baixar+decryptar a mídia de uma mensagem
-    /// específica. O nanachi consulta sua cache in-memory (populada quando
-    /// a mensagem chegou); mensagens vindas antes do app start exigem
-    /// reconcile/restart pra repopular a cache.
+    /// Pede ao nanachi pra baixar+decryptar a mídia de uma mensagem.
+    /// O nanachi prefere sua cache in-memory (populada quando a mensagem
+    /// chegou nesta sessão); se ela não tiver o proto, faz fallback no
+    /// `raw_json` que o Rust persistiu no DB e reconstrói o
+    /// `*waE2E.Message` antes de chamar whatsmeow.Download. Por isso
+    /// este campo é praticamente sempre passado.
     DownloadMedia {
         account_id: String,
         message_id: String,
+        raw_json: Option<String>,
     },
     /// Pede ao nanachi pra obter (e baixar, se necessário) a profile
     /// picture de um JID. Resultado vira AvatarUpdated/Failed.
@@ -137,6 +166,17 @@ pub struct MessageData {
     pub timestamp: i64,
     pub is_from_me: bool,
     pub raw_json: Option<String>,
+    /// Inline preview bytes (JPEG / PNG) para image/video/sticker/document.
+    /// Go envia como base64 (`[]byte` no JSON nativo do Go) e nós
+    /// decodificamos pra Vec<u8> via `serde_with::base64`. Persistido
+    /// como BLOB em `messages.media_thumbnail` e usado pela UI como
+    /// placeholder antes do download completar.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "thumbnail_base64"
+    )]
+    pub thumbnail: Option<Vec<u8>>,
     /// Metadados de mídia extraídos do proto. Vêm preenchidos pra
     /// image/audio/video/sticker/document; ausentes pra texto.
     #[serde(default, skip_serializing_if = "Option::is_none")]

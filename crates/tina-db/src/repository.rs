@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use crate::error::{DbError, Result};
 use crate::models::{Account, Chat, ChatKind, ChatRow, Contact, Message, MessageRow};
 use crate::schema::{
-    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION,
+    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, MIGRATION_V5_TO_V6, SCHEMA,
+    SCHEMA_DROP, SCHEMA_VERSION,
 };
 
 pub struct TinaDb {
@@ -78,21 +79,29 @@ impl TinaDb {
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             2 => {
-                tracing::info!("Migrating tina.db from v2 → v5");
+                tracing::info!("Migrating tina.db from v2 → v6");
                 sqlx::raw_sql(MIGRATION_V2_TO_V3).execute(&pool).await?;
                 sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
                 sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             3 => {
-                tracing::info!("Migrating tina.db from v3 → v5");
+                tracing::info!("Migrating tina.db from v3 → v6");
                 sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(&pool).await?;
                 sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             4 => {
-                tracing::info!("Migrating tina.db from v4 → v5 (preview type+duration)");
+                tracing::info!("Migrating tina.db from v4 → v6");
                 sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(&pool).await?;
+                sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(&pool).await?;
+                sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+            }
+            5 => {
+                tracing::info!("Migrating tina.db from v5 → v6 (media_thumbnail)");
+                sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(&pool).await?;
                 sqlx::raw_sql(SCHEMA).execute(&pool).await?;
             }
             other => {
@@ -653,14 +662,15 @@ impl TinaDb {
         const MSG_INSERT_CHUNK: usize = 200;
         let now = now_ts();
         for chunk in pending.chunks(MSG_INSERT_CHUNK) {
-            // 17 binds/row: 10 base + 7 media (status default vem do schema).
-            let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+            // 18 binds/row: 10 base + 8 media (status default vem do schema).
+            let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
             let mut sql = String::from(
                 "INSERT OR IGNORE INTO messages (\
                     account_id, message_id, chat_id, sender_contact_id, content, \
                     message_type, timestamp, is_from_me, raw_json, created_at, \
                     media_mimetype, media_filename, media_duration_secs, \
-                    media_width, media_height, media_size_bytes, media_sha256\
+                    media_width, media_height, media_size_bytes, media_sha256, \
+                    media_thumbnail\
                  ) VALUES ",
             );
             sql.push_str(&repeat_csv(row_tpl, chunk.len()));
@@ -684,7 +694,8 @@ impl TinaDb {
                     .bind(m.media_width)
                     .bind(m.media_height)
                     .bind(m.media_size_bytes)
-                    .bind(m.media_sha256);
+                    .bind(m.media_sha256)
+                    .bind(m.media_thumbnail);
             }
             q.execute(&mut *tx).await?;
         }
@@ -767,6 +778,8 @@ impl TinaDb {
                  m.chat_id,
                  m.sender_contact_id,
                  COALESCE(ct.contact_name, ct.push_name, ct.verified_name, ct.business_name, ct.phone_number) AS sender_name,
+                 COALESCE(ct.pn_jid, ct.lid_jid) AS sender_jid,
+                 ct.avatar_path AS sender_avatar_path,
                  m.content,
                  m.message_type,
                  m.timestamp,
@@ -779,7 +792,8 @@ impl TinaDb {
                  m.media_size_bytes,
                  m.media_sha256,
                  m.media_path,
-                 m.media_status
+                 m.media_status,
+                 m.media_thumbnail
                FROM messages m
                LEFT JOIN contacts ct
                  ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -1169,6 +1183,8 @@ impl TinaDb {
                  m.chat_id,
                  m.sender_contact_id,
                  COALESCE(ct.contact_name, ct.push_name, ct.verified_name, ct.business_name, ct.phone_number) AS sender_name,
+                 COALESCE(ct.pn_jid, ct.lid_jid) AS sender_jid,
+                 ct.avatar_path AS sender_avatar_path,
                  m.content,
                  m.message_type,
                  m.timestamp,
@@ -1181,7 +1197,8 @@ impl TinaDb {
                  m.media_size_bytes,
                  m.media_sha256,
                  m.media_path,
-                 m.media_status
+                 m.media_status,
+                 m.media_thumbnail
                FROM messages m
                LEFT JOIN contacts ct
                  ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -1219,6 +1236,8 @@ impl TinaDb {
                  m.chat_id,
                  m.sender_contact_id,
                  COALESCE(ct.contact_name, ct.push_name, ct.verified_name, ct.business_name, ct.phone_number) AS sender_name,
+                 COALESCE(ct.pn_jid, ct.lid_jid) AS sender_jid,
+                 ct.avatar_path AS sender_avatar_path,
                  m.content,
                  m.message_type,
                  m.timestamp,
@@ -1231,7 +1250,8 @@ impl TinaDb {
                  m.media_size_bytes,
                  m.media_sha256,
                  m.media_path,
-                 m.media_status
+                 m.media_status,
+                 m.media_thumbnail
                FROM messages m
                LEFT JOIN contacts ct
                  ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -1247,6 +1267,26 @@ impl TinaDb {
     }
 
     /// Marca o status de mídia de uma mensagem (e opcionalmente seu path).
+    /// Devolve o `raw_json` persistido pela coluna correspondente. Usado
+    /// pelo download tardio: se a cache in-memory do nanachi não tem o
+    /// proto da mensagem, o Rust passa este JSON na IPC `DownloadMedia`
+    /// e o Go re-hidrata o `*waE2E.Message` antes de chamar
+    /// `whatsmeow.Download`.
+    pub async fn get_message_raw_json(
+        &self,
+        account_id: &str,
+        message_id: &str,
+    ) -> Result<Option<String>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT raw_json FROM messages WHERE account_id = ? AND message_id = ?",
+        )
+        .bind(account_id)
+        .bind(message_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(j,)| j))
+    }
+
     pub async fn set_media_status(
         &self,
         account_id: &str,
@@ -1620,13 +1660,22 @@ async fn merge_chats_tx(
         .bind(loser)
         .execute(&mut **tx)
         .await?;
-    // Reaproveita campos do loser que estejam faltando no winner.
+    // Reaproveita campos do loser que estejam faltando no winner. Todos
+    // os campos `last_message_*` precisam coerir COMO BLOCO: se o loser
+    // tem a mensagem mais nova, todos passam pro loser; senão todos
+    // ficam do winner. Antes a gente atualizava só id/preview/ts, e
+    // `from_me` / `sender_contact_id` / `type` ficavam do winner — a
+    // sidebar mostrava preview do loser com flag `Você:` do winner.
     sqlx::query(
         r#"UPDATE chats SET
             display_name = COALESCE(display_name, (SELECT display_name FROM chats WHERE account_id = ?1 AND chat_id = ?2)),
             avatar_url = COALESCE(avatar_url, (SELECT avatar_url FROM chats WHERE account_id = ?1 AND chat_id = ?2)),
             last_message_id = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_message_id ELSE (SELECT last_message_id FROM chats WHERE account_id = ?1 AND chat_id = ?2) END,
             last_message_preview = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_message_preview ELSE (SELECT last_message_preview FROM chats WHERE account_id = ?1 AND chat_id = ?2) END,
+            last_message_from_me = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_message_from_me ELSE COALESCE((SELECT last_message_from_me FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) END,
+            last_sender_contact_id = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_sender_contact_id ELSE (SELECT last_sender_contact_id FROM chats WHERE account_id = ?1 AND chat_id = ?2) END,
+            last_message_type = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_message_type ELSE (SELECT last_message_type FROM chats WHERE account_id = ?1 AND chat_id = ?2) END,
+            last_message_duration_secs = CASE WHEN COALESCE(last_message_ts,0) >= COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0) THEN last_message_duration_secs ELSE (SELECT last_message_duration_secs FROM chats WHERE account_id = ?1 AND chat_id = ?2) END,
             last_message_ts = MAX(COALESCE(last_message_ts,0), COALESCE((SELECT last_message_ts FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0)),
             unread_count = unread_count + COALESCE((SELECT unread_count FROM chats WHERE account_id = ?1 AND chat_id = ?2), 0)
            WHERE account_id = ?1 AND chat_id = ?3"#,

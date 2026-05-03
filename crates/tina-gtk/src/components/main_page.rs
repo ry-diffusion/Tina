@@ -10,12 +10,15 @@ use relm4::Controller;
 use relm4::prelude::*;
 use tina_db::{ChatRow, MessageRow};
 
-use crate::components::chat_area::{ChatArea, ChatAreaInput, ChatAreaOutput};
-use crate::components::sidebar::{Sidebar, SidebarInput, SidebarOutput};
+use crate::components::chat_area::{ChatArea, ChatAreaInit, ChatAreaInput, ChatAreaOutput};
+use crate::components::sidebar::{Sidebar, SidebarInit, SidebarInput, SidebarOutput};
+use crate::inventory::{AvatarInventory, MediaInventory};
 use crate::service::ServiceHandle;
 
 pub struct MainInit {
     pub service: ServiceHandle,
+    pub avatars: AvatarInventory,
+    pub media: MediaInventory,
 }
 
 #[derive(Debug)]
@@ -116,11 +119,16 @@ impl SimpleComponent for MainPage {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let sidebar = Sidebar::builder()
-            .launch(())
+            .launch(SidebarInit {
+                avatars: init.avatars.clone(),
+            })
             .forward(sender.input_sender(), MainInput::FromSidebar);
 
         let chat_area = ChatArea::builder()
-            .launch(())
+            .launch(ChatAreaInit {
+                avatars: init.avatars.clone(),
+                media: init.media.clone(),
+            })
             .forward(sender.input_sender(), MainInput::FromChatArea);
 
         let model = MainPage {
@@ -143,10 +151,14 @@ impl SimpleComponent for MainPage {
                 ..
             } => {
                 let _ = self.sidebar.sender().send(SidebarInput::SetIdentity {
-                    phone,
-                    jid,
-                    push_name,
+                    phone: phone.clone(),
+                    jid: jid.clone(),
+                    push_name: push_name.clone(),
                 });
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::SetUserJid(jid));
             }
             MainInput::ChatsUpserted(rows) => {
                 let _ = self

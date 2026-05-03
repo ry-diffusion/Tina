@@ -144,8 +144,9 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 
 	case "DownloadMedia":
 		var p struct {
-			AccountID string `json:"account_id"`
-			MessageID string `json:"message_id"`
+			AccountID string  `json:"account_id"`
+			MessageID string  `json:"message_id"`
+			RawJSON   *string `json:"raw_json,omitempty"`
 		}
 		if err := json.Unmarshal(msg.Payload, &p); err != nil {
 			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
@@ -155,8 +156,9 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 		// CommandResult sai imediatamente como "aceito", e o resultado
 		// real chega via MediaDownloaded / MediaDownloadFailed.
 		emitCommandResult(msg.ID, true, nil, nil)
+		rawJSON := p.RawJSON
 		go func() {
-			if err := downloadMedia(mgr, p.AccountID, p.MessageID); err != nil {
+			if err := downloadMedia(mgr, p.AccountID, p.MessageID, rawJSON); err != nil {
 				emitMediaDownloadFailed(p.AccountID, p.MessageID, err.Error())
 			}
 		}()

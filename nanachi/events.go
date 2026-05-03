@@ -399,6 +399,12 @@ func mapMessage(evt *events.Message) *MessageData {
 	if content != "" {
 		md.Content = &content
 	}
+	if raw, ok := marshalProto(evt.Message); ok {
+		md.RawJSON = &raw
+	}
+	if thumb := extractThumbnail(evt.Message); len(thumb) > 0 {
+		md.Thumbnail = thumb
+	}
 	applyMedia(&md, extractMedia(evt.Message))
 	return &md
 }
@@ -430,6 +436,12 @@ func mapWebMessageInfo(chat types.JID, wmi *waWeb.WebMessageInfo) *MessageData {
 	}
 	if content != "" {
 		md.Content = &content
+	}
+	if raw, ok := marshalProto(wmi.GetMessage()); ok {
+		md.RawJSON = &raw
+	}
+	if thumb := extractThumbnail(wmi.GetMessage()); len(thumb) > 0 {
+		md.Thumbnail = thumb
 	}
 	applyMedia(&md, extractMedia(wmi.GetMessage()))
 	return &md

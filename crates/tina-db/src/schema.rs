@@ -5,7 +5,8 @@
 /// - v3: campos de mídia (mimetype, dims, duração, sha256 pra dedup).
 /// - v4: avatar_path em chats e contacts (cache local de profile pics).
 /// - v5: last_message_type + last_message_duration_secs em chats (preview).
-pub const SCHEMA_VERSION: i64 = 5;
+/// - v6: media_thumbnail BLOB em messages (inline preview JPEG/PNG).
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -124,6 +125,9 @@ CREATE TABLE IF NOT EXISTS messages (
     media_sha256 TEXT,
     media_path TEXT,
     media_status TEXT NOT NULL DEFAULT 'none',  -- 'none'|'pending'|'downloading'|'done'|'failed'
+    -- Inline preview JPEG/PNG bytes para image/video/sticker/document.
+    -- ~5-50 KB cada; renderizado como placeholder antes do download.
+    media_thumbnail BLOB,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(account_id, message_id),
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
@@ -151,6 +155,10 @@ ALTER TABLE contacts ADD COLUMN avatar_path TEXT;
 pub const MIGRATION_V4_TO_V5: &str = r#"
 ALTER TABLE chats ADD COLUMN last_message_type TEXT;
 ALTER TABLE chats ADD COLUMN last_message_duration_secs INTEGER;
+"#;
+
+pub const MIGRATION_V5_TO_V6: &str = r#"
+ALTER TABLE messages ADD COLUMN media_thumbnail BLOB;
 "#;
 
 /// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda

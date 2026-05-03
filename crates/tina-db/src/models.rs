@@ -148,6 +148,9 @@ pub struct MessageBatchInput<'a> {
     /// Hash sha256 do conteúdo claro. Mesmo arquivo enviado em vários chats
     /// gera o mesmo hash → cache deduplica.
     pub media_sha256: Option<&'a str>,
+    /// JPEG/PNG inline preview pra image/video/sticker/document. Persisted
+    /// como BLOB e renderizado pela UI antes do download.
+    pub media_thumbnail: Option<&'a [u8]>,
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +196,14 @@ pub struct MessageRow {
     pub chat_id: String,
     pub sender_contact_id: Option<String>,
     pub sender_name: Option<String>,
+    /// Resolved JID of the sender (from contacts JOIN). Used to ask the
+    /// worker to fetch a profile picture and to dedupe per-sender
+    /// avatar requests in the chat tab.
+    pub sender_jid: Option<String>,
+    /// Local cached path of the sender's profile picture, if the worker
+    /// has previously fetched it. Empty until `AvatarReady` arrives for
+    /// `sender_jid`.
+    pub sender_avatar_path: Option<String>,
     pub content: Option<String>,
     pub message_type: String,
     pub timestamp: i64,
@@ -206,6 +217,7 @@ pub struct MessageRow {
     pub media_sha256: Option<String>,
     pub media_path: Option<String>,
     pub media_status: String,
+    pub media_thumbnail: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

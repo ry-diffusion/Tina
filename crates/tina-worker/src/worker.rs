@@ -233,11 +233,21 @@ impl TinaWorker {
         self.db
             .set_media_status(account_id, message_id, "downloading")
             .await?;
+
+        // Read the persisted proto JSON so the Go side can re-hydrate
+        // it when its in-memory cache misses (which is always for any
+        // chat row from before the current process started).
+        let raw_json = self
+            .db
+            .get_message_raw_json(account_id, message_id)
+            .await?;
+
         let nanachi = self.nanachi.read().await;
         nanachi
             .send_command(IpcCommand::DownloadMedia {
                 account_id: account_id.to_string(),
                 message_id: message_id.to_string(),
+                raw_json,
             })
             .await?;
         Ok(())
@@ -489,6 +499,7 @@ async fn flush(
                 media_height: m.media_height,
                 media_size_bytes: m.media_size_bytes,
                 media_sha256: m.media_sha256.as_deref(),
+                media_thumbnail: m.thumbnail.as_deref(),
             })
             .collect();
 

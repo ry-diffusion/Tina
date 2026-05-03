@@ -71,6 +71,11 @@ type MessageData struct {
 	Timestamp   int64   `json:"timestamp"`
 	IsFromMe    bool    `json:"is_from_me"`
 	RawJSON     *string `json:"raw_json,omitempty"`
+	// Inline preview bytes (JPEG for image/video/document, PNG for
+	// sticker). `[]byte` round-trips through JSON as base64. Stored
+	// in the DB as a BLOB and rendered by the UI as a placeholder
+	// before the full media is downloaded.
+	Thumbnail   []byte  `json:"thumbnail,omitempty"`
 	// Metadados de mídia (apenas para image/audio/video/sticker/document).
 	// Preenchidos pelo extrator a partir do proto sem baixar o arquivo;
 	// o download em si é uma operação separada (DownloadMedia).

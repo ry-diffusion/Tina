@@ -24,3 +24,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 owo-colors = "4"
 lucide-slint = "0.1.4"
 chrono = "0.4"
+base64 = "0.22"

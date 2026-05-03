@@ -11,6 +11,91 @@ use tina_db::MessageRow;
 
 use crate::components::message_bubble::{MessageBubble, MessageBubbleInput, MessageItem};
 
+/// Window in seconds within which two messages from the same sender are
+/// rendered as a collapsed run (no avatar/header on the second). Mirrors
+/// Dissent's 10-minute grouping window.
+const COLLAPSE_WINDOW_SECS: i64 = 10 * 60;
+
+fn sender_key(row: &MessageRow) -> String {
+    if row.is_from_me {
+        "\0me".to_string()
+    } else {
+        row.sender_name.clone().unwrap_or_default()
+    }
+}
+
+/// Build a `MessageItem` from a row, hydrating avatar + media state from
+/// the shared inventories and emitting fetch requests as needed.
+/// `output` is the chat tab's output sender; we route through it because
+/// `MessageItem` construction happens during `init`/`update`, both of
+/// which already have access to the sender.
+fn build_item(
+    row: &MessageRow,
+    is_collapsed: bool,
+    avatars: &crate::inventory::AvatarInventory,
+    media: &crate::inventory::MediaInventory,
+    user_jid: Option<&str>,
+    request_fetch_avatar: &mut impl FnMut(String),
+) -> MessageItem {
+    let mut item = MessageItem::from_row(row, is_collapsed);
+
+    // For from_me messages the DB stores sender_contact_id=NULL (we
+    // never auto-register a contact for the signed-in user), so the
+    // JOIN can't resolve a sender_jid — override with the known
+    // identity here so the avatar lookup matches against the same key
+    // the inventory was populated with via SetIdentity.
+    if item.from_me && item.sender_jid.is_none() {
+        item.sender_jid = user_jid.map(|s| s.to_string());
+    }
+
+    // Avatar: prefer the live inventory over the JOIN'd snapshot.
+    if let Some(jid) = item.sender_jid.clone() {
+        if !jid.is_empty() {
+            if let Some(p) = avatars.get(&jid) {
+                item.sender_avatar_path = Some(p);
+            } else if avatars.needs_fetch(&jid) {
+                request_fetch_avatar(jid);
+            }
+        }
+    }
+
+    // Media: in-flight states + recent successes live here, not in the
+    // DB. Override the row's snapshot when the inventory has fresher info.
+    if let Some(state) = media.get(&item.id) {
+        if state.path.is_some() {
+            item.media_path = state.path;
+        }
+        if !state.status.is_empty() {
+            item.media_status = state.status;
+        }
+        if item.media_mimetype.is_none() && state.mimetype.is_some() {
+            item.media_mimetype = state.mimetype;
+        }
+    }
+
+    item
+}
+
+/// Decide whether `row` should be rendered as a collapsed continuation
+/// of the previous row in the thread. Updates the trailing-state cursor
+/// in place so callers can iterate without manual bookkeeping.
+fn collapse_against(
+    row: &MessageRow,
+    last_sender: &mut Option<String>,
+    last_ts: &mut Option<i64>,
+) -> bool {
+    let key = sender_key(row);
+    let collapsed = match (last_sender.as_deref(), *last_ts) {
+        (Some(prev_sender), Some(prev_ts)) => {
+            prev_sender == key && row.timestamp.saturating_sub(prev_ts) <= COLLAPSE_WINDOW_SECS
+        }
+        _ => false,
+    };
+    *last_sender = Some(key);
+    *last_ts = Some(row.timestamp);
+    collapsed
+}
+
 #[derive(Debug)]
 pub enum ChatTabInput {
     SetMeta {
@@ -42,6 +127,12 @@ pub enum ChatTabInput {
     /// User switched into this tab. Force sticky-bottom + a deferred
     /// scroll so the freshly-realised page lands on the latest message.
     StickToBottom,
+    /// Worker resolved a profile picture — apply it to every message
+    /// row whose sender JID matches.
+    AvatarReady { jid: String, path: String },
+    /// Identity arrived (or changed) — back-fill `sender_jid` on
+    /// existing from_me rows and apply the cached avatar to them.
+    SetUserJid(Option<String>),
 }
 
 #[derive(Debug)]
@@ -50,6 +141,9 @@ pub enum ChatTabOutput {
     Close { chat_id: String },
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
+    /// Ask the worker to fetch a sender's profile picture. Deduped at
+    /// the tab level so we only round-trip per JID once.
+    RequestFetchAvatar(String),
 }
 
 pub struct ChatTabInit {
@@ -57,6 +151,12 @@ pub struct ChatTabInit {
     pub name: String,
     pub kind: String,
     pub initial: Vec<MessageRow>,
+    pub avatars: crate::inventory::AvatarInventory,
+    pub media: crate::inventory::MediaInventory,
+    /// Signed-in user's JID, used to override `sender_jid` for `from_me`
+    /// rows (which the DB stores with `sender_contact_id = NULL`, so the
+    /// JOIN can't resolve a JID for them).
+    pub user_jid: Option<String>,
 }
 
 pub struct ChatTab {
@@ -66,6 +166,10 @@ pub struct ChatTab {
     messages: FactoryVecDeque<MessageBubble>,
     composer_buffer: gtk::EntryBuffer,
     last_sender: Option<String>,
+    last_ts: Option<i64>,
+    avatars: crate::inventory::AvatarInventory,
+    media: crate::inventory::MediaInventory,
+    user_jid: Option<String>,
     scroll: Option<gtk::ScrolledWindow>,
     seen_message_ids: std::collections::HashSet<String>,
     last_send: Option<(String, std::time::Instant)>,
@@ -154,19 +258,30 @@ impl SimpleComponent for ChatTab {
                 }
             });
 
-        // Seed with initial history.
+        // Seed with initial history. `last_sender`/`last_ts` track the
+        // trailing message so the next batch (Append) groups against it.
+        let mut last_sender: Option<String> = None;
+        let mut last_ts: Option<i64> = None;
+        let mut avatar_fetches: Vec<String> = Vec::new();
         {
             let mut guard = messages.guard();
-            let mut last_sender: Option<String> = None;
-            let kind = init.kind.clone();
             for row in &init.initial {
-                let show = !row.is_from_me
-                    && kind != "dm"
-                    && last_sender.as_deref()
-                        != Some(row.sender_name.as_deref().unwrap_or(""));
-                last_sender = row.sender_name.clone();
-                guard.push_back(MessageItem::from_row(row, show));
+                let collapsed = collapse_against(row, &mut last_sender, &mut last_ts);
+                let item = build_item(
+                    row,
+                    collapsed,
+                    &init.avatars,
+                    &init.media,
+                    init.user_jid.as_deref(),
+                    &mut |jid| avatar_fetches.push(jid),
+                );
+                guard.push_back(item);
             }
+        }
+        // Drain after the guard drops — Sender::send is cheap but we
+        // don't want it to interleave with factory pushes.
+        for jid in avatar_fetches {
+            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
         }
 
         let mut seen: std::collections::HashSet<String> =
@@ -186,7 +301,11 @@ impl SimpleComponent for ChatTab {
             kind: init.kind,
             messages,
             composer_buffer: gtk::EntryBuffer::default(),
-            last_sender: None,
+            last_sender,
+            last_ts,
+            avatars: init.avatars,
+            media: init.media,
+            user_jid: init.user_jid,
             scroll: None,
             seen_message_ids: seen,
             last_send: None,
@@ -282,20 +401,30 @@ impl SimpleComponent for ChatTab {
                 // upper-grew tick as the factory lays out the rows and
                 // re-scroll to the bottom; no manual timeouts needed.
                 self.bottomed.set(true);
+                let mut avatar_fetches: Vec<String> = Vec::new();
                 {
                     let mut guard = self.messages.guard();
                     guard.clear();
                     self.last_sender = None;
+                    self.last_ts = None;
                     self.seen_message_ids.clear();
                     for row in &rows {
-                        let show = !row.is_from_me
-                            && self.kind != "dm"
-                            && self.last_sender.as_deref()
-                                != Some(row.sender_name.as_deref().unwrap_or(""));
-                        self.last_sender = row.sender_name.clone();
+                        let collapsed =
+                            collapse_against(row, &mut self.last_sender, &mut self.last_ts);
                         self.seen_message_ids.insert(row.message_id.clone());
-                        guard.push_back(MessageItem::from_row(row, show));
+                        let item = build_item(
+                            row,
+                            collapsed,
+                            &self.avatars,
+                            &self.media,
+                            self.user_jid.as_deref(),
+                            &mut |jid| avatar_fetches.push(jid),
+                        );
+                        guard.push_back(item);
                     }
+                }
+                for jid in avatar_fetches {
+                    let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
                 }
             }
             ChatTabInput::Append(rows) => {
@@ -359,16 +488,25 @@ impl SimpleComponent for ChatTab {
                 if new_rows.is_empty() {
                     return;
                 }
+                let mut avatar_fetches: Vec<String> = Vec::new();
                 {
                     let mut guard = self.messages.guard();
                     for row in &new_rows {
-                        let show = !row.is_from_me
-                            && self.kind != "dm"
-                            && self.last_sender.as_deref()
-                                != Some(row.sender_name.as_deref().unwrap_or(""));
-                        self.last_sender = row.sender_name.clone();
-                        guard.push_back(MessageItem::from_row(row, show));
+                        let collapsed =
+                            collapse_against(row, &mut self.last_sender, &mut self.last_ts);
+                        let item = build_item(
+                            row,
+                            collapsed,
+                            &self.avatars,
+                            &self.media,
+                            self.user_jid.as_deref(),
+                            &mut |jid| avatar_fetches.push(jid),
+                        );
+                        guard.push_back(item);
                     }
+                }
+                for jid in avatar_fetches {
+                    let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
                 }
                 // The connect_changed handler will autoscroll if `bottomed`
                 // — meaning we only follow new messages when the user was
@@ -409,11 +547,31 @@ impl SimpleComponent for ChatTab {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or_default();
+                // Collapse the optimistic echo against the trailing
+                // message just like a real row would.
+                let mut tmp_sender = self.last_sender.clone();
+                let mut tmp_ts = self.last_ts;
+                let local_collapsed = match (tmp_sender.as_deref(), tmp_ts) {
+                    (Some("\0me"), Some(prev_ts)) => {
+                        now_unix.saturating_sub(prev_ts) <= COLLAPSE_WINDOW_SECS
+                    }
+                    _ => false,
+                };
+                tmp_sender = Some("\0me".into());
+                tmp_ts = Some(now_unix);
+                self.last_sender = tmp_sender;
+                self.last_ts = tmp_ts;
+                let local_avatar = self
+                    .user_jid
+                    .as_deref()
+                    .and_then(|j| self.avatars.get(j));
                 let local_item = MessageItem {
                     id: local_id.clone(),
                     from_me: true,
                     sender_name: String::new(),
-                    show_sender: false,
+                    sender_jid: self.user_jid.clone(),
+                    sender_avatar_path: local_avatar,
+                    is_collapsed: local_collapsed,
                     content: trimmed.to_string(),
                     message_type: "text".to_string(),
                     timestamp: crate::time::format_message_time(now_unix),
@@ -425,6 +583,7 @@ impl SimpleComponent for ChatTab {
                     media_path: None,
                     media_status: "none".to_string(),
                     media_filename: None,
+                    thumbnail: None,
                 };
                 self.seen_message_ids.insert(local_id.clone());
                 self.pending_echoes
@@ -478,6 +637,65 @@ impl SimpleComponent for ChatTab {
                             status: "done".into(),
                             mimetype: mimetype.clone(),
                         },
+                    );
+                }
+            }
+            ChatTabInput::SetUserJid(new_jid) => {
+                self.user_jid = new_jid.clone();
+                let Some(jid) = new_jid else {
+                    return;
+                };
+                if jid.is_empty() {
+                    return;
+                }
+                // Back-fill sender_jid on every existing from_me row + paint
+                // the cached avatar if the inventory already has it.
+                let cached = self.avatars.get(&jid);
+                let indices: Vec<usize> = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| if f.item.from_me { Some(i) } else { None })
+                    .collect();
+                for idx in indices {
+                    self.messages.send(
+                        idx,
+                        crate::components::message_bubble::MessageBubbleInput::SetSenderJid(
+                            jid.clone(),
+                        ),
+                    );
+                    if let Some(p) = cached.clone() {
+                        self.messages.send(
+                            idx,
+                            crate::components::message_bubble::MessageBubbleInput::SetAvatar(p),
+                        );
+                    }
+                }
+                if cached.is_none() && self.avatars.needs_fetch(&jid) {
+                    let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+                }
+            }
+            ChatTabInput::AvatarReady { jid, path } => {
+                let indices: Vec<usize> = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        if f.item.sender_jid.as_deref() == Some(jid.as_str()) {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for idx in indices {
+                    self.messages.send(
+                        idx,
+                        crate::components::message_bubble::MessageBubbleInput::SetAvatar(
+                            path.clone(),
+                        ),
                     );
                 }
             }
@@ -630,13 +848,35 @@ impl SimpleComponent for ChatTab {
 
                 {
                     let mut guard = self.messages.guard();
-                    // Insert oldest first (reversed iteration so push_front
-                    // builds correct chronological order).
-                    for row in messages.iter().rev() {
+                    // Walk the prepended block forwards to compute collapse
+                    // state inside it; insert each row at the front in
+                    // reverse so the final order stays chronological. Note
+                    // we don't recompute the existing oldest row's collapse
+                    // state — minor visual artifact at the seam.
+                    let mut sender_cursor: Option<String> = None;
+                    let mut ts_cursor: Option<i64> = None;
+                    let collapsed_flags: Vec<bool> = messages
+                        .iter()
+                        .map(|r| collapse_against(r, &mut sender_cursor, &mut ts_cursor))
+                        .collect();
+                    let mut avatar_fetches: Vec<String> = Vec::new();
+                    for (row, collapsed) in messages.iter().zip(&collapsed_flags).rev() {
                         if !self.seen_message_ids.insert(row.message_id.clone()) {
                             continue;
                         }
-                        guard.push_front(MessageItem::from_row(row, false));
+                        let item = build_item(
+                            row,
+                            *collapsed,
+                            &self.avatars,
+                            &self.media,
+                            self.user_jid.as_deref(),
+                            &mut |jid| avatar_fetches.push(jid),
+                        );
+                        guard.push_front(item);
+                    }
+                    drop(guard);
+                    for jid in avatar_fetches {
+                        let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
                     }
                 }
 
@@ -655,6 +895,9 @@ impl SimpleComponent for ChatTab {
                 }
             }
             ChatTabInput::RequestMediaDownload(id) => {
+                // Mark the in-flight state in the shared inventory so
+                // closing/reopening the tab doesn't lose the spinner.
+                self.media.set_downloading(&id);
                 // In-place factory update via per-row Input — the listbox
                 // keeps the same widget instance, so no row-rebuild and
                 // no scroll jump on click.
