@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 relm4 = { version = "0.9", features = ["libadwaita", "gnome_46"] }
 relm4-components = "0.9"
+relm4-icons = "0.9"
 # Standard Adwaita icon-theme names cover everything we use in v1; drop the
 # relm4-icons dep to avoid pinning specific icon features.
 gtk = { version = "0.9", package = "gtk4", features = ["v4_14"] }

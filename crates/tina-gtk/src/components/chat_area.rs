@@ -1,15 +1,19 @@
-// Right side of the in-app page: the multi-tab chat surface.
+// Right side of the in-app page: the multi-tab, split-capable chat surface.
 //
-// Owns the `AdwTabView` + `AdwTabBar` that drive the multi-chat business
-// case (clicks open new tabs, drag-out detaches into a fresh window) and
-// the `open_tabs` map of `ChatTab` controllers. The headerbar swaps
-// between a centred "single tab" title (avatar + name) and the tab bar
-// when more than one tab is open.
+// Two `AdwTabView`s sit in a horizontal `gtk::Paned` so the user can have
+// up to two independent groups of chat tabs side-by-side (VSCode "editor
+// groups", but capped at 2 — pure libadwaita has no native N-way split).
+// Each pane is a self-contained `AdwToolbarView` with its own headerbar
+// and a `Stack { single | multi }` title widget: when the pane has only
+// one tab it shows a centred avatar+name; with two or more it shows the
+// pane's `AdwTabBar`. Pane 1 is hidden until the user moves a tab into
+// it, so single-pane mode looks identical to a one-tab-view chat.
 //
-// One quirk worth flagging: with multiple tabs open, EVERY open tab gets
-// `MessagesAppended` push deltas from the worker — but only chats present
-// in the worker's open-set are emitted in the first place. Closed tabs
-// stay at the snapshot they were loaded with until the user opens them.
+// One quirk worth flagging: every open tab gets `MessagesAppended` push
+// deltas from the worker, regardless of which pane it sits in — but only
+// chats present in the worker's open-set are emitted in the first place.
+// Closed tabs stay at the snapshot they were loaded with until the user
+// reopens them.
 
 use std::collections::HashMap;
 
@@ -29,9 +33,8 @@ pub struct ChatAreaInit {
 
 #[derive(Debug)]
 pub enum ChatAreaInput {
-    /// User picked a chat from the sidebar — reuse the selected tab if
-    /// one's open, else open a fresh one. Drives the browser-style
-    /// "click bookmark, opens here" behaviour.
+    /// User picked a chat from the sidebar — reuse the focused pane's
+    /// selected tab if one's open, else open a fresh tab in that pane.
     OpenInCurrent(String),
     /// User explicitly asked for a new tab (right-click menu).
     OpenInNewTab(String),
@@ -58,22 +61,40 @@ pub enum ChatAreaInput {
     MediaFailed {
         message_id: String,
     },
-    /// Avatar arrived for some JID — update the headerbar if it matches
-    /// the currently-focused chat.
     AvatarReady {
         jid: String,
         path: String,
     },
-    /// Internal: AdwTabView signalled tab selection changed.
-    TabSelected(Option<String>),
-    /// Internal: AdwTabView signalled close-page; finalize teardown.
-    TabClosed(String),
+    /// A pane's selected tab changed; route StickToBottom + update headerbar.
+    PaneTabSelected {
+        pane: usize,
+        chat_id: Option<String>,
+    },
+    /// AdwTabView signalled close-page; finalize teardown.
+    TabClosed {
+        pane: usize,
+        chat_id: String,
+    },
+    /// User pressed the "move to other split" button on pane `from`.
+    /// Transfers the pane's currently-selected tab to the opposite pane,
+    /// creating the split if it wasn't visible.
+    MoveTabToOtherPane(usize),
+    /// User clicked into a pane — make it the routing target for new
+    /// chats. Selecting a tab inside a pane already does this via
+    /// PaneTabSelected, but a click in an empty pane needs its own path.
+    PaneFocused(usize),
     /// Forwarded from a ChatTab.
-    SendFromTab { chat_id: String, text: String },
+    SendFromTab {
+        chat_id: String,
+        text: String,
+    },
     /// Forwarded from a ChatTab.
     RequestMediaDownload(String),
     /// Forwarded from a ChatTab.
-    RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestLoadOlder {
+        chat_id: String,
+        before_ts: i64,
+    },
     /// Forwarded from a ChatTab — sender-avatar fetch.
     RequestFetchAvatar(String),
     /// Identity arrived (or changed). Stored for new tabs + forwarded
@@ -87,35 +108,52 @@ pub enum ChatAreaOutput {
     /// Ask the worker to fetch metadata + first page for `chat_id`. Comes
     /// back as `ChatOpened` via the parent.
     OpenChatNew(String),
-    SendText { chat_id: String, text: String },
+    SendText {
+        chat_id: String,
+        text: String,
+    },
     /// A chat was closed in the UI — parent must tell the worker so it
     /// stops emitting `MessagesAppended` for it.
     CloseChat(String),
     RequestMediaDownload(String),
-    RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestLoadOlder {
+        chat_id: String,
+        before_ts: i64,
+    },
     RequestFetchAvatar(String),
 }
 
-pub struct ChatArea {
-    /// chat_id -> (controller, AdwTabPage). Lookup table for "is this chat
-    /// already open?" + reverse lookup from page selection back to chat_id.
-    open_tabs: HashMap<String, (Controller<ChatTab>, adw::TabPage)>,
-    /// chat_id -> (display_name, kind). Used to render the headerbar title
-    /// based on the currently-selected tab without round-tripping the
-    /// child component.
-    chat_meta: HashMap<String, (String, String)>,
+/// One side of the split. Owns the widgets needed to render its own
+/// headerbar (Stack { single | multi }) plus the AdwTabView underneath.
+struct Pane {
     tab_view: adw::TabView,
-    tab_bar: adw::TabBar,
-    /// Title shown in the content headerbar (matches the selected tab).
-    current_chat_name: String,
-    #[allow(dead_code)]
-    current_chat_kind: String,
-    tab_count: usize,
-    /// JID of the currently-selected chat, used to filter incoming
-    /// AvatarReady events for the headerbar.
+    toolbar_view: adw::ToolbarView,
+    header: adw::HeaderBar,
+    stack: gtk::Stack,
+    avatar: adw::Avatar,
+    title: adw::WindowTitle,
+    /// Move-to-other-split button. Disabled when this pane has no tab
+    /// to move (an empty pane can't split anywhere).
+    split_btn: gtk::Button,
+    /// Mirrors the currently-selected tab's chat_id so the single-tab
+    /// header can render the right avatar+name.
     current_chat_id: Option<String>,
-    /// Local cache path of the headerbar avatar (when downloaded).
+    current_chat_name: String,
     current_chat_avatar: Option<String>,
+    current_chat_kind: String,
+}
+
+pub struct ChatArea {
+    /// Two panes; pane 1's `toolbar_view` is hidden when empty so the
+    /// Paned collapses visually to a single pane.
+    panes: [Pane; 2],
+    /// chat_id -> (controller, page, pane_idx).
+    open_tabs: HashMap<String, (Controller<ChatTab>, adw::TabPage, usize)>,
+    chat_meta: HashMap<String, (String, String)>,
+    paned: gtk::Paned,
+    /// Pane that receives "open in current" clicks and new chats. Updated
+    /// whenever a tab is selected in a pane (selection ⇒ implicit focus).
+    focused_pane: usize,
     avatars: AvatarInventory,
     media: MediaInventory,
     user_jid: Option<String>,
@@ -129,77 +167,12 @@ impl SimpleComponent for ChatArea {
 
     view! {
         #[root]
-        adw::ToolbarView {
-            add_top_bar = &adw::HeaderBar {
-                pack_start = &gtk::ToggleButton {
-                    set_icon_name: "sidebar-show-symbolic",
-                    set_active: true,
-                    set_tooltip_text: Some("Toggle sidebar"),
-                    connect_toggled[sender] => move |btn| {
-                        let _ = sender.output(ChatAreaOutput::ToggleSidebar(btn.is_active()));
-                    },
-                },
-
-                // Title widget: a Stack switches between a single-
-                // chat layout (avatar + name centred) and the multi-
-                // chat tab bar. Stack-switching is more reliable
-                // than per-child set_visible bindings because
-                // existing-widget references don't always re-evaluate
-                // their #[watch] bindings inside relm4's view! macro.
-                #[wrap(Some)]
-                set_title_widget = &gtk::Stack {
-                    #[watch]
-                    set_visible_child_name: if model.tab_count >= 2 {
-                        "multi"
-                    } else {
-                        "single"
-                    },
-
-                    add_named[Some("single")] = &gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 8,
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-
-                        adw::Avatar {
-                            set_size: 30,
-                            set_show_initials: true,
-                            #[watch]
-                            set_text: Some(&model.current_chat_name),
-                            #[watch]
-                            set_custom_image: model.current_chat_avatar
-                                .as_deref()
-                                .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
-                                .map(|t| t.upcast::<gtk::gdk::Paintable>())
-                                .as_ref(),
-                        },
-
-                        adw::WindowTitle {
-                            #[watch]
-                            set_title: &model.current_chat_name,
-                        },
-                    },
-
-                    add_named[Some("multi")] = &model.tab_bar.clone(),
-                },
-            },
-
-            #[wrap(Some)]
-            set_content = &model.tab_view.clone() -> adw::TabView {
-                connect_close_page[sender] => move |_view, page| {
-                    if let Some(chat_id) = page.keyword().map(|s| s.to_string()) {
-                        sender.input(ChatAreaInput::TabClosed(chat_id));
-                    }
-                    glib::Propagation::Stop
-                },
-                connect_selected_page_notify[sender] => move |view| {
-                    let id = view.selected_page()
-                        .and_then(|p| p.keyword())
-                        .map(|s| s.to_string())
-                        .filter(|s| !s.is_empty());
-                    sender.input(ChatAreaInput::TabSelected(id));
-                },
-            },
+        gtk::Paned {
+            set_orientation: gtk::Orientation::Horizontal,
+            set_resize_start_child: true,
+            set_resize_end_child: true,
+            set_shrink_start_child: false,
+            set_shrink_end_child: false,
         }
     }
 
@@ -208,54 +181,55 @@ impl SimpleComponent for ChatArea {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let tab_view = adw::TabView::new();
-        let tab_bar = adw::TabBar::new();
-        tab_bar.set_view(Some(&tab_view));
-        tab_bar.set_autohide(false);
-        tab_bar.set_expand_tabs(false);
+        let pane0 = build_pane(0, &sender);
+        let pane1 = build_pane(1, &sender);
+
+        // Pane 1 starts hidden; the Paned will collapse to just pane 0
+        // until the user moves a tab over.
+        pane1.toolbar_view.set_visible(false);
+
+        root.set_start_child(Some(&pane0.toolbar_view));
+        root.set_end_child(Some(&pane1.toolbar_view));
+        let paned = root.clone();
+        let widgets = view_output!();
 
         let model = ChatArea {
+            panes: [pane0, pane1],
             open_tabs: HashMap::new(),
             chat_meta: HashMap::new(),
-            tab_view,
-            tab_bar,
-            current_chat_name: String::new(),
-            current_chat_kind: String::new(),
-            tab_count: 0,
-            current_chat_id: None,
-            current_chat_avatar: None,
+            paned,
+            focused_pane: 0,
             avatars: init.avatars,
             media: init.media,
             user_jid: None,
         };
+        model.refresh_pane_visibility();
 
-        let widgets = view_output!();
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, msg: ChatAreaInput, sender: ComponentSender<Self>) {
         match msg {
             ChatAreaInput::OpenInCurrent(chat_id) => {
-                if let Some((_, page)) = self.open_tabs.get(&chat_id) {
-                    self.tab_view.set_selected_page(page);
-                } else if self.open_tabs.is_empty() {
+                let pane_idx = self
+                    .open_tabs
+                    .get(&chat_id)
+                    .map(|(_, _, p)| *p)
+                    .unwrap_or(self.focused_pane);
+                if let Some((_, page, _)) = self.open_tabs.get(&chat_id) {
+                    self.panes[pane_idx].tab_view.set_selected_page(page);
+                } else if self.pane_tab_count(self.focused_pane) == 0 {
                     let _ = sender.output(ChatAreaOutput::OpenChatNew(chat_id));
                 } else {
-                    // Reuse the currently-selected tab: close it, then open
-                    // the new chat. close_page() emits `close-page`; our
-                    // signal handler returns Stop and dispatches TabClosed,
-                    // which calls close_page_finish. Trying to call
-                    // close_page_finish directly trips an assertion because
-                    // page->closing isn't set yet.
-                    if let Some(current) = self.tab_view.selected_page() {
-                        self.tab_view.close_page(&current);
+                    if let Some(current) = self.panes[self.focused_pane].tab_view.selected_page() {
+                        self.panes[self.focused_pane].tab_view.close_page(&current);
                     }
                     let _ = sender.output(ChatAreaOutput::OpenChatNew(chat_id));
                 }
             }
             ChatAreaInput::OpenInNewTab(chat_id) => {
-                if let Some((_, page)) = self.open_tabs.get(&chat_id) {
-                    self.tab_view.set_selected_page(page);
+                if let Some((_, page, pane_idx)) = self.open_tabs.get(&chat_id) {
+                    self.panes[*pane_idx].tab_view.set_selected_page(page);
                 } else {
                     let _ = sender.output(ChatAreaOutput::OpenChatNew(chat_id));
                 }
@@ -268,7 +242,7 @@ impl SimpleComponent for ChatArea {
             } => {
                 self.chat_meta
                     .insert(chat_id.clone(), (name.clone(), kind.clone()));
-                if let Some((controller, page)) = self.open_tabs.get(&chat_id) {
+                if let Some((controller, page, _)) = self.open_tabs.get(&chat_id) {
                     let _ = controller.sender().send(ChatTabInput::SetMeta {
                         name: name.clone(),
                         kind: kind.clone(),
@@ -276,6 +250,7 @@ impl SimpleComponent for ChatArea {
                     let _ = controller.sender().send(ChatTabInput::Reset(messages));
                     page.set_title(&name);
                 } else {
+                    let target_pane = self.focused_pane;
                     let controller = ChatTab::builder()
                         .launch(ChatTabInit {
                             chat_id: chat_id.clone(),
@@ -290,7 +265,13 @@ impl SimpleComponent for ChatArea {
                             ChatTabOutput::Send { chat_id, text } => {
                                 ChatAreaInput::SendFromTab { chat_id, text }
                             }
-                            ChatTabOutput::Close { chat_id } => ChatAreaInput::TabClosed(chat_id),
+                            ChatTabOutput::Close { chat_id } => {
+                                // Routed through the focused pane on close-page.
+                                ChatAreaInput::TabClosed {
+                                    pane: 0,
+                                    chat_id,
+                                }
+                            }
                             ChatTabOutput::RequestMediaDownload(id) => {
                                 ChatAreaInput::RequestMediaDownload(id)
                             }
@@ -302,25 +283,32 @@ impl SimpleComponent for ChatArea {
                             }
                         });
                     let widget = controller.widget().clone();
-                    let page = self.tab_view.append(&widget);
+                    let page = self.panes[target_pane].tab_view.append(&widget);
                     page.set_title(&name);
                     page.set_keyword(&chat_id);
-                    self.tab_view.set_selected_page(&page);
-                    self.open_tabs.insert(chat_id.clone(), (controller, page));
+                    self.panes[target_pane].tab_view.set_selected_page(&page);
+                    self.open_tabs
+                        .insert(chat_id.clone(), (controller, page, target_pane));
+                    // Populate the pane's single-mode header state directly.
+                    // `selected_page_notify` fires on append() before we
+                    // got a chance to set keyword(), so its callback
+                    // can't recover the chat_id — we set it here instead.
+                    let pane = &mut self.panes[target_pane];
+                    pane.current_chat_id = Some(chat_id.clone());
+                    pane.current_chat_name = name.clone();
+                    pane.current_chat_kind = kind.clone();
+                    pane.current_chat_avatar = self.avatars.get(&chat_id);
+                    self.focused_pane = target_pane;
                 }
-                self.tab_count = self.open_tabs.len();
-                self.current_chat_name = name;
-                self.current_chat_kind = kind;
-                self.current_chat_id = Some(chat_id.clone());
-                // Inventory hit ⇒ render immediately. Miss ⇒ ask worker
-                // (deduped by the inventory itself).
-                self.current_chat_avatar = self.avatars.get(&chat_id);
-                if self.current_chat_avatar.is_none() && self.avatars.needs_fetch(&chat_id) {
+                self.refresh_pane_visibility();
+                self.refresh_pane_header(0);
+                self.refresh_pane_header(1);
+                if self.avatars.get(&chat_id).is_none() && self.avatars.needs_fetch(&chat_id) {
                     let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(chat_id));
                 }
             }
             ChatAreaInput::MessagesAppended { chat_id, messages } => {
-                if let Some((controller, _)) = self.open_tabs.get(&chat_id) {
+                if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
                     let _ = controller.sender().send(ChatTabInput::Append(messages));
                 } else {
                     tracing::warn!(
@@ -334,7 +322,7 @@ impl SimpleComponent for ChatArea {
                 messages,
                 reached_top,
             } => {
-                if let Some((controller, _)) = self.open_tabs.get(&chat_id) {
+                if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
                     let _ = controller.sender().send(ChatTabInput::PrependOlder {
                         messages,
                         reached_top,
@@ -348,7 +336,7 @@ impl SimpleComponent for ChatArea {
             } => {
                 self.media
                     .set_ready(&message_ids, &path, mimetype.as_deref());
-                for (controller, _) in self.open_tabs.values() {
+                for (controller, _, _) in self.open_tabs.values() {
                     let _ = controller.sender().send(ChatTabInput::MediaReady {
                         message_ids: message_ids.clone(),
                         path: path.clone(),
@@ -358,7 +346,7 @@ impl SimpleComponent for ChatArea {
             }
             ChatAreaInput::MediaFailed { message_id } => {
                 self.media.set_failed(&message_id);
-                for (controller, _) in self.open_tabs.values() {
+                for (controller, _, _) in self.open_tabs.values() {
                     let _ = controller
                         .sender()
                         .send(ChatTabInput::MediaFailed(message_id.clone()));
@@ -366,50 +354,73 @@ impl SimpleComponent for ChatArea {
             }
             ChatAreaInput::AvatarReady { jid, path } => {
                 self.avatars.put(jid.clone(), path.clone());
-                if self.current_chat_id.as_deref() == Some(jid.as_str()) {
-                    self.current_chat_avatar = Some(path.clone());
+                for pane in &mut self.panes {
+                    if pane.current_chat_id.as_deref() == Some(jid.as_str()) {
+                        pane.current_chat_avatar = Some(path.clone());
+                    }
                 }
-                // Broadcast to every open tab — sender avatars in message
-                // rows live there, and the inventory write above lets new
-                // tabs read it on open without a refetch.
-                for (controller, _) in self.open_tabs.values() {
+                self.apply_pane_avatar(0);
+                self.apply_pane_avatar(1);
+                for (controller, _, _) in self.open_tabs.values() {
                     let _ = controller.sender().send(ChatTabInput::AvatarReady {
                         jid: jid.clone(),
                         path: path.clone(),
                     });
                 }
             }
-            ChatAreaInput::TabSelected(chat_id) => {
+            ChatAreaInput::PaneTabSelected { pane, chat_id } => {
+                self.focused_pane = pane;
                 if let Some(id) = &chat_id {
                     if let Some((name, kind)) = self.chat_meta.get(id) {
-                        self.current_chat_name = name.clone();
-                        self.current_chat_kind = kind.clone();
+                        self.panes[pane].current_chat_name = name.clone();
+                        self.panes[pane].current_chat_kind = kind.clone();
                     }
-                    if let Some((controller, _)) = self.open_tabs.get(id) {
+                    self.panes[pane].current_chat_id = Some(id.clone());
+                    self.panes[pane].current_chat_avatar = self.avatars.get(id);
+                    if let Some((controller, _, _)) = self.open_tabs.get(id) {
                         let _ = controller.sender().send(ChatTabInput::StickToBottom);
                     }
-                    self.current_chat_id = chat_id;
-                } else if self.open_tabs.is_empty() {
-                    self.current_chat_name.clear();
-                    self.current_chat_kind.clear();
-                    self.current_chat_id = None;
+                } else if self.pane_tab_count(pane) == 0 {
+                    self.panes[pane].current_chat_id = None;
+                    self.panes[pane].current_chat_name.clear();
+                    self.panes[pane].current_chat_kind.clear();
+                    self.panes[pane].current_chat_avatar = None;
                 }
-                // Else: spurious selected-page-notify (fires immediately after
-                // tab_view.append, before keyword is set). Keep current state.
+                self.refresh_pane_header(pane);
             }
-            ChatAreaInput::TabClosed(chat_id) => {
-                if let Some((controller, page)) = self.open_tabs.remove(&chat_id) {
-                    self.tab_view.close_page_finish(&page, true);
+            ChatAreaInput::TabClosed { pane: _, chat_id } => {
+                if let Some((controller, page, pane_idx)) = self.open_tabs.remove(&chat_id) {
+                    self.panes[pane_idx].tab_view.close_page_finish(&page, true);
                     drop(controller);
                 }
                 self.chat_meta.remove(&chat_id);
-                self.tab_count = self.open_tabs.len();
-                if self.open_tabs.is_empty() {
-                    self.current_chat_name.clear();
-                    self.current_chat_kind.clear();
-                    self.current_chat_id = None;
-                }
+                self.refresh_pane_visibility();
+                self.refresh_pane_header(0);
+                self.refresh_pane_header(1);
                 let _ = sender.output(ChatAreaOutput::CloseChat(chat_id));
+            }
+            ChatAreaInput::PaneFocused(idx) => {
+                self.focused_pane = idx;
+            }
+            ChatAreaInput::MoveTabToOtherPane(from) => {
+                let to = 1 - from;
+                let Some(page) = self.panes[from].tab_view.selected_page() else {
+                    return;
+                };
+                let Some(chat_id) = page.keyword().map(|s| s.to_string()) else {
+                    return;
+                };
+                let pos = self.panes[to].tab_view.n_pages();
+                self.panes[from]
+                    .tab_view
+                    .transfer_page(&page, &self.panes[to].tab_view, pos);
+                if let Some(entry) = self.open_tabs.get_mut(&chat_id) {
+                    entry.2 = to;
+                }
+                self.focused_pane = to;
+                self.refresh_pane_visibility();
+                self.refresh_pane_header(0);
+                self.refresh_pane_header(1);
             }
             ChatAreaInput::SendFromTab { chat_id, text } => {
                 let _ = sender.output(ChatAreaOutput::SendText { chat_id, text });
@@ -425,7 +436,7 @@ impl SimpleComponent for ChatArea {
             }
             ChatAreaInput::SetUserJid(jid) => {
                 self.user_jid = jid.clone();
-                for (controller, _) in self.open_tabs.values() {
+                for (controller, _, _) in self.open_tabs.values() {
                     let _ = controller
                         .sender()
                         .send(ChatTabInput::SetUserJid(jid.clone()));
@@ -435,3 +446,185 @@ impl SimpleComponent for ChatArea {
     }
 }
 
+impl ChatArea {
+    fn pane_tab_count(&self, idx: usize) -> i32 {
+        self.panes[idx].tab_view.n_pages()
+    }
+
+    /// Hide pane 1 when empty (so the Paned divider disappears too) and
+    /// ensure pane 0 is always visible. Also keeps the window's close
+    /// button visible on exactly one header — whichever pane is the
+    /// rightmost-visible one — so the X never accidentally lives on a
+    /// header that the user might mistake for "close this tab".
+    fn refresh_pane_visibility(&self) {
+        let p1_visible = self.pane_tab_count(1) > 0;
+        self.panes[0].toolbar_view.set_visible(true);
+        self.panes[1].toolbar_view.set_visible(p1_visible);
+        // Window controls live only on the rightmost visible pane.
+        self.panes[0].header.set_show_end_title_buttons(!p1_visible);
+        self.panes[1].header.set_show_end_title_buttons(p1_visible);
+        // The split-move button needs at least one tab in the source pane.
+        self.panes[0]
+            .split_btn
+            .set_sensitive(self.pane_tab_count(0) > 0);
+        self.panes[1]
+            .split_btn
+            .set_sensitive(self.pane_tab_count(1) > 0);
+        // When pane 1 just appeared, give it a sensible starting size.
+        if p1_visible {
+            let width = self.paned.width();
+            if width > 0 && self.paned.position() <= 0 {
+                self.paned.set_position(width / 2);
+            }
+        }
+    }
+
+    /// Pick the right child of the title Stack based on tab count, and
+    /// repaint the single-tab avatar/name from the cached state.
+    fn refresh_pane_header(&self, idx: usize) {
+        let pane = &self.panes[idx];
+        if self.pane_tab_count(idx) >= 2 {
+            pane.stack.set_visible_child_name("multi");
+        } else {
+            pane.stack.set_visible_child_name("single");
+            pane.title.set_title(&pane.current_chat_name);
+            pane.avatar.set_text(Some(&pane.current_chat_name));
+            self.apply_pane_avatar(idx);
+        }
+    }
+
+    fn apply_pane_avatar(&self, idx: usize) {
+        let pane = &self.panes[idx];
+        let texture = pane
+            .current_chat_avatar
+            .as_deref()
+            .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+            .map(|t| t.upcast::<gtk::gdk::Paintable>());
+        pane.avatar.set_custom_image(texture.as_ref());
+    }
+}
+
+fn build_pane(idx: usize, sender: &ComponentSender<ChatArea>) -> Pane {
+    let tab_view = adw::TabView::new();
+    let tab_bar = adw::TabBar::builder()
+        .view(&tab_view)
+        .autohide(false)
+        .expand_tabs(false)
+        .build();
+
+    let avatar = adw::Avatar::builder()
+        .size(30)
+        .show_initials(true)
+        .build();
+    let title = adw::WindowTitle::new("", "");
+    let single_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+    single_box.append(&avatar);
+    single_box.append(&title);
+
+    let stack = gtk::Stack::new();
+    stack.add_named(&single_box, Some("single"));
+    stack.add_named(&tab_bar, Some("multi"));
+    stack.set_visible_child_name("single");
+
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&stack));
+
+    if idx == 0 {
+        let toggle = gtk::ToggleButton::builder()
+            .icon_name("sidebar-show-symbolic")
+            .active(true)
+            .tooltip_text("Toggle sidebar")
+            .build();
+        let s = sender.output_sender().clone();
+        toggle.connect_toggled(move |btn| {
+            let _ = s.send(ChatAreaOutput::ToggleSidebar(btn.is_active()));
+        });
+        header.pack_start(&toggle);
+    }
+
+    // "Move to other split" — same icon both panes; the model figures out
+    // which way is "other" based on which pane fired the event.
+    let split_btn = gtk::Button::builder()
+        .icon_name("view-dual-symbolic")
+        .tooltip_text(if idx == 0 {
+            "Move tab to right split"
+        } else {
+            "Move tab to left split"
+        })
+        .build();
+    let s = sender.input_sender().clone();
+    split_btn.connect_clicked(move |_| {
+        let _ = s.send(ChatAreaInput::MoveTabToOtherPane(idx));
+    });
+    header.pack_end(&split_btn);
+
+    // Pane 1 starts hidden — no window controls until refresh_pane_visibility
+    // says otherwise. Pane 0 keeps the default (true) for the single-pane case.
+    if idx == 1 {
+        header.set_show_end_title_buttons(false);
+    }
+
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header);
+    toolbar_view.set_content(Some(&tab_view));
+
+    // Click anywhere in the pane (including empty area when no tabs) →
+    // make this pane the routing target for sidebar clicks. Capture-phase
+    // so we hear the click even if a child consumes it.
+    {
+        let s = sender.input_sender().clone();
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        click.set_button(0); // any button
+        click.connect_pressed(move |_, _, _, _| {
+            let _ = s.send(ChatAreaInput::PaneFocused(idx));
+        });
+        toolbar_view.add_controller(click);
+    }
+
+    {
+        let s = sender.input_sender().clone();
+        tab_view.connect_close_page(move |_view, page| {
+            if let Some(chat_id) = page.keyword().map(|s| s.to_string()) {
+                let _ = s.send(ChatAreaInput::TabClosed {
+                    pane: idx,
+                    chat_id,
+                });
+            }
+            glib::Propagation::Stop
+        });
+    }
+    {
+        let s = sender.input_sender().clone();
+        tab_view.connect_selected_page_notify(move |view| {
+            let id = view
+                .selected_page()
+                .and_then(|p| p.keyword())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
+            let _ = s.send(ChatAreaInput::PaneTabSelected {
+                pane: idx,
+                chat_id: id,
+            });
+        });
+    }
+
+    Pane {
+        tab_view,
+        toolbar_view,
+        header,
+        stack,
+        avatar,
+        title,
+        split_btn,
+        current_chat_id: None,
+        current_chat_name: String::new(),
+        current_chat_avatar: None,
+        current_chat_kind: String::new(),
+    }
+}

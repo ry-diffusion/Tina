@@ -234,9 +234,9 @@ impl SimpleComponent for ChatTab {
                 },
 
                 gtk::Button {
-                    // `send-symbolic` is not part of the Adwaita icon theme;
-                    // `mail-send-symbolic` is and matches the visual cue.
-                    set_icon_name: "mail-send-symbolic",
+                    // Bundled from relm4-icons (icon-development-kit set);
+                    // see crates/tina-gtk/icons/ + icons.toml.
+                    set_icon_name: "curved-arrow-left-symbolic",
                     set_tooltip_text: Some("Send"),
                     add_css_class: "suggested-action",
                     connect_clicked => ChatTabInput::Send,
@@ -478,6 +478,27 @@ impl SimpleComponent for ChatTab {
                     drop(guard);
                     for id in &local_drops {
                         self.seen_message_ids.remove(id);
+                    }
+                    // The echoes had advanced our trailing-collapse
+                    // cursor to "\0me" with the echo's timestamp; with
+                    // them gone, the real rows about to land must be
+                    // compared against whatever's actually at the bottom
+                    // of the factory now (or None if it's empty). Without
+                    // this reset the real "from_me" row gets collapsed
+                    // against the dropped echo and rendered avatar-less,
+                    // visually grouping it under the previous sender.
+                    let guard = self.messages.guard();
+                    if let Some(last) = guard.iter().last() {
+                        let key = if last.item.from_me {
+                            "\0me".to_string()
+                        } else {
+                            last.item.sender_name.clone()
+                        };
+                        self.last_sender = Some(key);
+                        self.last_ts = Some(last.item.timestamp_unix);
+                    } else {
+                        self.last_sender = None;
+                        self.last_ts = None;
                     }
                 }
 

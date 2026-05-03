@@ -64,6 +64,7 @@ fn main() -> color_eyre::Result<()> {
     let nanachi_dir = find_nanachi_dir().wrap_err("locating nanachi dir")?;
 
     let app = RelmApp::new(APP_ID);
+    relm4_icons::initialize_icons();
     relm4::set_global_css(components::message_bubble::MESSAGE_ROW_CSS);
     app.run::<app::AppModel>(app::AppInit { nanachi_dir });
     Ok(())
