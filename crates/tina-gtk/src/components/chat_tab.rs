@@ -225,56 +225,82 @@ impl SimpleComponent for ChatTab {
                 path,
                 mimetype,
             } => {
-                let id_set: std::collections::HashSet<&String> = message_ids.iter().collect();
-                let mut guard = self.messages.guard();
-                // FactoryVecDeque doesn't expose mut iter; rebuild by index.
-                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                for (idx, fac) in guard.iter().enumerate() {
-                    if id_set.contains(&fac.item.id) {
-                        let mut new_item = fac.item.clone();
-                        new_item.media_path = Some(path.clone());
-                        new_item.media_status = "done".into();
-                        if new_item.media_mimetype.is_none() {
-                            new_item.media_mimetype = mimetype.clone();
+                let saved = self.scroll.as_ref().map(|s| s.vadjustment().value());
+                {
+                    let id_set: std::collections::HashSet<&String> = message_ids.iter().collect();
+                    let mut guard = self.messages.guard();
+                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                    for (idx, fac) in guard.iter().enumerate() {
+                        if id_set.contains(&fac.item.id) {
+                            let mut new_item = fac.item.clone();
+                            new_item.media_path = Some(path.clone());
+                            new_item.media_status = "done".into();
+                            if new_item.media_mimetype.is_none() {
+                                new_item.media_mimetype = mimetype.clone();
+                            }
+                            to_replace.push((idx, new_item));
                         }
-                        to_replace.push((idx, new_item));
+                    }
+                    for (idx, item) in to_replace {
+                        guard.remove(idx);
+                        guard.insert(idx, item);
                     }
                 }
-                for (idx, item) in to_replace {
-                    guard.remove(idx);
-                    guard.insert(idx, item);
+                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
+                    let adj = scroll.vadjustment();
+                    glib::idle_add_local_once(move || adj.set_value(v));
                 }
             }
             ChatTabInput::MediaFailed(message_id) => {
-                let mut guard = self.messages.guard();
-                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                for (idx, fac) in guard.iter().enumerate() {
-                    if fac.item.id == message_id {
-                        let mut new_item = fac.item.clone();
-                        new_item.media_status = "failed".into();
-                        to_replace.push((idx, new_item));
+                let saved = self.scroll.as_ref().map(|s| s.vadjustment().value());
+                {
+                    let mut guard = self.messages.guard();
+                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                    for (idx, fac) in guard.iter().enumerate() {
+                        if fac.item.id == message_id {
+                            let mut new_item = fac.item.clone();
+                            new_item.media_status = "failed".into();
+                            to_replace.push((idx, new_item));
+                        }
+                    }
+                    for (idx, item) in to_replace {
+                        guard.remove(idx);
+                        guard.insert(idx, item);
                     }
                 }
-                for (idx, item) in to_replace {
-                    guard.remove(idx);
-                    guard.insert(idx, item);
+                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
+                    let adj = scroll.vadjustment();
+                    glib::idle_add_local_once(move || adj.set_value(v));
                 }
             }
             ChatTabInput::RequestMediaDownload(id) => {
-                // Optimistically mark downloading immediately for snappy UI;
-                // worker confirms via MediaReady (or rolls back via MediaFailed).
-                let mut guard = self.messages.guard();
-                let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                for (idx, fac) in guard.iter().enumerate() {
-                    if fac.item.id == id {
-                        let mut new_item = fac.item.clone();
-                        new_item.media_status = "downloading".into();
-                        to_replace.push((idx, new_item));
+                // remove+insert rebuilds the row, which the listbox treats
+                // as "content changed → re-allocate", and any height
+                // difference jumps the scroll. Capture the vadjustment
+                // before the mutation and restore it after the next idle
+                // tick so the user stays put.
+                let saved = self
+                    .scroll
+                    .as_ref()
+                    .map(|s| s.vadjustment().value());
+                {
+                    let mut guard = self.messages.guard();
+                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
+                    for (idx, fac) in guard.iter().enumerate() {
+                        if fac.item.id == id {
+                            let mut new_item = fac.item.clone();
+                            new_item.media_status = "downloading".into();
+                            to_replace.push((idx, new_item));
+                        }
+                    }
+                    for (idx, item) in to_replace {
+                        guard.remove(idx);
+                        guard.insert(idx, item);
                     }
                 }
-                for (idx, item) in to_replace {
-                    guard.remove(idx);
-                    guard.insert(idx, item);
+                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
+                    let adj = scroll.vadjustment();
+                    glib::idle_add_local_once(move || adj.set_value(v));
                 }
                 let _ = sender.output(ChatTabOutput::RequestMediaDownload(id));
             }

@@ -198,11 +198,34 @@ func (c *Client) send(to, content string) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, err = c.wa.SendMessage(ctx, jid, &waE2E.Message{
+	resp, err := c.wa.SendMessage(ctx, jid, &waE2E.Message{
 		Conversation: &content,
 	})
 	if err != nil {
 		return false, err
 	}
+
+	// whatsmeow only fires events.Message for incoming traffic; outgoing
+	// messages stay invisible to our pipeline unless we synthesise an
+	// echo. Without this, the user's own messages never appear in their
+	// chat thread until the next history sync.
+	ts := resp.Timestamp.Unix()
+	if ts <= 0 {
+		ts = time.Now().Unix()
+	}
+	senderJID := jid.String()
+	if id := c.wa.Store.ID; id != nil {
+		senderJID = id.String()
+	}
+	md := MessageData{
+		MessageID:   resp.ID,
+		ChatJID:     jid.String(),
+		SenderJID:   senderJID,
+		Content:     &content,
+		MessageType: "text",
+		Timestamp:   ts,
+		IsFromMe:    true,
+	}
+	emitMessages(c.accountID, []MessageData{md})
 	return true, nil
 }

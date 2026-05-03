@@ -80,10 +80,13 @@ impl MessageItem {
         matches!(self.message_type.as_str(), "image" | "video" | "sticker")
     }
 
-    /// `true` when the bubble should drop the card frame and let the image
-    /// itself be the visual.
+    /// `true` when the bubble should drop the card frame and render the
+    /// media as the bubble itself. Applies to ANY image / sticker / video,
+    /// regardless of download state — the placeholder is also shown in the
+    /// edge-to-edge style so the visual doesn't jump when the download
+    /// resolves.
     fn show_as_image_bubble(&self) -> bool {
-        self.has_local_file() && matches!(self.message_type.as_str(), "image" | "sticker")
+        matches!(self.message_type.as_str(), "image" | "sticker" | "video")
     }
 
     fn media_kind_label(&self) -> &'static str {
@@ -210,21 +213,105 @@ impl FactoryComponent for MessageBubble {
                     },
 
                     gtk::Overlay {
+                        // The same overlay holds either the actual media
+                        // or the square placeholder, so the bubble has the
+                        // exact same external dimensions before and after
+                        // download — no layout shift on click.
                         #[wrap(Some)]
                         set_child = &gtk::Frame {
-                            // Frame with `card` rounds the picture corners.
                             add_css_class: "card",
+                            set_size_request: (
+                                if self.item.message_type == "sticker" { 128 } else { 280 },
+                                if self.item.message_type == "sticker" { 128 } else { 210 },
+                            ),
+
+                            // Loaded image / sticker.
                             gtk::Picture {
+                                set_visible: self.item.has_local_file()
+                                    && matches!(
+                                        self.item.message_type.as_str(),
+                                        "image" | "sticker"
+                                    ),
                                 set_filename: self.item.media_path.as_deref(),
                                 set_can_shrink: true,
-                                set_size_request: (
-                                    if self.item.message_type == "sticker" { 128 } else { 320 },
-                                    if self.item.message_type == "sticker" { 128 } else { 240 },
-                                ),
                             },
                         },
 
-                        // Timestamp pill, OSD-style (translucent).
+                        // Loaded video — same edge-to-edge slot.
+                        add_overlay = &gtk::Video {
+                            set_visible: self.item.has_local_file()
+                                && self.item.message_type == "video",
+                            set_filename: self.item.media_path
+                                .as_deref()
+                                .filter(|_| self.item.message_type == "video"),
+                        },
+
+                        // Placeholder backdrop: faded type icon as the
+                        // background of the empty slot.
+                        add_overlay = &gtk::Image {
+                            set_visible: !self.item.has_local_file(),
+                            set_icon_name: Some(self.item.placeholder_icon()),
+                            set_pixel_size: 56,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "dim-label",
+                        },
+
+                        // Centred circular download / retry button.
+                        add_overlay = &gtk::Button {
+                            set_visible: !self.item.has_local_file()
+                                && self.item.media_status != "downloading",
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_icon_name: match self.item.media_status.as_str() {
+                                "failed" => "view-refresh-symbolic",
+                                _ => "folder-download-symbolic",
+                            },
+                            add_css_class: "circular",
+                            add_css_class: "osd",
+                            set_tooltip_text: Some(match self.item.media_status.as_str() {
+                                "failed" => "Retry download",
+                                _ => "Download",
+                            }),
+                            connect_clicked[sender, id = self.item.id.clone()] => move |_| {
+                                let _ = sender.output(
+                                    MessageBubbleOut::DownloadRequested(id.clone())
+                                );
+                            },
+                        },
+
+                        // Spinner while in flight.
+                        add_overlay = &gtk::Spinner {
+                            set_visible: !self.item.has_local_file()
+                                && self.item.media_status == "downloading",
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_spinning: true,
+                            set_width_request: 32,
+                            set_height_request: 32,
+                        },
+
+                        // Bottom-left pill: dimensions / size (placeholder only).
+                        add_overlay = &gtk::Box {
+                            set_visible: !self.item.has_local_file()
+                                && !self.item.media_summary.is_empty(),
+                            set_halign: gtk::Align::Start,
+                            set_valign: gtk::Align::End,
+                            set_margin_start: 8,
+                            set_margin_bottom: 8,
+                            add_css_class: "osd",
+                            add_css_class: "card",
+                            gtk::Label {
+                                set_label: &self.item.media_summary,
+                                set_margin_start: 6,
+                                set_margin_end: 6,
+                                set_margin_top: 1,
+                                set_margin_bottom: 1,
+                                add_css_class: "caption",
+                            },
+                        },
+
+                        // Bottom-right pill: timestamp.
                         add_overlay = &gtk::Box {
                             set_halign: gtk::Align::End,
                             set_valign: gtk::Align::End,
@@ -280,85 +367,10 @@ impl FactoryComponent for MessageBubble {
                             add_css_class: "accent",
                         },
 
-                        // ── Square placeholder: image / video / sticker not yet downloaded.
-                        gtk::Overlay {
-                            set_visible: self.item.is_visual_media()
-                                && !self.item.has_local_file(),
-                            set_size_request: (
-                                if self.item.message_type == "sticker" { 128 } else { 220 },
-                                if self.item.message_type == "sticker" { 128 } else { 165 },
-                            ),
-
-                            #[wrap(Some)]
-                            set_child = &gtk::Box {
-                                add_css_class: "card",
-                                add_css_class: "view",
-                                set_hexpand: true,
-                                set_vexpand: true,
-
-                                gtk::Image {
-                                    set_icon_name: Some(self.item.placeholder_icon()),
-                                    set_pixel_size: 56,
-                                    set_halign: gtk::Align::Center,
-                                    set_valign: gtk::Align::Center,
-                                    set_hexpand: true,
-                                    add_css_class: "dim-label",
-                                },
-                            },
-
-                            // Centered circular download button.
-                            add_overlay = &gtk::Button {
-                                set_visible: self.item.media_status != "downloading",
-                                set_halign: gtk::Align::Center,
-                                set_valign: gtk::Align::Center,
-                                set_icon_name: match self.item.media_status.as_str() {
-                                    "failed" => "view-refresh-symbolic",
-                                    _ => "folder-download-symbolic",
-                                },
-                                add_css_class: "circular",
-                                add_css_class: "osd",
-                                set_tooltip_text: Some(match self.item.media_status.as_str() {
-                                    "failed" => "Retry download",
-                                    _ => "Download",
-                                }),
-                                connect_clicked[sender, id = self.item.id.clone()] => move |_| {
-                                    let _ = sender.output(
-                                        MessageBubbleOut::DownloadRequested(id.clone())
-                                    );
-                                },
-                            },
-
-                            // Spinner while downloading.
-                            add_overlay = &gtk::Spinner {
-                                set_visible: self.item.media_status == "downloading",
-                                set_halign: gtk::Align::Center,
-                                set_valign: gtk::Align::Center,
-                                set_spinning: true,
-                                set_width_request: 32,
-                                set_height_request: 32,
-                            },
-
-                            // Bottom-right pill: file size / dimensions.
-                            add_overlay = &gtk::Box {
-                                set_visible: !self.item.media_summary.is_empty(),
-                                set_halign: gtk::Align::End,
-                                set_valign: gtk::Align::End,
-                                set_margin_end: 6,
-                                set_margin_bottom: 6,
-                                add_css_class: "osd",
-                                add_css_class: "card",
-                                gtk::Label {
-                                    set_label: &self.item.media_summary,
-                                    set_margin_start: 6,
-                                    set_margin_end: 6,
-                                    set_margin_top: 1,
-                                    set_margin_bottom: 1,
-                                    add_css_class: "caption",
-                                },
-                            },
-                        },
-
-                        // ── Compact row: audio / document not yet downloaded.
+                        // Image / sticker / video are rendered in MODE A
+                        // above; here we only handle audio / document /
+                        // text. ── Compact row: audio / document not yet
+                        // downloaded.
                         gtk::Box {
                             set_visible: !self.item.has_local_file()
                                 && matches!(
@@ -432,16 +444,6 @@ impl FactoryComponent for MessageBubble {
                                 .filter(|_| self.item.message_type == "audio")
                                 .map(|p| gtk::MediaFile::for_filename(p).upcast::<gtk::MediaStream>())
                                 .as_ref(),
-                        },
-
-                        // ── Video downloaded: inline gtk::Video.
-                        gtk::Video {
-                            set_visible: self.item.has_local_file()
-                                && self.item.message_type == "video",
-                            set_filename: self.item.media_path
-                                .as_deref()
-                                .filter(|_| self.item.message_type == "video"),
-                            set_size_request: (320, 240),
                         },
 
                         // ── Document downloaded: open externally.
