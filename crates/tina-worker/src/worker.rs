@@ -482,11 +482,13 @@ async fn flush(
                 }
             }
             (Some(chat_id), true) => {
-                tracing::info!(
-                    chat = chat_id,
-                    affected = "tracked",
+                // WARN so it shows up in default log levels — this is the
+                // smoking-gun symptom of an active_chat / chat_id mismatch
+                // (the user reported new messages not rendering live).
+                tracing::warn!(
+                    active_chat = chat_id,
                     msg_inputs = inputs.len(),
-                    "dispatcher: flush had active_chat but no matching messages",
+                    "dispatcher: flush had active_chat but no message matched (alias mismatch?)",
                 );
             }
             (None, _) => {
