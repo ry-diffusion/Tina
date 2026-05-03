@@ -62,6 +62,11 @@ pub struct ChatTab {
     /// dispatcher AND a manual fetch-after-send both fire MessagesAppended
     /// for the same id). Keyed by message_id.
     seen_message_ids: std::collections::HashSet<String>,
+    /// Guard against accidental double-submit when GTK fires two activate
+    /// events back-to-back (Enter on the entry + the focus-driven default
+    /// activation, etc.). We refuse to re-output the same body within 1
+    /// second.
+    last_send: Option<(String, std::time::Instant)>,
 }
 
 #[relm4::component(pub)]
@@ -163,6 +168,7 @@ impl SimpleComponent for ChatTab {
             last_sender: None,
             scroll: None,
             seen_message_ids: seen,
+            last_send: None,
         };
 
         let messages_list = model.messages.widget();
@@ -179,18 +185,46 @@ impl SimpleComponent for ChatTab {
                 self.kind = kind;
             }
             ChatTabInput::Reset(rows) => {
-                let mut guard = self.messages.guard();
-                guard.clear();
-                self.last_sender = None;
-                self.seen_message_ids.clear();
-                for row in &rows {
-                    let show = !row.is_from_me
-                        && self.kind != "dm"
-                        && self.last_sender.as_deref()
-                            != Some(row.sender_name.as_deref().unwrap_or(""));
-                    self.last_sender = row.sender_name.clone();
-                    self.seen_message_ids.insert(row.message_id.clone());
-                    guard.push_back(MessageItem::from_row(row, show));
+                {
+                    let mut guard = self.messages.guard();
+                    guard.clear();
+                    self.last_sender = None;
+                    self.seen_message_ids.clear();
+                    for row in &rows {
+                        let show = !row.is_from_me
+                            && self.kind != "dm"
+                            && self.last_sender.as_deref()
+                                != Some(row.sender_name.as_deref().unwrap_or(""));
+                        self.last_sender = row.sender_name.clone();
+                        self.seen_message_ids.insert(row.message_id.clone());
+                        guard.push_back(MessageItem::from_row(row, show));
+                    }
+                }
+                // Sticky bottom on chat open. The first idle tick is too
+                // early — the listbox hasn't allocated its rows yet, so
+                // upper() is still 0. Schedule a few in succession; the
+                // last one wins after layout has settled.
+                if let Some(scroll) = self.scroll.clone() {
+                    let s1 = scroll.clone();
+                    glib::idle_add_local_once(move || {
+                        let adj = s1.vadjustment();
+                        adj.set_value(adj.upper() - adj.page_size());
+                    });
+                    let s2 = scroll.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(50),
+                        move || {
+                            let adj = s2.vadjustment();
+                            adj.set_value(adj.upper() - adj.page_size());
+                        },
+                    );
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(200),
+                        move || {
+                            let adj = scroll.vadjustment();
+                            adj.set_value(adj.upper() - adj.page_size());
+                        },
+                    );
                 }
             }
             ChatTabInput::Append(rows) => {
@@ -199,6 +233,19 @@ impl SimpleComponent for ChatTab {
                     count = rows.len(),
                     "ChatTab::Append"
                 );
+                // Sticky-bottom behaviour: only auto-scroll if the user
+                // was already near the bottom before this delta. If they
+                // scrolled up to read history, don't yank them back down.
+                let was_at_bottom = self
+                    .scroll
+                    .as_ref()
+                    .map(|s| {
+                        let adj = s.vadjustment();
+                        let bottom = adj.upper() - adj.page_size();
+                        adj.value() >= bottom - 50.0
+                    })
+                    .unwrap_or(true);
+
                 let new_rows: Vec<_> = rows
                     .into_iter()
                     .filter(|r| self.seen_message_ids.insert(r.message_id.clone()))
@@ -217,12 +264,13 @@ impl SimpleComponent for ChatTab {
                         guard.push_back(MessageItem::from_row(row, show));
                     }
                 }
-                // Auto-scroll to bottom on append so the user sees the
-                // newly-arrived message without manually scrolling.
-                if let Some(adj) = self.scroll.as_ref().map(|s| s.vadjustment()) {
-                    glib::idle_add_local_once(move || {
-                        adj.set_value(adj.upper() - adj.page_size());
-                    });
+                if was_at_bottom {
+                    if let Some(scroll) = self.scroll.clone() {
+                        glib::idle_add_local_once(move || {
+                            let adj = scroll.vadjustment();
+                            adj.set_value(adj.upper() - adj.page_size());
+                        });
+                    }
                 }
             }
             ChatTabInput::Send => {
@@ -231,6 +279,19 @@ impl SimpleComponent for ChatTab {
                 if trimmed.is_empty() {
                     return;
                 }
+                // Drop duplicate fires (Enter + button-click in same frame,
+                // GTK signal weirdness). Same body within 1s = ignored.
+                if let Some((prev, when)) = &self.last_send {
+                    if prev == trimmed && when.elapsed() < std::time::Duration::from_secs(1) {
+                        tracing::warn!(
+                            chat = %self.chat_id,
+                            "Send debounced (duplicate within 1s)"
+                        );
+                        self.composer_buffer.set_text("");
+                        return;
+                    }
+                }
+                self.last_send = Some((trimmed.to_string(), std::time::Instant::now()));
                 let _ = sender.output(ChatTabOutput::Send {
                     chat_id: self.chat_id.clone(),
                     text: trimmed.to_string(),
