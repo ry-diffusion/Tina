@@ -455,21 +455,46 @@ async fn flush(
             .or_default()
             .extend(res.affected_chat_ids);
 
-        if let (Some(chat_id), false) = (
-            active_chat_for_account,
+        // Diagnostics: surface why a flush did or did not emit
+        // MessagesAppended. Useful when chat_id resolution mismatches the
+        // UI's active chat (e.g., LID vs PN).
+        match (
+            active_chat_for_account.as_deref(),
             res.active_chat_message_ids.is_empty(),
         ) {
-            let rows = db
-                .get_message_rows_by_ids(&account_id, &res.active_chat_message_ids)
-                .await?;
-            if !rows.is_empty() {
-                let _ = event_tx
-                    .send(WorkerEvent::MessagesAppended {
-                        account_id: account_id.clone(),
-                        chat_id,
-                        messages: rows,
-                    })
-                    .await;
+            (Some(chat_id), false) => {
+                tracing::info!(
+                    chat = chat_id,
+                    count = res.active_chat_message_ids.len(),
+                    "dispatcher: emitting MessagesAppended",
+                );
+                let rows = db
+                    .get_message_rows_by_ids(&account_id, &res.active_chat_message_ids)
+                    .await?;
+                if !rows.is_empty() {
+                    let _ = event_tx
+                        .send(WorkerEvent::MessagesAppended {
+                            account_id: account_id.clone(),
+                            chat_id: chat_id.to_string(),
+                            messages: rows,
+                        })
+                        .await;
+                }
+            }
+            (Some(chat_id), true) => {
+                tracing::info!(
+                    chat = chat_id,
+                    affected = "tracked",
+                    msg_inputs = inputs.len(),
+                    "dispatcher: flush had active_chat but no matching messages",
+                );
+            }
+            (None, _) => {
+                tracing::debug!(
+                    affected = "tracked",
+                    msg_inputs = inputs.len(),
+                    "dispatcher: flush had no active chat",
+                );
             }
         }
     }

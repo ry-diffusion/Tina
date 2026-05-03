@@ -166,7 +166,33 @@ async fn run(
                 let Some(account_id) = acc else { continue };
                 if let Err(e) = worker.send_message(&account_id, &chat_id, &text).await {
                     error!("send_message: {e}");
+                    continue;
                 }
+                // Belt-and-suspenders: wait for the dispatcher's 100ms
+                // flush window to elapse, then re-fetch the tail of the
+                // chat and re-emit MessagesAppended ourselves. ChatTab
+                // dedups by message_id, so this is a no-op when the
+                // dispatcher already routed the synthetic echo through.
+                let app = app.clone();
+                let worker = worker.clone();
+                let chat_id_clone = chat_id.clone();
+                let account_id_clone = account_id.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    match worker
+                        .get_message_rows(&account_id_clone, &chat_id_clone, 20, 0)
+                        .await
+                    {
+                        Ok(messages) if !messages.is_empty() => {
+                            let _ = app.send(AppMsg::MessagesAppended {
+                                chat_id: chat_id_clone,
+                                messages,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(e) => error!("post-send fetch: {e}"),
+                    }
+                });
             }
             Cmd::Repair => {
                 let acc = selected.lock().await.clone();

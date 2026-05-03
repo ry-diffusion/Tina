@@ -58,6 +58,10 @@ pub struct ChatTab {
     /// Held so we can scroll to the bottom on Append. Captured from the
     /// view! macro via `#[name(scroll)]`.
     scroll: Option<gtk::ScrolledWindow>,
+    /// Dedup against the worker emitting the same row twice (e.g. when the
+    /// dispatcher AND a manual fetch-after-send both fire MessagesAppended
+    /// for the same id). Keyed by message_id.
+    seen_message_ids: std::collections::HashSet<String>,
 }
 
 #[relm4::component(pub)]
@@ -144,6 +148,12 @@ impl SimpleComponent for ChatTab {
             }
         }
 
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(init.initial.len());
+        for r in &init.initial {
+            seen.insert(r.message_id.clone());
+        }
+
         let mut model = ChatTab {
             chat_id: init.chat_id,
             name: init.name,
@@ -152,6 +162,7 @@ impl SimpleComponent for ChatTab {
             composer_buffer: gtk::EntryBuffer::default(),
             last_sender: None,
             scroll: None,
+            seen_message_ids: seen,
         };
 
         let messages_list = model.messages.widget();
@@ -171,27 +182,33 @@ impl SimpleComponent for ChatTab {
                 let mut guard = self.messages.guard();
                 guard.clear();
                 self.last_sender = None;
+                self.seen_message_ids.clear();
                 for row in &rows {
                     let show = !row.is_from_me
                         && self.kind != "dm"
                         && self.last_sender.as_deref()
                             != Some(row.sender_name.as_deref().unwrap_or(""));
                     self.last_sender = row.sender_name.clone();
+                    self.seen_message_ids.insert(row.message_id.clone());
                     guard.push_back(MessageItem::from_row(row, show));
                 }
             }
             ChatTabInput::Append(rows) => {
-                tracing::debug!(
+                tracing::info!(
                     chat = %self.chat_id,
                     count = rows.len(),
                     "ChatTab::Append"
                 );
-                if rows.is_empty() {
+                let new_rows: Vec<_> = rows
+                    .into_iter()
+                    .filter(|r| self.seen_message_ids.insert(r.message_id.clone()))
+                    .collect();
+                if new_rows.is_empty() {
                     return;
                 }
                 {
                     let mut guard = self.messages.guard();
-                    for row in &rows {
+                    for row in &new_rows {
                         let show = !row.is_from_me
                             && self.kind != "dm"
                             && self.last_sender.as_deref()
