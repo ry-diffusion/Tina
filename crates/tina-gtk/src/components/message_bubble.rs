@@ -34,6 +34,10 @@ pub struct MessageItem {
     pub content: String,
     pub message_type: String,
     pub timestamp: String,
+    /// Raw unix timestamp — kept alongside the formatted version so the
+    /// chat tab can recompute `oldest_ts` after dropping rows from the
+    /// top of the factory.
+    pub timestamp_unix: i64,
     pub media_summary: String,
     pub media_mimetype: Option<String>,
     pub media_size_bytes: Option<i64>,
@@ -59,6 +63,7 @@ impl MessageItem {
             content: display,
             message_type: row.message_type.clone(),
             timestamp: format_message_time(row.timestamp),
+            timestamp_unix: row.timestamp,
             media_summary: build_media_summary(row),
             media_mimetype: row.media_mimetype.clone(),
             media_size_bytes: row.media_size_bytes,

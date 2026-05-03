@@ -29,6 +29,9 @@ pub enum ChatTabInput {
     RequestMediaDownload(String),
     /// VAdjustment crossed the load-more threshold. Internal trigger.
     NearTop,
+    /// User scrolled back to the bottom — opportunity to prune the top
+    /// of the factory if it grew past the soft cap.
+    NearBottom,
     /// Older page came back from the worker. `reached_top = true` means
     /// the worker returned fewer rows than requested → we've loaded the
     /// entire history; stop trying.
@@ -184,17 +187,22 @@ impl SimpleComponent for ChatTab {
         let widgets = view_output!();
         model.scroll = Some(widgets.scroll.clone());
 
-        // Scroll listener for lazy-load: when the user scrolls within
-        // 2× page-size of the top, ask the parent for an older page.
-        // The Input::NearTop handler debounces via `loading_older`.
+        // Scroll listener: lazy-load on near-top, prune on near-bottom.
         {
             let scroll = widgets.scroll.clone();
             let input = sender.input_sender().clone();
             scroll.vadjustment().connect_value_changed(move |adj| {
                 let value = adj.value();
                 let page = adj.page_size();
-                if value < page * 2.0 && adj.upper() > page * 2.0 {
+                let upper = adj.upper();
+                if value < page * 2.0 && upper > page * 2.0 {
                     let _ = input.send(ChatTabInput::NearTop);
+                }
+                // "Near bottom" = within one page-size of the lower edge.
+                // Triggers a pruning pass when the factory has grown past
+                // the soft cap from successive lazy-loads.
+                if value >= (upper - page - 50.0) {
+                    let _ = input.send(ChatTabInput::NearBottom);
                 }
             });
         }
@@ -377,6 +385,52 @@ impl SimpleComponent for ChatTab {
                     let adj = scroll.vadjustment();
                     glib::idle_add_local_once(move || adj.set_value(v));
                 }
+            }
+            ChatTabInput::NearBottom => {
+                // Soft cap: when the user is parked at the bottom and the
+                // factory holds more than `MAX_KEEP` rows, drop the
+                // oldest down to `TARGET`. Re-opens the scroll-up path
+                // (clears `reached_top` because there's now older history
+                // we don't have in memory).
+                const MAX_KEEP: usize = 150;
+                const TARGET: usize = 100;
+                let count = self.messages.len();
+                if count <= MAX_KEEP {
+                    return;
+                }
+                let to_drop = count - TARGET;
+                let mut dropped_ids: Vec<String> = Vec::with_capacity(to_drop);
+                {
+                    let guard = self.messages.guard();
+                    for fac in guard.iter().take(to_drop) {
+                        dropped_ids.push(fac.item.id.clone());
+                    }
+                }
+                {
+                    let mut guard = self.messages.guard();
+                    for _ in 0..to_drop {
+                        guard.pop_front();
+                    }
+                }
+                for id in &dropped_ids {
+                    self.seen_message_ids.remove(id);
+                }
+                // New oldest = first remaining item's timestamp.
+                self.oldest_ts = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .next()
+                    .map(|f| f.item.timestamp_unix);
+                // We dropped real history — older pages are once again
+                // legitimately available to fetch.
+                self.reached_top = false;
+                tracing::info!(
+                    chat = %self.chat_id,
+                    dropped = to_drop,
+                    remaining = self.messages.len(),
+                    "ChatTab: pruned top after near-bottom"
+                );
             }
             ChatTabInput::NearTop => {
                 if self.loading_older || self.reached_top {
