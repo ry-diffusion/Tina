@@ -9,7 +9,7 @@ use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
 use tina_db::MessageRow;
 
-use crate::components::message_bubble::{MessageBubble, MessageItem};
+use crate::components::message_bubble::{MessageBubble, MessageBubbleInput, MessageItem};
 
 #[derive(Debug)]
 pub enum ChatTabInput {
@@ -74,6 +74,12 @@ pub struct ChatTab {
     loading_older: bool,
     /// Latched once the worker returns fewer rows than requested.
     reached_top: bool,
+    /// Pending optimistic echoes: maps trimmed body → list of local ids
+    /// awaiting confirmation by the worker. When MessagesAppended arrives
+    /// with `is_from_me=true` and matching content, we drop the
+    /// corresponding local placeholder so the real row replaces it
+    /// transparently.
+    pending_echoes: std::collections::HashMap<String, std::collections::VecDeque<String>>,
 }
 
 #[relm4::component(pub)]
@@ -181,6 +187,7 @@ impl SimpleComponent for ChatTab {
             oldest_ts,
             loading_older: false,
             reached_top: false,
+            pending_echoes: std::collections::HashMap::new(),
         };
 
         let messages_list = model.messages.widget();
@@ -268,9 +275,6 @@ impl SimpleComponent for ChatTab {
                     count = rows.len(),
                     "ChatTab::Append"
                 );
-                // Sticky-bottom behaviour: only auto-scroll if the user
-                // was already near the bottom before this delta. If they
-                // scrolled up to read history, don't yank them back down.
                 let was_at_bottom = self
                     .scroll
                     .as_ref()
@@ -280,6 +284,53 @@ impl SimpleComponent for ChatTab {
                         adj.value() >= bottom - 50.0
                     })
                     .unwrap_or(true);
+
+                // For each from_me row that confirms a pending optimistic
+                // echo, drop the matching local placeholder so the real
+                // one takes its place transparently.
+                let mut local_drops: Vec<String> = Vec::new();
+                for r in &rows {
+                    if !r.is_from_me {
+                        continue;
+                    }
+                    let body = r.content.clone().unwrap_or_default();
+                    if body.is_empty() {
+                        continue;
+                    }
+                    if let Some(queue) = self.pending_echoes.get_mut(&body) {
+                        if let Some(local_id) = queue.pop_front() {
+                            local_drops.push(local_id);
+                        }
+                        if queue.is_empty() {
+                            self.pending_echoes.remove(&body);
+                        }
+                    }
+                }
+                if !local_drops.is_empty() {
+                    let drop_set: std::collections::HashSet<&String> =
+                        local_drops.iter().collect();
+                    let indices: Vec<usize> = self
+                        .messages
+                        .guard()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, f)| {
+                            if drop_set.contains(&f.item.id) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let mut guard = self.messages.guard();
+                    for idx in indices.into_iter().rev() {
+                        guard.remove(idx);
+                    }
+                    drop(guard);
+                    for id in &local_drops {
+                        self.seen_message_ids.remove(id);
+                    }
+                }
 
                 let new_rows: Vec<_> = rows
                     .into_iter()
@@ -314,8 +365,6 @@ impl SimpleComponent for ChatTab {
                 if trimmed.is_empty() {
                     return;
                 }
-                // Drop duplicate fires (Enter + button-click in same frame,
-                // GTK signal weirdness). Same body within 1s = ignored.
                 if let Some((prev, when)) = &self.last_send {
                     if prev == trimmed && when.elapsed() < std::time::Duration::from_secs(1) {
                         tracing::warn!(
@@ -327,6 +376,57 @@ impl SimpleComponent for ChatTab {
                     }
                 }
                 self.last_send = Some((trimmed.to_string(), std::time::Instant::now()));
+
+                // Optimistic local echo: synthesise a bubble with a
+                // sentinel id and push it before the IPC roundtrip even
+                // starts. When the worker echoes the real row back, the
+                // matching local entry is dropped so the real one slots
+                // in at the same visual position.
+                let local_id = format!(
+                    "local-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or_default()
+                );
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or_default();
+                let local_item = MessageItem {
+                    id: local_id.clone(),
+                    from_me: true,
+                    sender_name: String::new(),
+                    show_sender: false,
+                    content: trimmed.to_string(),
+                    message_type: "text".to_string(),
+                    timestamp: crate::time::format_message_time(now_unix),
+                    timestamp_unix: now_unix,
+                    media_summary: String::new(),
+                    media_mimetype: None,
+                    media_size_bytes: None,
+                    media_duration_secs: None,
+                    media_path: None,
+                    media_status: "none".to_string(),
+                    media_filename: None,
+                };
+                self.seen_message_ids.insert(local_id.clone());
+                self.pending_echoes
+                    .entry(trimmed.to_string())
+                    .or_default()
+                    .push_back(local_id);
+                {
+                    let mut guard = self.messages.guard();
+                    guard.push_back(local_item);
+                }
+                // Always scroll to bottom right after the user's own send.
+                if let Some(scroll) = self.scroll.clone() {
+                    glib::idle_add_local_once(move || {
+                        let adj = scroll.vadjustment();
+                        adj.set_value(adj.upper() - adj.page_size());
+                    });
+                }
+
                 let _ = sender.output(ChatTabOutput::Send {
                     chat_id: self.chat_id.clone(),
                     text: trimmed.to_string(),
@@ -338,52 +438,57 @@ impl SimpleComponent for ChatTab {
                 path,
                 mimetype,
             } => {
-                let saved = self.scroll.as_ref().map(|s| s.vadjustment().value());
-                {
-                    let id_set: std::collections::HashSet<&String> = message_ids.iter().collect();
-                    let mut guard = self.messages.guard();
-                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                    for (idx, fac) in guard.iter().enumerate() {
-                        if id_set.contains(&fac.item.id) {
-                            let mut new_item = fac.item.clone();
-                            new_item.media_path = Some(path.clone());
-                            new_item.media_status = "done".into();
-                            if new_item.media_mimetype.is_none() {
-                                new_item.media_mimetype = mimetype.clone();
-                            }
-                            to_replace.push((idx, new_item));
+                // Mutate the factory items in place via per-row Input —
+                // no remove+insert, so the listbox keeps the same widget
+                // hierarchy and the scroll position never jumps.
+                let id_set: std::collections::HashSet<&String> = message_ids.iter().collect();
+                let indices: Vec<usize> = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        if id_set.contains(&f.item.id) {
+                            Some(i)
+                        } else {
+                            None
                         }
-                    }
-                    for (idx, item) in to_replace {
-                        guard.remove(idx);
-                        guard.insert(idx, item);
-                    }
-                }
-                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
-                    let adj = scroll.vadjustment();
-                    glib::idle_add_local_once(move || adj.set_value(v));
+                    })
+                    .collect();
+                for idx in indices {
+                    self.messages.send(
+                        idx,
+                        MessageBubbleInput::UpdateMedia {
+                            path: Some(path.clone()),
+                            status: "done".into(),
+                            mimetype: mimetype.clone(),
+                        },
+                    );
                 }
             }
             ChatTabInput::MediaFailed(message_id) => {
-                let saved = self.scroll.as_ref().map(|s| s.vadjustment().value());
-                {
-                    let mut guard = self.messages.guard();
-                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                    for (idx, fac) in guard.iter().enumerate() {
-                        if fac.item.id == message_id {
-                            let mut new_item = fac.item.clone();
-                            new_item.media_status = "failed".into();
-                            to_replace.push((idx, new_item));
+                let indices: Vec<usize> = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        if f.item.id == message_id {
+                            Some(i)
+                        } else {
+                            None
                         }
-                    }
-                    for (idx, item) in to_replace {
-                        guard.remove(idx);
-                        guard.insert(idx, item);
-                    }
-                }
-                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
-                    let adj = scroll.vadjustment();
-                    glib::idle_add_local_once(move || adj.set_value(v));
+                    })
+                    .collect();
+                for idx in indices {
+                    self.messages.send(
+                        idx,
+                        MessageBubbleInput::UpdateMedia {
+                            path: None,
+                            status: "failed".into(),
+                            mimetype: None,
+                        },
+                    );
                 }
             }
             ChatTabInput::NearBottom => {
@@ -500,33 +605,31 @@ impl SimpleComponent for ChatTab {
                 }
             }
             ChatTabInput::RequestMediaDownload(id) => {
-                // remove+insert rebuilds the row, which the listbox treats
-                // as "content changed → re-allocate", and any height
-                // difference jumps the scroll. Capture the vadjustment
-                // before the mutation and restore it after the next idle
-                // tick so the user stays put.
-                let saved = self
-                    .scroll
-                    .as_ref()
-                    .map(|s| s.vadjustment().value());
-                {
-                    let mut guard = self.messages.guard();
-                    let mut to_replace: Vec<(usize, MessageItem)> = Vec::new();
-                    for (idx, fac) in guard.iter().enumerate() {
-                        if fac.item.id == id {
-                            let mut new_item = fac.item.clone();
-                            new_item.media_status = "downloading".into();
-                            to_replace.push((idx, new_item));
+                // In-place factory update via per-row Input — the listbox
+                // keeps the same widget instance, so no row-rebuild and
+                // no scroll jump on click.
+                let indices: Vec<usize> = self
+                    .messages
+                    .guard()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        if f.item.id == id {
+                            Some(i)
+                        } else {
+                            None
                         }
-                    }
-                    for (idx, item) in to_replace {
-                        guard.remove(idx);
-                        guard.insert(idx, item);
-                    }
-                }
-                if let (Some(scroll), Some(v)) = (self.scroll.as_ref(), saved) {
-                    let adj = scroll.vadjustment();
-                    glib::idle_add_local_once(move || adj.set_value(v));
+                    })
+                    .collect();
+                for idx in indices {
+                    self.messages.send(
+                        idx,
+                        MessageBubbleInput::UpdateMedia {
+                            path: None,
+                            status: "downloading".into(),
+                            mimetype: None,
+                        },
+                    );
                 }
                 let _ = sender.output(ChatTabOutput::RequestMediaDownload(id));
             }

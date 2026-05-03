@@ -26,6 +26,22 @@ pub enum MessageBubbleOut {
 }
 
 #[derive(Debug, Clone)]
+pub enum MessageBubbleInput {
+    /// Mutate the item in place — preserves the row widget so the
+    /// listbox doesn't reallocate (no scroll jump on download click).
+    UpdateMedia {
+        path: Option<String>,
+        status: String,
+        mimetype: Option<String>,
+    },
+    /// Local-echo bubble was confirmed by the server: replace the
+    /// temporary id (and any other "in transit" state) with the real
+    /// row data. Currently a no-op since we drop the local entirely on
+    /// match — left here so the wiring is in place.
+    Confirmed,
+}
+
+#[derive(Debug, Clone)]
 pub struct MessageItem {
     pub id: String,
     pub from_me: bool,
@@ -176,7 +192,7 @@ pub struct MessageBubble {
 #[relm4::factory(pub)]
 impl FactoryComponent for MessageBubble {
     type Init = MessageItem;
-    type Input = ();
+    type Input = MessageBubbleInput;
     type Output = MessageBubbleOut;
     type CommandOutput = ();
     type ParentWidget = gtk::ListBox;
@@ -494,5 +510,22 @@ impl FactoryComponent for MessageBubble {
 
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         Self { item: init }
+    }
+
+    fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
+        match msg {
+            MessageBubbleInput::UpdateMedia {
+                path,
+                status,
+                mimetype,
+            } => {
+                self.item.media_path = path;
+                self.item.media_status = status;
+                if self.item.media_mimetype.is_none() {
+                    self.item.media_mimetype = mimetype;
+                }
+            }
+            MessageBubbleInput::Confirmed => {}
+        }
     }
 }
