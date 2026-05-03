@@ -316,10 +316,14 @@ async fn forward_events(
             WorkerEvent::Connected {
                 account_id,
                 phone_number,
+                jid,
+                push_name,
             } => {
                 let _ = app.send(AppMsg::Connected {
                     account_id,
                     phone_number,
+                    jid,
+                    push_name,
                 });
             }
             WorkerEvent::Disconnected { reason, .. } => {

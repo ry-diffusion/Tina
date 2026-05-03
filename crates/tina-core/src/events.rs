@@ -34,7 +34,13 @@ pub enum IpcEvent {
     Ready { account_id: String },
     QrCode { account_id: String, qr: String },
     PairingCode { account_id: String, code: String },
-    Connected { account_id: String, phone_number: Option<String>, jid: Option<String> },
+    Connected {
+        account_id: String,
+        phone_number: Option<String>,
+        jid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        push_name: Option<String>,
+    },
     Disconnected { account_id: String, reason: String },
     LoggedOut { account_id: String },
 

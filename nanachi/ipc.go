@@ -131,11 +131,12 @@ func emitPairingCode(accountID, code string) {
 	emit("PairingCode", map[string]string{"account_id": accountID, "code": code})
 }
 
-func emitConnected(accountID string, phone, jid *string) {
+func emitConnected(accountID string, phone, jid, pushName *string) {
 	emit("Connected", map[string]any{
 		"account_id":   accountID,
 		"phone_number": phone,
 		"jid":          jid,
+		"push_name":    pushName,
 	})
 }
 

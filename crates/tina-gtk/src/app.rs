@@ -40,6 +40,8 @@ pub enum AppMsg {
     Connected {
         account_id: String,
         phone_number: Option<String>,
+        jid: Option<String>,
+        push_name: Option<String>,
     },
     Disconnected(String),
     LoggedOut,
@@ -218,12 +220,23 @@ impl SimpleComponent for AppModel {
             AppMsg::Connected {
                 account_id,
                 phone_number,
+                jid,
+                push_name,
             } => {
                 self.phone = phone_number.clone();
                 let _ = self.main.sender().send(MainInput::SetIdentity {
                     account_id,
                     phone: phone_number,
+                    jid: jid.clone(),
+                    push_name,
                 });
+                // Self-portrait: kick off the same avatar pipeline we use
+                // for any other JID. AvatarReady will drop the resulting
+                // path into MainPage, and the profile popover binds it
+                // through #[watch].
+                if let Some(j) = jid {
+                    self.service.handle.send(Cmd::FetchAvatar { jid: j });
+                }
                 if self.scene == Scene::QrLogin {
                     self.scene = Scene::Syncing;
                 }

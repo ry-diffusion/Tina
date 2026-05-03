@@ -633,6 +633,7 @@ async fn handle_realtime_event(
             account_id,
             phone_number,
             jid,
+            push_name,
         } => {
             db.save_account_identity(&account_id, phone_number.as_deref(), jid.as_deref())
                 .await?;
@@ -640,6 +641,8 @@ async fn handle_realtime_event(
                 .send(WorkerEvent::Connected {
                     account_id,
                     phone_number,
+                    jid,
+                    push_name,
                 })
                 .await;
         }

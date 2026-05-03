@@ -130,7 +130,11 @@ func (c *Client) onConnected() {
 		}
 		_ = c.mgr.saveDeviceJID(c.accountID, j)
 	}
-	emitConnected(c.accountID, phone, jid)
+	var pushName *string
+	if pn := c.wa.Store.PushName; pn != "" {
+		pushName = &pn
+	}
+	emitConnected(c.accountID, phone, jid, pushName)
 
 	go c.fetchAllGroups()
 	go c.fetchAllNewsletters()

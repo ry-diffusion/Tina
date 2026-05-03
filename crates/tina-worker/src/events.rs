@@ -6,7 +6,12 @@ pub enum WorkerEvent {
     AccountReady { account_id: String },
 
     QrCode { account_id: String, qr: String },
-    Connected { account_id: String, phone_number: Option<String> },
+    Connected {
+        account_id: String,
+        phone_number: Option<String>,
+        jid: Option<String>,
+        push_name: Option<String>,
+    },
     Disconnected { account_id: String, reason: String },
     LoggedOut { account_id: String },
 

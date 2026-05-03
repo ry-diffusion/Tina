@@ -32,6 +32,8 @@ pub enum MainInput {
     SetIdentity {
         account_id: String,
         phone: Option<String>,
+        jid: Option<String>,
+        push_name: Option<String>,
     },
     ChatsUpserted(Vec<ChatRow>),
     ChatOpened {
@@ -140,6 +142,11 @@ pub struct MainPage {
     /// JIDs we've already issued FetchAvatar for in this session, to
     /// avoid spamming the worker on every ChatsUpserted batch.
     avatar_requested: std::collections::HashSet<String>,
+    /// The signed-in user's own JID, push-name, and cached avatar path —
+    /// used by the sidebar profile popover (top-left of the headerbar).
+    user_jid: Option<String>,
+    user_name: Option<String>,
+    user_avatar: Option<String>,
 }
 
 /// Map raw chat kind strings to a human label for the header subtitle.
@@ -182,9 +189,19 @@ impl SimpleComponent for MainPage {
                         #[wrap(Some)]
                         set_child = &adw::Avatar {
                             set_size: 28,
-                            #[watch]
-                            set_text: Some(model.phone.as_deref().unwrap_or("Tina")),
                             set_show_initials: true,
+                            #[watch]
+                            set_text: Some(
+                                model.user_name.as_deref()
+                                    .or(model.phone.as_deref())
+                                    .unwrap_or("Tina"),
+                            ),
+                            #[watch]
+                            set_custom_image: model.user_avatar
+                                .as_deref()
+                                .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                                .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                                .as_ref(),
                         },
 
                         #[wrap(Some)]
@@ -205,14 +222,25 @@ impl SimpleComponent for MainPage {
 
                                     adw::Avatar {
                                         set_size: 56,
-                                        #[watch]
-                                        set_text: Some(model.phone.as_deref().unwrap_or("Tina")),
                                         set_show_initials: true,
+                                        #[watch]
+                                        set_text: Some(
+                                            model.user_name.as_deref()
+                                                .or(model.phone.as_deref())
+                                                .unwrap_or("Tina"),
+                                        ),
+                                        #[watch]
+                                        set_custom_image: model.user_avatar
+                                            .as_deref()
+                                            .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+                                            .map(|t| t.upcast::<gtk::gdk::Paintable>())
+                                            .as_ref(),
                                     },
                                 },
 
                                 gtk::Label {
-                                    set_label: "Tina",
+                                    #[watch]
+                                    set_label: model.user_name.as_deref().unwrap_or("Tina"),
                                     set_halign: gtk::Align::Center,
                                     add_css_class: "title-2",
                                 },
@@ -520,6 +548,9 @@ impl SimpleComponent for MainPage {
             current_chat_id: None,
             current_chat_avatar: None,
             avatar_requested: std::collections::HashSet::new(),
+            user_jid: None,
+            user_name: None,
+            user_avatar: None,
         };
 
         let chat_listbox = model.chats.widget();
@@ -530,8 +561,15 @@ impl SimpleComponent for MainPage {
 
     fn update(&mut self, msg: MainInput, sender: ComponentSender<Self>) {
         match msg {
-            MainInput::SetIdentity { phone, .. } => {
-                self.phone = phone;
+            MainInput::SetIdentity {
+                phone,
+                jid,
+                push_name,
+                ..
+            } => {
+                self.phone = phone.clone();
+                self.user_jid = jid;
+                self.user_name = push_name.or(phone);
             }
             MainInput::ChatsUpserted(rows) => {
                 // Trigger avatar fetches for any new chat ids we haven't
@@ -767,7 +805,12 @@ impl SimpleComponent for MainPage {
                 }
                 // Headerbar: refresh if the affected chat is the focused one.
                 if self.current_chat_id.as_deref() == Some(jid.as_str()) {
-                    self.current_chat_avatar = Some(path);
+                    self.current_chat_avatar = Some(path.clone());
+                }
+                // Sidebar profile menu: refresh if the affected JID is
+                // the signed-in user.
+                if self.user_jid.as_deref() == Some(jid.as_str()) {
+                    self.user_avatar = Some(path);
                 }
             }
             MainInput::OlderMessagesLoaded {
