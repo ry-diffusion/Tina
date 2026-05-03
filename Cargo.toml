@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/tina",
   "crates/tina-gtk",
   "crates/tina-cli",
   "crates/tina-core",

@@ -98,6 +98,7 @@ fn handle_event(event: WorkerEvent) {
         WorkerEvent::Connected {
             account_id,
             phone_number,
+            ..
         } => {
             println!(
                 "\nConnected: {} (phone: {})",
@@ -122,7 +123,11 @@ fn handle_event(event: WorkerEvent) {
                 );
             }
         }
-        WorkerEvent::MessagesAppended { account_id, chat_id, messages } => {
+        WorkerEvent::MessagesAppended {
+            account_id,
+            chat_id,
+            messages,
+        } => {
             println!(
                 "\n📩 {} new message(s) in {} for {}",
                 messages.len(),
@@ -154,6 +159,55 @@ fn handle_event(event: WorkerEvent) {
         }
         WorkerEvent::Error { account_id, error } => {
             println!("\nError ({}): {}", account_id.unwrap_or_default(), error);
+        }
+        WorkerEvent::MediaDownloadProgress {
+            account_id,
+            message_id,
+            current,
+            total,
+        } => {
+            println!(
+                "\n📥 Downloading media for {} (message {}): {}/{} bytes",
+                account_id, message_id, current, total
+            );
+        }
+        WorkerEvent::MediaReady {
+            account_id,
+            affected_message_ids,
+            path,
+            mimetype,
+        } => {
+            println!(
+                "\n📥 Media ready for {} (messages {:?}): {} (mimetype: {})",
+                account_id, affected_message_ids, path, mimetype
+            );
+        }
+        WorkerEvent::MediaDownloadFailed {
+            account_id,
+            message_id,
+            error,
+        } => {
+            println!(
+                "\n❌ Failed to download media for {} (message {}): {}",
+                account_id, message_id, error
+            );
+        }
+        WorkerEvent::AvatarReady {
+            account_id,
+            jid,
+            path,
+        } => {
+            println!("\n👤 Avatar ready for {} ({}): {}", account_id, jid, path);
+        }
+        WorkerEvent::AvatarFailed {
+            account_id,
+            jid,
+            error,
+        } => {
+            println!(
+                "\n❌ Failed to get avatar for {} ({}): {}",
+                account_id, jid, error
+            );
         }
     }
 }
