@@ -66,20 +66,20 @@ pub struct ChatTab {
     scroll: Option<gtk::ScrolledWindow>,
     seen_message_ids: std::collections::HashSet<String>,
     last_send: Option<(String, std::time::Instant)>,
-    /// Timestamp of the OLDEST message currently in the factory; used as
-    /// the cursor for LoadOlder requests.
     oldest_ts: Option<i64>,
-    /// True while a LoadOlder request is in flight. Prevents the scroll
-    /// listener from firing the same request 60×/s.
     loading_older: bool,
-    /// Latched once the worker returns fewer rows than requested.
     reached_top: bool,
-    /// Pending optimistic echoes: maps trimmed body → list of local ids
-    /// awaiting confirmation by the worker. When MessagesAppended arrives
-    /// with `is_from_me=true` and matching content, we drop the
-    /// corresponding local placeholder so the real row replaces it
-    /// transparently.
     pending_echoes: std::collections::HashMap<String, std::collections::VecDeque<String>>,
+    /// Sticky-bottom state, ported from dissent's autoscroll.Window. When
+    /// `true`, every `vadj.changed` (new content added → upper grew)
+    /// re-scrolls to `upper - page_size`. Cleared when the user scrolls
+    /// away from the bottom; re-set when they scroll back.
+    bottomed: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Edge-detection flag matching dissent's `updatedValue`. The
+    /// `changed` signal sets it; the deferred `value-changed` resolution
+    /// reads it to distinguish "GTK relayout finished" from "user
+    /// dragged the scrollbar".
+    updated_value: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 #[relm4::component(pub)]
@@ -174,6 +174,9 @@ impl SimpleComponent for ChatTab {
 
         let oldest_ts = init.initial.iter().map(|r| r.timestamp).min();
 
+        let bottomed = std::rc::Rc::new(std::cell::Cell::new(true));
+        let updated_value = std::rc::Rc::new(std::cell::Cell::new(false));
+
         let mut model = ChatTab {
             chat_id: init.chat_id,
             name: init.name,
@@ -188,27 +191,71 @@ impl SimpleComponent for ChatTab {
             loading_older: false,
             reached_top: false,
             pending_echoes: std::collections::HashMap::new(),
+            bottomed: bottomed.clone(),
+            updated_value: updated_value.clone(),
         };
 
         let messages_list = model.messages.widget();
         let widgets = view_output!();
         model.scroll = Some(widgets.scroll.clone());
 
-        // Scroll listener: lazy-load on near-top, prune on near-bottom.
+        // ── Sticky-bottom autoscroll, ported from gotkit's autoscroll.Window
+        //
+        // `changed` fires when the adjustment's upper changes (i.e. new
+        // content was laid out into the listbox). If we were at the
+        // bottom, jump back to the new bottom via idle_add — running
+        // through one extra frame matches dissent's behaviour and lets
+        // GTK finish allocating the new row before we set value().
+        //
+        // `value-changed` fires for both user scrolls AND our own
+        // set_value calls. The `updated_value` flag set above lets us
+        // ignore the immediate echo from the relayout path; only
+        // genuine user input flips `bottomed` to false.
+        {
+            let scroll = widgets.scroll.clone();
+            let bottomed = bottomed.clone();
+            let updated_value = updated_value.clone();
+            scroll.vadjustment().connect_changed(move |adj| {
+                updated_value.set(true);
+                if bottomed.get() {
+                    let adj = adj.clone();
+                    glib::idle_add_local_once(move || {
+                        let target = adj.upper() - adj.page_size();
+                        if target >= 0.0 {
+                            adj.set_value(target);
+                        }
+                    });
+                }
+            });
+        }
+
+        // Lazy-load on near-top, prune on near-bottom, and update the
+        // bottomed flag based on user scroll position. We skip the
+        // bottomed update on the first event after a relayout (signaled
+        // by `updated_value`), since GTK can briefly clamp value before
+        // re-allocating the new content.
         {
             let scroll = widgets.scroll.clone();
             let input = sender.input_sender().clone();
+            let bottomed = bottomed.clone();
+            let updated_value = updated_value.clone();
             scroll.vadjustment().connect_value_changed(move |adj| {
                 let value = adj.value();
                 let page = adj.page_size();
                 let upper = adj.upper();
+                let bottom_value = upper - page;
+
+                if updated_value.replace(false) {
+                    // Came from a relayout — don't reinterpret as the
+                    // user scrolling away.
+                } else {
+                    bottomed.set(bottom_value < 0.0 || value >= bottom_value);
+                }
+
                 if value < page * 2.0 && upper > page * 2.0 {
                     let _ = input.send(ChatTabInput::NearTop);
                 }
-                // "Near bottom" = within one page-size of the lower edge.
-                // Triggers a pruning pass when the factory has grown past
-                // the soft cap from successive lazy-loads.
-                if value >= (upper - page - 50.0) {
+                if value >= bottom_value - 50.0 {
                     let _ = input.send(ChatTabInput::NearBottom);
                 }
             });
@@ -227,6 +274,11 @@ impl SimpleComponent for ChatTab {
                 self.oldest_ts = rows.iter().map(|r| r.timestamp).min();
                 self.reached_top = rows.len() < 50;
                 self.loading_older = false;
+                // Force sticky-bottom on every chat open. The
+                // connect_changed handler we registered will catch each
+                // upper-grew tick as the factory lays out the rows and
+                // re-scroll to the bottom; no manual timeouts needed.
+                self.bottomed.set(true);
                 {
                     let mut guard = self.messages.guard();
                     guard.clear();
@@ -242,32 +294,6 @@ impl SimpleComponent for ChatTab {
                         guard.push_back(MessageItem::from_row(row, show));
                     }
                 }
-                // Sticky bottom on chat open. The first idle tick is too
-                // early — the listbox hasn't allocated its rows yet, so
-                // upper() is still 0. Schedule a few in succession; the
-                // last one wins after layout has settled.
-                if let Some(scroll) = self.scroll.clone() {
-                    let s1 = scroll.clone();
-                    glib::idle_add_local_once(move || {
-                        let adj = s1.vadjustment();
-                        adj.set_value(adj.upper() - adj.page_size());
-                    });
-                    let s2 = scroll.clone();
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(50),
-                        move || {
-                            let adj = s2.vadjustment();
-                            adj.set_value(adj.upper() - adj.page_size());
-                        },
-                    );
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(200),
-                        move || {
-                            let adj = scroll.vadjustment();
-                            adj.set_value(adj.upper() - adj.page_size());
-                        },
-                    );
-                }
             }
             ChatTabInput::Append(rows) => {
                 tracing::info!(
@@ -275,15 +301,6 @@ impl SimpleComponent for ChatTab {
                     count = rows.len(),
                     "ChatTab::Append"
                 );
-                let was_at_bottom = self
-                    .scroll
-                    .as_ref()
-                    .map(|s| {
-                        let adj = s.vadjustment();
-                        let bottom = adj.upper() - adj.page_size();
-                        adj.value() >= bottom - 50.0
-                    })
-                    .unwrap_or(true);
 
                 // For each from_me row that confirms a pending optimistic
                 // echo, drop the matching local placeholder so the real
@@ -350,14 +367,10 @@ impl SimpleComponent for ChatTab {
                         guard.push_back(MessageItem::from_row(row, show));
                     }
                 }
-                if was_at_bottom {
-                    if let Some(scroll) = self.scroll.clone() {
-                        glib::idle_add_local_once(move || {
-                            let adj = scroll.vadjustment();
-                            adj.set_value(adj.upper() - adj.page_size());
-                        });
-                    }
-                }
+                // The connect_changed handler will autoscroll if `bottomed`
+                // — meaning we only follow new messages when the user was
+                // already at (or near) the bottom. If they scrolled up to
+                // read history, they stay where they are.
             }
             ChatTabInput::Send => {
                 let text = self.composer_buffer.text().to_string();
@@ -415,17 +428,16 @@ impl SimpleComponent for ChatTab {
                     .entry(trimmed.to_string())
                     .or_default()
                     .push_back(local_id);
+                // Force sticky on send — even if the user had scrolled up
+                // to read history, sending a message is a strong intent
+                // signal that they want to see what they just typed.
+                self.bottomed.set(true);
                 {
                     let mut guard = self.messages.guard();
                     guard.push_back(local_item);
                 }
-                // Always scroll to bottom right after the user's own send.
-                if let Some(scroll) = self.scroll.clone() {
-                    glib::idle_add_local_once(move || {
-                        let adj = scroll.vadjustment();
-                        adj.set_value(adj.upper() - adj.page_size());
-                    });
-                }
+                // The connect_changed handler will jump us to the new
+                // bottom now that bottomed=true.
 
                 let _ = sender.output(ChatTabOutput::Send {
                     chat_id: self.chat_id.clone(),
@@ -566,14 +578,18 @@ impl SimpleComponent for ChatTab {
                 if messages.is_empty() {
                     return;
                 }
-                // Preserve scroll position: capture (upper, value) before,
-                // then after layout settles, set value = old_value +
-                // (new_upper - old_upper). The user stays on the same
-                // content while history grows above.
+                // LockScroll / UnlockScroll pattern (gotkit autoscroll):
+                // capture (upper, value) before prepend, then after the
+                // layout settles set value = old_value + (new_upper -
+                // old_upper). User stays on the same content while
+                // history grows above. We also turn `bottomed` off
+                // explicitly so the connect_changed handler doesn't
+                // pull us back to the bottom on the upper notification.
                 let saved = self
                     .scroll
                     .as_ref()
                     .map(|s| (s.vadjustment().upper(), s.vadjustment().value()));
+                let prev_bottomed = self.bottomed.replace(false);
 
                 let new_oldest = messages.iter().map(|r| r.timestamp).min();
                 if let Some(t) = new_oldest {
@@ -596,11 +612,16 @@ impl SimpleComponent for ChatTab {
                 }
 
                 if let (Some(scroll), Some((old_upper, old_value))) = (self.scroll.clone(), saved) {
+                    let bottomed_flag = self.bottomed.clone();
                     glib::idle_add_local_once(move || {
                         let adj = scroll.vadjustment();
                         let new_upper = adj.upper();
                         let delta = new_upper - old_upper;
                         adj.set_value(old_value + delta);
+                        // Restore the bottomed state we suppressed during
+                        // the prepend — `prev_bottomed` reflects what the
+                        // user wanted before the lazy-load fired.
+                        bottomed_flag.set(prev_bottomed);
                     });
                 }
             }
