@@ -1,0 +1,88 @@
+// Helpers for building MessageItems and computing collapse state from
+// raw `MessageRow`s. Pure data shaping — no widget side effects, just
+// some inventory lookups and an out-channel for "we want this avatar
+// fetched".
+
+use tina_db::MessageRow;
+
+use crate::components::message_bubble::MessageItem;
+use crate::inventory::{AvatarInventory, MediaInventory};
+
+use super::messages::COLLAPSE_WINDOW_SECS;
+
+pub fn sender_key(row: &MessageRow) -> String {
+    if row.is_from_me {
+        "\0me".to_string()
+    } else {
+        row.sender_name.clone().unwrap_or_default()
+    }
+}
+
+/// Build a `MessageItem` from a row, hydrating avatar + media state from
+/// the shared inventories and emitting fetch requests as needed via
+/// `request_fetch_avatar`.
+pub fn build_item(
+    row: &MessageRow,
+    is_collapsed: bool,
+    avatars: &AvatarInventory,
+    media: &MediaInventory,
+    user_jid: Option<&str>,
+    request_fetch_avatar: &mut impl FnMut(String),
+) -> MessageItem {
+    let mut item = MessageItem::from_row(row, is_collapsed);
+
+    // For from_me messages the DB stores sender_contact_id=NULL (we
+    // never auto-register a contact for the signed-in user), so the
+    // JOIN can't resolve a sender_jid — override with the known
+    // identity here so the avatar lookup matches against the same key
+    // the inventory was populated with via SetIdentity.
+    if item.from_me && item.sender_jid.is_none() {
+        item.sender_jid = user_jid.map(|s| s.to_string());
+    }
+
+    // Avatar: prefer the live inventory over the JOIN'd snapshot.
+    if let Some(jid) = item.sender_jid.clone()
+        && !jid.is_empty() {
+            if let Some(p) = avatars.get(&jid) {
+                item.sender_avatar_path = Some(p);
+            } else if avatars.needs_fetch(&jid) {
+                request_fetch_avatar(jid);
+            }
+        }
+
+    // Media: in-flight states + recent successes live here, not in the
+    // DB. Override the row's snapshot when the inventory has fresher info.
+    if let Some(state) = media.get(&item.id) {
+        if state.path.is_some() {
+            item.media_path = state.path;
+        }
+        if !state.status.is_empty() {
+            item.media_status = state.status;
+        }
+        if item.media_mimetype.is_none() && state.mimetype.is_some() {
+            item.media_mimetype = state.mimetype;
+        }
+    }
+
+    item
+}
+
+/// Decide whether `row` should be rendered as a collapsed continuation
+/// of the previous row in the thread. Updates the trailing-state cursor
+/// in place so callers can iterate without manual bookkeeping.
+pub fn collapse_against(
+    row: &MessageRow,
+    last_sender: &mut Option<String>,
+    last_ts: &mut Option<i64>,
+) -> bool {
+    let key = sender_key(row);
+    let collapsed = match (last_sender.as_deref(), *last_ts) {
+        (Some(prev_sender), Some(prev_ts)) => {
+            prev_sender == key && row.timestamp.saturating_sub(prev_ts) <= COLLAPSE_WINDOW_SECS
+        }
+        _ => false,
+    };
+    *last_sender = Some(key);
+    *last_ts = Some(row.timestamp);
+    collapsed
+}

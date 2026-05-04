@@ -1,0 +1,135 @@
+// Routing handlers: forwarded events from chat tabs (messages/media/avatar)
+// and identity broadcast.
+
+use relm4::ComponentSender;
+use relm4::prelude::*;
+use tina_db::MessageRow;
+
+use crate::components::chat_tab::ChatTabInput;
+
+use super::super::messages::ChatAreaOutput;
+use super::super::model::ChatArea;
+
+impl ChatArea {
+    pub(in crate::components::chat_area) fn handle_messages_appended(
+        &mut self,
+        chat_id: String,
+        messages: Vec<MessageRow>,
+    ) {
+        if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
+            let _ = controller.sender().send(ChatTabInput::Append(messages));
+        } else {
+            tracing::warn!(
+                chat = %chat_id,
+                "MessagesAppended received for chat with no open tab",
+            );
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_older_messages_loaded(
+        &mut self,
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_top: bool,
+    ) {
+        if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
+            let _ = controller.sender().send(ChatTabInput::PrependOlder {
+                messages,
+                reached_top,
+            });
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_media_ready(
+        &mut self,
+        message_ids: Vec<String>,
+        path: String,
+        mimetype: Option<String>,
+    ) {
+        self.media
+            .set_ready(&message_ids, &path, mimetype.as_deref());
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller.sender().send(ChatTabInput::MediaReady {
+                message_ids: message_ids.clone(),
+                path: path.clone(),
+                mimetype: mimetype.clone(),
+            });
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_media_failed(&mut self, message_id: String) {
+        self.media.set_failed(&message_id);
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller
+                .sender()
+                .send(ChatTabInput::MediaFailed(message_id.clone()));
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_avatar_ready(
+        &mut self,
+        jid: String,
+        path: String,
+    ) {
+        self.avatars.put(jid.clone(), path.clone());
+        for pane in &mut self.panes {
+            if pane.current_chat_id.as_deref() == Some(jid.as_str()) {
+                pane.current_chat_avatar = Some(path.clone());
+            }
+        }
+        self.apply_pane_avatar(0);
+        self.apply_pane_avatar(1);
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller.sender().send(ChatTabInput::AvatarReady {
+                jid: jid.clone(),
+                path: path.clone(),
+            });
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_set_user_jid(
+        &mut self,
+        jid: Option<String>,
+    ) {
+        self.user_jid = jid.clone();
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller
+                .sender()
+                .send(ChatTabInput::SetUserJid(jid.clone()));
+        }
+    }
+
+    pub(in crate::components::chat_area) fn forward_send(
+        &mut self,
+        chat_id: String,
+        text: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::SendText { chat_id, text });
+    }
+
+    pub(in crate::components::chat_area) fn forward_media_download(
+        &mut self,
+        id: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::RequestMediaDownload(id));
+    }
+
+    pub(in crate::components::chat_area) fn forward_load_older(
+        &mut self,
+        chat_id: String,
+        before_ts: i64,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::RequestLoadOlder { chat_id, before_ts });
+    }
+
+    pub(in crate::components::chat_area) fn forward_fetch_avatar(
+        &mut self,
+        jid: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(jid));
+    }
+}

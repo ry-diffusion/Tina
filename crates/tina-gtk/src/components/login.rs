@@ -127,7 +127,7 @@ impl SimpleComponent for LoginPage {
     fn init(
         _: Self::Init,
         root: Self::Root,
-        sender: ComponentSender<Self>,
+        _sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let model = LoginPage { qr_texture: None };
         let widgets = view_output!();

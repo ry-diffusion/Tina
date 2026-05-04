@@ -34,17 +34,6 @@ impl ChatKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "dm" => ChatKind::Dm,
-            "group" => ChatKind::Group,
-            "newsletter" => ChatKind::Newsletter,
-            "broadcast" => ChatKind::Broadcast,
-            "status" => ChatKind::Status,
-            _ => ChatKind::Unknown,
-        }
-    }
-
     /// Inferência a partir da parte `@server` de um JID.
     pub fn infer_from_jid(jid: &str) -> Self {
         let server = jid.rsplit_once('@').map(|(_, s)| s).unwrap_or("");

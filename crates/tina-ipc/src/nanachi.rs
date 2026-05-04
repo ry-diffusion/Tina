@@ -208,8 +208,12 @@ fn command_kind(c: &IpcCommand) -> &'static str {
 
 impl Drop for NanachiManager {
     fn drop(&mut self) {
-        if let Some(mut process) = self.process.take() {
-            let _ = process.kill();
-        }
+        // `ProcessHandle` wraps a `tokio::process::Child` built with
+        // `kill_on_drop(true)`; dropping the handle sends SIGKILL on
+        // Linux. The previous `let _ = process.kill()` pattern was a
+        // bug — it produced an async Future that was dropped unpolled,
+        // so the kill never happened. The kill_on_drop guard does the
+        // right thing automatically; we just take the Option.
+        let _ = self.process.take();
     }
 }
