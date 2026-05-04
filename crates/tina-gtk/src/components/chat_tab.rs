@@ -165,8 +165,6 @@ pub struct ChatTab {
     kind: String,
     messages: FactoryVecDeque<MessageBubble>,
     composer_buffer: gtk::EntryBuffer,
-    last_sender: Option<String>,
-    last_ts: Option<i64>,
     avatars: crate::inventory::AvatarInventory,
     media: crate::inventory::MediaInventory,
     user_jid: Option<String>,
@@ -258,8 +256,10 @@ impl SimpleComponent for ChatTab {
                 }
             });
 
-        // Seed with initial history. `last_sender`/`last_ts` track the
-        // trailing message so the next batch (Append) groups against it.
+        // Seed with initial history. The collapse cursor is purely
+        // local to this loop — for any subsequent Append/Send we re-read
+        // the trailing item directly from the factory, keeping the
+        // factory as the single source of truth.
         let mut last_sender: Option<String> = None;
         let mut last_ts: Option<i64> = None;
         let mut avatar_fetches: Vec<String> = Vec::new();
@@ -295,14 +295,16 @@ impl SimpleComponent for ChatTab {
         let bottomed = std::rc::Rc::new(std::cell::Cell::new(true));
         let updated_value = std::rc::Rc::new(std::cell::Cell::new(false));
 
+        // The local seed cursors are dropped here — `factory_tail_cursor()`
+        // is what every subsequent collapse decision queries.
+        let _ = (last_sender, last_ts);
+
         let mut model = ChatTab {
             chat_id: init.chat_id,
             name: init.name,
             kind: init.kind,
             messages,
             composer_buffer: gtk::EntryBuffer::default(),
-            last_sender,
-            last_ts,
             avatars: init.avatars,
             media: init.media,
             user_jid: init.user_jid,
@@ -405,12 +407,12 @@ impl SimpleComponent for ChatTab {
                 {
                     let mut guard = self.messages.guard();
                     guard.clear();
-                    self.last_sender = None;
-                    self.last_ts = None;
                     self.seen_message_ids.clear();
+                    let mut cursor_sender: Option<String> = None;
+                    let mut cursor_ts: Option<i64> = None;
                     for row in &rows {
                         let collapsed =
-                            collapse_against(row, &mut self.last_sender, &mut self.last_ts);
+                            collapse_against(row, &mut cursor_sender, &mut cursor_ts);
                         self.seen_message_ids.insert(row.message_id.clone());
                         let item = build_item(
                             row,
@@ -435,86 +437,101 @@ impl SimpleComponent for ChatTab {
                 );
 
                 // For each from_me row that confirms a pending optimistic
-                // echo, drop the matching local placeholder so the real
-                // one takes its place transparently.
-                let mut local_drops: Vec<String> = Vec::new();
-                for r in &rows {
-                    if !r.is_from_me {
-                        continue;
-                    }
-                    let body = r.content.clone().unwrap_or_default();
-                    if body.is_empty() {
-                        continue;
-                    }
-                    if let Some(queue) = self.pending_echoes.get_mut(&body) {
-                        if let Some(local_id) = queue.pop_front() {
-                            local_drops.push(local_id);
-                        }
-                        if queue.is_empty() {
-                            self.pending_echoes.remove(&body);
-                        }
-                    }
-                }
-                if !local_drops.is_empty() {
-                    let drop_set: std::collections::HashSet<&String> =
-                        local_drops.iter().collect();
-                    let indices: Vec<usize> = self
+                // echo, REPLACE the local placeholder in-place (preserving
+                // its `is_collapsed` flag) rather than remove+append. The
+                // remove+append path silently broke the collapse seam
+                // when the dropped local was the head of a from_me run:
+                // the next local in the run stayed flagged collapsed,
+                // ended up first-visible, and rendered without an avatar
+                // — visually attaching to whoever spoke before.
+                let mut avatar_fetches: Vec<String> = Vec::new();
+                let mut confirmed_server_ids: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                let mut confirmed_local_ids: Vec<String> = Vec::new();
+                {
+                    let local_idx_state: std::collections::HashMap<String, (usize, bool)> = self
                         .messages
                         .guard()
                         .iter()
                         .enumerate()
-                        .filter_map(|(i, f)| {
-                            if drop_set.contains(&f.item.id) {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        })
+                        .map(|(i, f)| (f.item.id.clone(), (i, f.item.is_collapsed)))
                         .collect();
-                    let mut guard = self.messages.guard();
-                    for idx in indices.into_iter().rev() {
-                        guard.remove(idx);
-                    }
-                    drop(guard);
-                    for id in &local_drops {
-                        self.seen_message_ids.remove(id);
-                    }
-                    // The echoes had advanced our trailing-collapse
-                    // cursor to "\0me" with the echo's timestamp; with
-                    // them gone, the real rows about to land must be
-                    // compared against whatever's actually at the bottom
-                    // of the factory now (or None if it's empty). Without
-                    // this reset the real "from_me" row gets collapsed
-                    // against the dropped echo and rendered avatar-less,
-                    // visually grouping it under the previous sender.
-                    let guard = self.messages.guard();
-                    if let Some(last) = guard.iter().last() {
-                        let key = if last.item.from_me {
-                            "\0me".to_string()
-                        } else {
-                            last.item.sender_name.clone()
+                    let mut replacements: Vec<(usize, MessageRow, bool)> = Vec::new();
+                    for r in &rows {
+                        if !r.is_from_me {
+                            continue;
+                        }
+                        let body = r.content.clone().unwrap_or_default();
+                        if body.is_empty() {
+                            continue;
+                        }
+                        let Some(queue) = self.pending_echoes.get_mut(&body) else {
+                            continue;
                         };
-                        self.last_sender = Some(key);
-                        self.last_ts = Some(last.item.timestamp_unix);
-                    } else {
-                        self.last_sender = None;
-                        self.last_ts = None;
+                        let Some(local_id) = queue.pop_front() else {
+                            continue;
+                        };
+                        if queue.is_empty() {
+                            self.pending_echoes.remove(&body);
+                        }
+                        if let Some((idx, was_collapsed)) = local_idx_state.get(&local_id).copied()
+                        {
+                            replacements.push((idx, r.clone(), was_collapsed));
+                            confirmed_server_ids.insert(r.message_id.clone());
+                            confirmed_local_ids.push(local_id);
+                        }
+                        // If the local isn't in the factory anymore (e.g.
+                        // Reset wiped it), let the server row fall through
+                        // to the regular append path below.
                     }
+                    // Replace in descending idx so the surviving indices
+                    // stay valid as we mutate the factory.
+                    replacements.sort_by_key(|(idx, _, _)| std::cmp::Reverse(*idx));
+                    for (idx, row, was_collapsed) in replacements {
+                        let item = build_item(
+                            &row,
+                            was_collapsed,
+                            &self.avatars,
+                            &self.media,
+                            self.user_jid.as_deref(),
+                            &mut |jid| avatar_fetches.push(jid),
+                        );
+                        let mut guard = self.messages.guard();
+                        guard.remove(idx);
+                        guard.insert(idx, item);
+                    }
+                }
+                for id in &confirmed_local_ids {
+                    self.seen_message_ids.remove(id);
+                }
+                for id in &confirmed_server_ids {
+                    self.seen_message_ids.insert(id.clone());
                 }
 
                 let new_rows: Vec<_> = rows
                     .into_iter()
+                    .filter(|r| !confirmed_server_ids.contains(&r.message_id))
                     .filter(|r| self.seen_message_ids.insert(r.message_id.clone()))
                     .collect();
                 if new_rows.is_empty() {
+                    for jid in avatar_fetches {
+                        let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+                    }
                     return;
                 }
-                let mut avatar_fetches: Vec<String> = Vec::new();
+                // Always seed the collapse cursor from the factory's
+                // current trailing item — never from a stashed field.
+                // Any other path (echo drop, pane move, tab switch, etc.)
+                // is allowed to mutate the factory between Append calls,
+                // and we'd silently misgroup messages if we trusted a
+                // stale `last_sender`. The factory IS the source of
+                // truth.
+                let (mut cursor_sender, mut cursor_ts) = self.factory_tail_cursor();
                 {
                     let mut guard = self.messages.guard();
                     for row in &new_rows {
                         let collapsed =
-                            collapse_against(row, &mut self.last_sender, &mut self.last_ts);
+                            collapse_against(row, &mut cursor_sender, &mut cursor_ts);
                         let item = build_item(
                             row,
                             collapsed,
@@ -569,19 +586,16 @@ impl SimpleComponent for ChatTab {
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or_default();
                 // Collapse the optimistic echo against the trailing
-                // message just like a real row would.
-                let mut tmp_sender = self.last_sender.clone();
-                let mut tmp_ts = self.last_ts;
-                let local_collapsed = match (tmp_sender.as_deref(), tmp_ts) {
+                // message just like a real row would. Read the cursor
+                // from the factory's tail so a stale `last_sender`
+                // can't misgroup my echo under the recipient's avatar.
+                let (cursor_sender, cursor_ts) = self.factory_tail_cursor();
+                let local_collapsed = match (cursor_sender.as_deref(), cursor_ts) {
                     (Some("\0me"), Some(prev_ts)) => {
                         now_unix.saturating_sub(prev_ts) <= COLLAPSE_WINDOW_SECS
                     }
                     _ => false,
                 };
-                tmp_sender = Some("\0me".into());
-                tmp_ts = Some(now_unix);
-                self.last_sender = tmp_sender;
-                self.last_ts = tmp_ts;
                 let local_avatar = self
                     .user_jid
                     .as_deref()
@@ -954,5 +968,23 @@ impl SimpleComponent for ChatTab {
 impl ChatTab {
     pub fn chat_id(&self) -> &str {
         &self.chat_id
+    }
+
+    /// `(sender_key, timestamp)` for the trailing item in the factory.
+    /// Used to seed collapse decisions for incoming Append batches and
+    /// optimistic Send echoes — the factory is the single source of
+    /// truth for "what was just rendered", so this avoids the state
+    /// drift that creeps in when a separate `last_sender` field is
+    /// kept in sync across many code paths.
+    fn factory_tail_cursor(&self) -> (Option<String>, Option<i64>) {
+        let Some(last) = self.messages.back() else {
+            return (None, None);
+        };
+        let key = if last.item.from_me {
+            "\0me".to_string()
+        } else {
+            last.item.sender_name.clone()
+        };
+        (Some(key), Some(last.item.timestamp_unix))
     }
 }

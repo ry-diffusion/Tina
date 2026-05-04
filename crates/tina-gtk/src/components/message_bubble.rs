@@ -130,6 +130,27 @@ pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message
     dialog.present(Some(anchor.upcast_ref::<gtk::Widget>()));
 }
 
+/// Decode `path` via GdkPixbuf — i.e., through the same loader
+/// machinery that picks up `webp-pixbuf-loader` and similar — and
+/// return a `gdk::Texture` suitable for `Picture::set_paintable`.
+///
+/// `Picture::set_filename` bypasses GdkPixbuf for known formats and
+/// has historically failed silently on WebP stickers; this helper
+/// avoids that by going through GdkPixbuf unconditionally.
+fn load_image_paintable(path: Option<&str>) -> Option<gtk::gdk::Texture> {
+    let path = path?;
+    if path.is_empty() {
+        return None;
+    }
+    match gtk::gdk_pixbuf::Pixbuf::from_file(path) {
+        Ok(pixbuf) => Some(gtk::gdk::Texture::for_pixbuf(&pixbuf)),
+        Err(e) => {
+            tracing::warn!(path, error = %e, "failed to decode image via GdkPixbuf");
+            None
+        }
+    }
+}
+
 fn short_filename(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -350,6 +371,13 @@ fn format_size(bytes: i64) -> String {
 
 pub struct MessageBubble {
     pub item: MessageItem,
+    /// Live media path for the lightbox click closures. The closures
+    /// are wired in the `view!` macro at row-construction time and
+    /// can't re-read `self.item.media_path` later — so without this
+    /// shared cell, a freshly-downloaded file (path = None at init,
+    /// flipped to Some(_) by `UpdateMedia`) is rendered correctly via
+    /// `#[watch]` but its click handler still sees the captured None.
+    media_path_cell: std::rc::Rc<std::cell::RefCell<Option<String>>>,
 }
 
 #[relm4::factory(pub)]
@@ -510,12 +538,26 @@ impl FactoryComponent for MessageBubble {
                     // smaller square so we don't render a giant 360-px-
                     // tall sticker on full-resolution images. Click
                     // opens a fullscreen lightbox.
+                    //
+                    // We don't use `set_filename` — that bottoms out in
+                    // `gdk::Texture::from_filename`, which since GTK
+                    // 4.16-ish has internal decoders for PNG/JPEG and
+                    // only falls back to GdkPixbuf for "unknown"
+                    // formats. WebP detection in that fallback chain
+                    // has been flaky across GTK versions, so for image
+                    // and sticker payloads we go through GdkPixbuf
+                    // explicitly: that path is guaranteed to honour
+                    // `webp-pixbuf-loader` (and any other registered
+                    // loaders) without depending on whatever GTK's
+                    // texture loader decides today.
                     gtk::Picture {
                         #[watch]
                         set_visible: self.item.has_local_file()
                             && matches!(self.item.message_type.as_str(), "image" | "sticker"),
                         #[watch]
-                        set_filename: self.item.media_path.as_deref(),
+                        set_paintable: load_image_paintable(self.item.media_path.as_deref())
+                            .as_ref()
+                            .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
                         set_can_shrink: true,
                         set_halign: gtk::Align::Start,
                         #[watch]
@@ -527,12 +569,13 @@ impl FactoryComponent for MessageBubble {
                         set_cursor_from_name: Some("pointer"),
                         add_controller = gtk::GestureClick {
                             connect_released[
-                                path = self.item.media_path.clone(),
+                                path_cell = self.media_path_cell.clone(),
                                 kind = self.item.message_type.clone()
                             ] => move |gesture, _, _, _| {
                                 let Some(widget) = gesture.widget() else { return };
-                                if let Some(p) = path.as_deref() {
-                                    open_media_lightbox(&widget, p.to_string(), kind.clone());
+                                let path = path_cell.borrow().clone();
+                                if let Some(p) = path {
+                                    open_media_lightbox(&widget, p, kind.clone());
                                 }
                             },
                         },
@@ -568,11 +611,12 @@ impl FactoryComponent for MessageBubble {
                             add_css_class: "circular",
                             add_css_class: "osd",
                             connect_clicked[
-                                path = self.item.media_path.clone(),
+                                path_cell = self.media_path_cell.clone(),
                                 kind = self.item.message_type.clone()
                             ] => move |btn| {
-                                if let Some(p) = path.as_deref() {
-                                    open_media_lightbox(btn, p.to_string(), kind.clone());
+                                let path = path_cell.borrow().clone();
+                                if let Some(p) = path {
+                                    open_media_lightbox(btn, p, kind.clone());
                                 }
                             },
                         },
@@ -667,9 +711,10 @@ impl FactoryComponent for MessageBubble {
                             && self.item.message_type == "document",
                         set_label: "Open externally",
                         set_halign: gtk::Align::Start,
-                        connect_clicked[path = self.item.media_path.clone()] => move |_| {
-                            if let Some(p) = path.as_deref() {
-                                let file = gio::File::for_path(p);
+                        connect_clicked[path_cell = self.media_path_cell.clone()] => move |_| {
+                            let path = path_cell.borrow().clone();
+                            if let Some(p) = path {
+                                let file = gio::File::for_path(&p);
                                 let launcher = gtk::FileLauncher::new(Some(&file));
                                 launcher.launch(
                                     gtk::Window::NONE,
@@ -696,7 +741,12 @@ impl FactoryComponent for MessageBubble {
     }
 
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-        Self { item: init }
+        let media_path_cell =
+            std::rc::Rc::new(std::cell::RefCell::new(init.media_path.clone()));
+        Self {
+            item: init,
+            media_path_cell,
+        }
     }
 
     fn update(&mut self, msg: Self::Input, _sender: FactorySender<Self>) {
@@ -706,6 +756,7 @@ impl FactoryComponent for MessageBubble {
                 status,
                 mimetype,
             } => {
+                *self.media_path_cell.borrow_mut() = path.clone();
                 self.item.media_path = path;
                 self.item.media_status = status;
                 if self.item.media_mimetype.is_none() {

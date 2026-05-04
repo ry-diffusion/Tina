@@ -259,6 +259,18 @@ impl TinaWorker {
         Ok(self.db.list_chat_rows(account_id).await?)
     }
 
+    /// Persist a chat's pinned flag. The UI's `ChatsUpserted` push will
+    /// pick up the new value on the next reconcile or chat-list reload.
+    pub async fn set_chat_pinned(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        pinned: bool,
+    ) -> Result<()> {
+        self.db.set_chat_pinned(account_id, chat_id, pinned).await?;
+        Ok(())
+    }
+
     pub async fn get_messages(
         &self,
         account_id: &str,

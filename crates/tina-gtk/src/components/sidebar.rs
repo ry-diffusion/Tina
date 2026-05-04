@@ -1,20 +1,19 @@
 // Sidebar of the in-app page: profile button (delegated to `ProfileMenu`),
-// search entry, scrolling chat list, and the repair progress bar at the
-// bottom. Owns the `chats` FactoryVecDeque; identity state lives in the
-// child profile menu.
+// search entry, virtualised chat list (relm4's `TypedListView` over
+// `gtk::ListView` — same pattern paper-plane uses, with cleaner row
+// state plumbing than the raw factory + qdata approach), and the
+// repair progress bar at the bottom.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::gdk;
 use relm4::Controller;
-use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
+use relm4::typed_view::list::TypedListView;
 use tina_db::ChatRow;
 
-use crate::components::chat_row::{ChatRowFactory, ChatRowItem};
+use crate::components::chat_row::{ChatRowItem, install_context_menu_sender};
 use crate::components::profile_menu::{ProfileMenu, ProfileMenuInput, ProfileMenuOutput};
 use crate::inventory::AvatarInventory;
 
@@ -42,10 +41,21 @@ pub enum SidebarInput {
         jid: String,
         path: String,
     },
-    /// Internal: a row was activated (left click / Enter).
-    RowActivated(String),
-    /// Internal: right-click context menu picked "Open in new tab".
+    /// ListView's `activate` signal fired with the row position (in the
+    /// post-filter, post-sort visible model).
+    RowActivated(u32),
+    /// Right-click context menu picked "Open".
+    OpenChatRequested(String),
+    /// Right-click context menu picked "Open in new tab".
     OpenInNewTabRequested(String),
+    /// Right-click context menu picked "Pin" or "Unpin".
+    PinChatRequested {
+        chat_id: String,
+        pinned: bool,
+    },
+    /// The set of chat_ids currently open as tabs in the chat area.
+    /// Drives the "active" highlight + sort-to-top behaviour.
+    SetActiveChats(Vec<String>),
     /// Forwarded from the profile menu child.
     FromProfile(ProfileMenuOutput),
 }
@@ -57,22 +67,35 @@ pub enum SidebarOutput {
     RequestRepair,
     RequestLogout,
     RequestFetchAvatar(String),
+    SetChatPinned {
+        chat_id: String,
+        pinned: bool,
+    },
 }
 
 pub struct Sidebar {
-    chats: FactoryVecDeque<ChatRowFactory>,
+    /// Typed wrapper around `gtk::ListView` + `gio::ListStore` +
+    /// sort/filter models. We talk to it through the wrapper's typed
+    /// API; the unsafe boxing/unboxing of the row data happens inside
+    /// the relm4 abstraction.
+    list: TypedListView<ChatRowItem, gtk::SingleSelection>,
+    /// Search query backing the (only) filter we register on `list`.
+    /// Mutated on `SearchChanged`; the filter closure reads through it.
+    search_query: Rc<RefCell<String>>,
+    /// Stashed for the scroll-pinning snap. Captured from the view!
+    /// macro at init time. While the user is parked at the top, every
+    /// `ChatsUpserted` batch nudges the viewport back to 0 so the
+    /// SortListModel's reorders don't drift the list to the bottom
+    /// over the course of a sync. Once they scroll away, we leave
+    /// them where they are.
+    scroll: Option<gtk::ScrolledWindow>,
     profile: Controller<ProfileMenu>,
     repairing: bool,
     repair_stage: String,
     repair_current: i64,
     repair_total: i64,
     repair_indeterminate: bool,
-    /// Currently-signed-in user's JID, used to filter `AvatarReady` events
-    /// for the profile menu (the profile child stores it too, but caching
-    /// here avoids a sync round-trip).
     user_jid: Option<String>,
-    #[allow(dead_code)]
-    search: String,
     avatars: AvatarInventory,
 }
 
@@ -109,14 +132,15 @@ impl SimpleComponent for Sidebar {
                     },
                 },
 
+                #[name(scroll)]
                 gtk::ScrolledWindow {
                     set_vexpand: true,
                     set_hscrollbar_policy: gtk::PolicyType::Never,
 
                     #[local_ref]
-                    chat_listbox -> gtk::ListBox {
+                    list_view -> gtk::ListView {
                         add_css_class: "navigation-sidebar",
-                        set_selection_mode: gtk::SelectionMode::Single,
+                        set_single_click_activate: true,
                     },
                 },
 
@@ -159,18 +183,57 @@ impl SimpleComponent for Sidebar {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let chats = FactoryVecDeque::<ChatRowFactory>::builder()
-            .launch(gtk::ListBox::default())
-            .detach();
+        // `with_sorting` builds the SortListModel from `ChatRowItem`'s
+        // `Ord` (active → pinned → newest → alpha). Filtering goes on
+        // top via add_filter.
+        let mut list: TypedListView<ChatRowItem, gtk::SingleSelection> =
+            TypedListView::with_sorting();
+
+        // Search predicate. The closure reads through a shared
+        // Rc<RefCell<String>>; mutating the query + calling
+        // `notify_filter_changed(0)` re-evaluates against every row.
+        let search_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+        {
+            let q = search_query.clone();
+            list.add_filter(move |item: &ChatRowItem| {
+                let needle = q.borrow();
+                if needle.is_empty() {
+                    return true;
+                }
+                item.name.to_lowercase().contains(needle.as_str())
+                    || item.preview.to_lowercase().contains(needle.as_str())
+            });
+        }
+
+        // No auto-selection: without this the SingleSelection picks
+        // the first item the moment one arrives, and the ListView
+        // promptly scrolls to keep "the selection" visible — every
+        // re-sort during the initial load drags the view further down.
+        list.selection_model.set_autoselect(false);
+        list.selection_model.set_can_unselect(true);
+        list.selection_model.set_selected(gtk::INVALID_LIST_POSITION);
+
+        // Activation: emit RowActivated with the visible (post-sort,
+        // post-filter) position so we can resolve back to a chat_id.
+        {
+            let s = sender.input_sender().clone();
+            list.view.connect_activate(move |_, pos| {
+                let _ = s.send(SidebarInput::RowActivated(pos));
+            });
+        }
+
+        // Wire the per-row context menu's static sender so its closures
+        // can dispatch back into us without per-row sender clones.
+        install_context_menu_sender(sender.input_sender().clone());
 
         let profile = ProfileMenu::builder()
             .launch(())
             .forward(sender.input_sender(), SidebarInput::FromProfile);
 
-        wire_chat_list_clicks(chats.widget(), sender.input_sender().clone());
-
         let model = Sidebar {
-            chats,
+            list,
+            search_query,
+            scroll: None,
             profile,
             repairing: false,
             repair_stage: String::new(),
@@ -178,13 +241,15 @@ impl SimpleComponent for Sidebar {
             repair_total: 0,
             repair_indeterminate: true,
             user_jid: None,
-            search: String::new(),
             avatars: init.avatars,
         };
 
-        let chat_listbox = model.chats.widget();
+        let list_view = &model.list.view;
         let widgets = view_output!();
-
+        // Stash the ScrolledWindow ref for the one-shot scroll-to-top
+        // we run after the first ChatsUpserted batch lands.
+        let mut model = model;
+        model.scroll = Some(widgets.scroll.clone());
         ComponentParts { model, widgets }
     }
 
@@ -196,9 +261,6 @@ impl SimpleComponent for Sidebar {
                 push_name,
             } => {
                 self.user_jid = jid.clone();
-                // Hydrate from inventory if some sibling already fetched
-                // it; otherwise issue a fetch so the profile menu paints
-                // the real picture instead of initials.
                 if let Some(j) = jid.as_deref() {
                     if !j.is_empty() {
                         if let Some(p) = self.avatars.get(j) {
@@ -217,10 +279,6 @@ impl SimpleComponent for Sidebar {
                 });
             }
             SidebarInput::ChatsUpserted(mut rows) => {
-                // Hydrate rows that lack a stored avatar from the shared
-                // inventory before deciding whether to ask the worker —
-                // a sibling component (chat header, message row) may have
-                // already fetched it.
                 for r in &mut rows {
                     if r.avatar_path.is_none() {
                         if let Some(p) = self.avatars.get(&r.chat_id) {
@@ -232,12 +290,31 @@ impl SimpleComponent for Sidebar {
                             sender.output(SidebarOutput::RequestFetchAvatar(r.chat_id.clone()));
                     }
                 }
+                // Snapshot whether the user is parked at the top BEFORE
+                // applying the batch — once items_changed fires the
+                // SortListModel can reorder rows and drift the value
+                // arbitrarily, so the post-apply value is no longer a
+                // reliable signal of user intent.
+                let was_at_top = self
+                    .scroll
+                    .as_ref()
+                    .map(|s| s.vadjustment().value() < 4.0)
+                    .unwrap_or(true);
                 self.apply_chats_upserted(rows);
+                if was_at_top {
+                    if let Some(scroll) = self.scroll.clone() {
+                        // Defer to idle so the layout has settled
+                        // before we set the value — calling set_value(0)
+                        // before the upper has been recomputed is a no-op.
+                        gtk::glib::idle_add_local_once(move || {
+                            scroll.vadjustment().set_value(0.0);
+                        });
+                    }
+                }
             }
             SidebarInput::SearchChanged(text) => {
-                self.search = text.to_lowercase();
-                // Filtering via gtk::ListBox::set_filter_func loses state
-                // when FactoryVecDeque rebuilds rows. Skipped for now.
+                *self.search_query.borrow_mut() = text.to_lowercase();
+                self.list.notify_filter_changed(0);
             }
             SidebarInput::SetRepairing(r) => {
                 self.repairing = r;
@@ -261,30 +338,55 @@ impl SimpleComponent for Sidebar {
             }
             SidebarInput::AvatarReady { jid, path } => {
                 self.avatars.put(jid.clone(), path.clone());
-                let indices: Vec<usize> = self
-                    .chats
-                    .guard()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, f)| if f.item.chat_id == jid { Some(i) } else { None })
-                    .collect();
-                if !indices.is_empty() {
-                    let mut guard = self.chats.guard();
-                    for idx in indices {
-                        if let Some(slot) = guard.get_mut(idx) {
-                            slot.item.avatar_path = Some(path.clone());
-                        }
+                if let Some(pos) = self.find_chat_position(&jid) {
+                    let prev = self.list.get(pos).map(|i| i.borrow().clone());
+                    if let Some(mut prev) = prev {
+                        prev.avatar_path = Some(path.clone());
+                        self.replace_at(pos, prev);
                     }
                 }
                 if self.user_jid.as_deref() == Some(jid.as_str()) {
                     let _ = self.profile.sender().send(ProfileMenuInput::SetAvatar(path));
                 }
             }
-            SidebarInput::RowActivated(id) => {
+            SidebarInput::RowActivated(pos) => {
+                if let Some(item) = self.list.get_visible(pos) {
+                    let id = item.borrow().chat_id.clone();
+                    let _ = sender.output(SidebarOutput::OpenInCurrent(id));
+                }
+            }
+            SidebarInput::OpenChatRequested(id) => {
                 let _ = sender.output(SidebarOutput::OpenInCurrent(id));
             }
             SidebarInput::OpenInNewTabRequested(id) => {
                 let _ = sender.output(SidebarOutput::OpenInNewTab(id));
+            }
+            SidebarInput::PinChatRequested { chat_id, pinned } => {
+                let _ = sender.output(SidebarOutput::SetChatPinned {
+                    chat_id,
+                    pinned,
+                });
+            }
+            SidebarInput::SetActiveChats(ids) => {
+                let new_active: std::collections::HashSet<String> =
+                    ids.into_iter().collect();
+                let total = self.list.len();
+                for pos in 0..total {
+                    let updated = self.list.get(pos).and_then(|item| {
+                        let cur = item.borrow().clone();
+                        let now_active = new_active.contains(&cur.chat_id);
+                        if cur.is_active != now_active {
+                            let mut next = cur.clone();
+                            next.is_active = now_active;
+                            Some(next)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(next) = updated {
+                        self.replace_at(pos, next);
+                    }
+                }
             }
             SidebarInput::FromProfile(out) => match out {
                 ProfileMenuOutput::Repair => {
@@ -299,118 +401,47 @@ impl SimpleComponent for Sidebar {
 }
 
 impl Sidebar {
-    /// Upsert by chat_id, then resort by (pinned desc, last_ts desc).
-    fn apply_chats_upserted(&mut self, rows: Vec<ChatRow>) {
-        let mut guard = self.chats.guard();
-
-        let mut existing: HashMap<String, usize> = HashMap::with_capacity(guard.len());
-        for (idx, item) in guard.iter().enumerate() {
-            existing.insert(item.item.chat_id.clone(), idx);
-        }
-
-        for row in &rows {
-            let item = ChatRowItem::from_row(row);
-            if let Some(&idx) = existing.get(&item.chat_id) {
-                if let Some(slot) = guard.get_mut(idx) {
-                    slot.item = item;
+    /// Linear search through the base store for a chat by id. The list
+    /// is small enough (a few hundred chats max in practice) that the
+    /// O(n) cost is invisible — and we already iterate the store on
+    /// every `ChatsUpserted`, so adding a separate `chat_id → pos`
+    /// index would just be more state to keep coherent.
+    fn find_chat_position(&self, chat_id: &str) -> Option<u32> {
+        let total = self.list.len();
+        for pos in 0..total {
+            if let Some(item) = self.list.get(pos) {
+                if item.borrow().chat_id == chat_id {
+                    return Some(pos);
                 }
+            }
+        }
+        None
+    }
+
+    /// Replace the item at `pos` with `item`. Triggers `items_changed`
+    /// internally → the SortListModel re-evaluates the row's position
+    /// and the bound widget rebinds, picking up the new fields.
+    fn replace_at(&mut self, pos: u32, item: ChatRowItem) {
+        self.list.remove(pos);
+        self.list.insert(pos, item);
+    }
+
+    fn apply_chats_upserted(&mut self, rows: Vec<ChatRow>) {
+        for row in &rows {
+            let mut item = ChatRowItem::from_row(row);
+            if let Some(pos) = self.find_chat_position(&item.chat_id) {
+                if let Some(prev) = self.list.get(pos) {
+                    // `is_active` is owned by the chat area (via
+                    // `SetActiveChats`); a fresh `from_row` always
+                    // reports `false`, so without this carry-over a
+                    // new message landing for an open chat would
+                    // silently strip its highlight.
+                    item.is_active = prev.borrow().is_active;
+                }
+                self.replace_at(pos, item);
             } else {
-                guard.push_back(item);
+                self.list.append(item);
             }
         }
-
-        let mut all: Vec<ChatRowItem> = guard.iter().map(|f| f.item.clone()).collect();
-        all.sort_by(|a, b| {
-            b.pinned
-                .cmp(&a.pinned)
-                .then(b.last_ts.cmp(&a.last_ts))
-                .then_with(|| a.name.as_str().cmp(b.name.as_str()))
-        });
-        guard.clear();
-        for item in all {
-            guard.push_back(item);
-        }
     }
-}
-
-/// Wires left-click activation and a right-click "Open / Open in new tab"
-/// context menu onto the chat list. Pure imperative GTK plumbing — extracted
-/// out of `init` to keep the component readable.
-fn wire_chat_list_clicks(
-    listbox: &gtk::ListBox,
-    input: relm4::Sender<SidebarInput>,
-) {
-    // Left click → default activation. ListBoxRow alone only fires
-    // `activate` on keyboard Enter; mouse clicks land on the parent
-    // ListBox as `row-activated`. We pull chat_id from `widget_name`
-    // (set by the factory).
-    {
-        let input = input.clone();
-        listbox.connect_row_activated(move |_listbox, row| {
-            let id = row.widget_name().to_string();
-            if !id.is_empty() {
-                let _ = input.send(SidebarInput::RowActivated(id));
-            }
-        });
-    }
-
-    // Right-click → context menu. The popover is a single shared widget
-    // reparented (well, repointed) on each click; `target` carries the
-    // chat_id between the gesture press and the button click.
-    let target: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-    let popover = gtk::Popover::new();
-    popover.set_has_arrow(false);
-    popover.set_position(gtk::PositionType::Bottom);
-
-    let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    menu.set_margin_top(4);
-    menu.set_margin_bottom(4);
-    menu.set_margin_start(4);
-    menu.set_margin_end(4);
-
-    for (label, mk_msg) in [
-        (
-            "Open",
-            Box::new(SidebarInput::RowActivated)
-                as Box<dyn Fn(String) -> SidebarInput + 'static>,
-        ),
-        (
-            "Open in new tab",
-            Box::new(SidebarInput::OpenInNewTabRequested)
-                as Box<dyn Fn(String) -> SidebarInput + 'static>,
-        ),
-    ] {
-        let btn = gtk::Button::with_label(label);
-        btn.add_css_class("flat");
-        let input = input.clone();
-        let target = target.clone();
-        let pop = popover.clone();
-        btn.connect_clicked(move |_| {
-            if let Some(id) = target.borrow().clone() {
-                let _ = input.send(mk_msg(id));
-            }
-            pop.popdown();
-        });
-        menu.append(&btn);
-    }
-    popover.set_child(Some(&menu));
-    popover.set_parent(listbox);
-
-    let listbox_clone = listbox.clone();
-    let pop = popover.clone();
-    let right_click = gtk::GestureClick::new();
-    right_click.set_button(gdk::BUTTON_SECONDARY);
-    right_click.connect_pressed(move |_g, _n, x, y| {
-        if let Some(row) = listbox_clone.row_at_y(y as i32) {
-            let id = row.widget_name().to_string();
-            if id.is_empty() {
-                return;
-            }
-            *target.borrow_mut() = Some(id);
-            let rect = gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            pop.set_pointing_to(Some(&rect));
-            pop.popup();
-        }
-    });
-    listbox.add_controller(right_click);
 }

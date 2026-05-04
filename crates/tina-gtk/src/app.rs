@@ -107,6 +107,7 @@ pub enum AppMsg {
     },
     RequestRepair,
     RequestLogout,
+    SetChatPinned { chat_id: String, pinned: bool },
 }
 
 pub struct AppModel {
@@ -189,6 +190,9 @@ impl SimpleComponent for AppModel {
                     AppMsg::RequestLoadOlder { chat_id, before_ts }
                 }
                 MainOutput::RequestFetchAvatar(jid) => AppMsg::RequestFetchAvatar(jid),
+                MainOutput::SetChatPinned { chat_id, pinned } => {
+                    AppMsg::SetChatPinned { chat_id, pinned }
+                }
             });
         let model = AppModel {
             scene: Scene::Init,
@@ -337,6 +341,9 @@ impl SimpleComponent for AppModel {
             }
             AppMsg::RequestLogout => {
                 self.service.handle.send(Cmd::Logout);
+            }
+            AppMsg::SetChatPinned { chat_id, pinned } => {
+                self.service.handle.send(Cmd::SetChatPinned { chat_id, pinned });
             }
             AppMsg::RequestMediaDownload(message_id) => {
                 self.service.handle.send(Cmd::DownloadMedia { message_id });

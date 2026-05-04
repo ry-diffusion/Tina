@@ -125,6 +125,10 @@ pub enum ChatAreaOutput {
         before_ts: i64,
     },
     RequestFetchAvatar(String),
+    /// The set of chat_ids currently open in tabs (across both panes).
+    /// Emitted whenever a tab opens or closes so the sidebar can
+    /// highlight + sort-to-top the active chats.
+    ActiveTabsChanged(Vec<String>),
 }
 
 /// One side of the split. Owns the widgets needed to render its own
@@ -356,6 +360,7 @@ impl SimpleComponent for ChatArea {
                 self.refresh_pane_visibility();
                 self.refresh_pane_header(0);
                 self.refresh_pane_header(1);
+                self.broadcast_active_tabs(&sender);
                 if self.avatars.get(&chat_id).is_none() && self.avatars.needs_fetch(&chat_id) {
                     let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(chat_id));
                 }
@@ -450,6 +455,7 @@ impl SimpleComponent for ChatArea {
                 self.refresh_pane_visibility();
                 self.refresh_pane_header(0);
                 self.refresh_pane_header(1);
+                self.broadcast_active_tabs(&sender);
                 let _ = sender.output(ChatAreaOutput::CloseChat(chat_id));
             }
             ChatAreaInput::PaneFocused(idx) => {
@@ -524,6 +530,14 @@ impl SimpleComponent for ChatArea {
 impl ChatArea {
     fn pane_tab_count(&self, idx: usize) -> i32 {
         self.panes[idx].tab_view.n_pages()
+    }
+
+    /// Snapshot the open chat_ids and emit them so the parent can
+    /// forward to the sidebar (which highlights + sorts active chats
+    /// to the top). Cheap; called only on tab open/close.
+    fn broadcast_active_tabs(&self, sender: &ComponentSender<Self>) {
+        let ids: Vec<String> = self.open_tabs.keys().cloned().collect();
+        let _ = sender.output(ChatAreaOutput::ActiveTabsChanged(ids));
     }
 
     /// Reveal pane 1 only when it has tabs (so the Paned divider

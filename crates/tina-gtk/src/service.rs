@@ -50,6 +50,9 @@ pub enum Cmd {
         before_ts: i64,
         limit: i64,
     },
+    /// Persist a chat's pinned flag. After the DB write the UI will see
+    /// the change on the next `LoadChats` / reconcile push.
+    SetChatPinned { chat_id: String, pinned: bool },
     /// Logout the active account.
     Logout,
     /// Shut down the worker thread.
@@ -255,6 +258,23 @@ async fn run(
                         message_id,
                         error: e.to_string(),
                     });
+                }
+            }
+            Cmd::SetChatPinned { chat_id, pinned } => {
+                let acc = selected.lock().await.clone();
+                let Some(account_id) = acc else { continue };
+                if let Err(e) = worker.set_chat_pinned(&account_id, &chat_id, pinned).await {
+                    error!("set_chat_pinned: {e}");
+                    continue;
+                }
+                // Re-emit the chat list so the sidebar picks up the
+                // updated `pinned` flag (drives both the row's pin icon
+                // and its sort position).
+                match worker.list_chat_rows(&account_id).await {
+                    Ok(rows) => {
+                        let _ = app.send(AppMsg::ChatsUpserted(rows));
+                    }
+                    Err(e) => error!("list_chat_rows after pin: {e}"),
                 }
             }
             Cmd::Logout => {

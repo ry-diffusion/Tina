@@ -72,7 +72,11 @@ fn main() -> color_eyre::Result<()> {
 
     let app = RelmApp::new(APP_ID);
     relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
-    relm4::set_global_css(components::message_bubble::MESSAGE_ROW_CSS);
+    relm4::set_global_css(&format!(
+        "{}\n{}",
+        components::message_bubble::MESSAGE_ROW_CSS,
+        components::chat_row::CHAT_ROW_CSS,
+    ));
     app.run::<app::AppModel>(app::AppInit { nanachi_dir });
     Ok(())
 }

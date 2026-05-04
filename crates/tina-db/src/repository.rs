@@ -295,6 +295,24 @@ impl TinaDb {
         Ok(())
     }
 
+    pub async fn set_chat_pinned(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        pinned: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE chats SET pinned = ?, updated_at = ? WHERE account_id = ? AND chat_id = ?",
+        )
+        .bind(if pinned { 1 } else { 0 })
+        .bind(now_ts())
+        .bind(account_id)
+        .bind(chat_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn update_chat_last_message(
         &self,
         account_id: &str,
