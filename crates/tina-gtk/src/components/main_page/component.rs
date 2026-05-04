@@ -72,10 +72,16 @@ impl SimpleComponent for MainPage {
             ..model
         };
 
-        // Adaptive collapse: below ~600sp the sidebar overlays the
-        // content instead of sharing the row.
+        // Adaptive collapse: below ~720sp the sidebar overlays the
+        // content instead of sharing the row. The split view's own
+        // minimum (sidebar ≥ 280px + chat-area minimum) lands around
+        // 640px requested, so a breakpoint at 600sp fired *after* the
+        // bin already overflowed — Adwaita logged
+        // "AdwOverlaySplitView exceeds AdwBreakpointBin width" on
+        // every layout pass at narrow widths. 720sp leaves headroom
+        // for the snap before the overflow.
         let bp = adw::Breakpoint::new(
-            adw::BreakpointCondition::parse("max-width: 600sp")
+            adw::BreakpointCondition::parse("max-width: 720sp")
                 .expect("hardcoded breakpoint condition is well-formed"),
         );
         bp.add_setter(&widgets.split_view, "collapsed", Some(&true.to_value()));

@@ -109,12 +109,14 @@ async fn resolve_chats_and_senders<'a>(
             _ => "[Media]",
         };
 
+        let duration_secs = msg.media.as_ref().and_then(|m| m.duration_secs);
         update_latest(
             &mut latest,
             chat_id.clone(),
             msg,
             placeholder,
             sender_contact_id.clone(),
+            duration_secs,
         );
 
         pending.push(PendingInsert {
@@ -132,6 +134,7 @@ fn update_latest<'a>(
     msg: &crate::MessageBatchInput<'a>,
     placeholder: &'static str,
     sender_contact_id: Option<String>,
+    duration_secs: Option<i64>,
 ) {
     use std::collections::hash_map::Entry;
     match latest.entry(chat_id) {
@@ -144,7 +147,7 @@ fn update_latest<'a>(
                 from_me: msg.is_from_me,
                 sender_contact_id,
                 message_type: msg.message_type,
-                duration_secs: msg.media_duration_secs,
+                duration_secs,
             });
         }
         Entry::Occupied(mut o) => {
@@ -157,7 +160,7 @@ fn update_latest<'a>(
                     from_me: msg.is_from_me,
                     sender_contact_id,
                     message_type: msg.message_type,
-                    duration_secs: msg.media_duration_secs,
+                    duration_secs,
                 });
             }
         }
@@ -215,6 +218,7 @@ async fn bulk_insert_messages(
         let mut q = sqlx::query(&sql);
         for p in chunk {
             let m = &messages[p.idx];
+            let media = m.media.as_ref();
             q = q
                 .bind(account_id)
                 .bind(m.message_id)
@@ -226,14 +230,14 @@ async fn bulk_insert_messages(
                 .bind(m.is_from_me)
                 .bind(m.raw_json)
                 .bind(now)
-                .bind(m.media_mimetype)
-                .bind(m.media_filename)
-                .bind(m.media_duration_secs)
-                .bind(m.media_width)
-                .bind(m.media_height)
-                .bind(m.media_size_bytes)
-                .bind(m.media_sha256)
-                .bind(m.media_thumbnail);
+                .bind(media.and_then(|x| x.mimetype))
+                .bind(media.and_then(|x| x.filename))
+                .bind(media.and_then(|x| x.duration_secs))
+                .bind(media.and_then(|x| x.width))
+                .bind(media.and_then(|x| x.height))
+                .bind(media.and_then(|x| x.size_bytes))
+                .bind(media.and_then(|x| x.sha256))
+                .bind(media.and_then(|x| x.thumbnail));
         }
         q.execute(&mut **tx).await?;
     }

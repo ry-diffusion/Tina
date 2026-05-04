@@ -62,6 +62,11 @@ pub fn handle_event(event: WorkerEvent) {
                 account_id, messages_count
             );
         }
+        WorkerEvent::HistorySyncProgress {
+            sync_type, progress, ..
+        } => {
+            println!("\n📥 History sync ({}) {}%", sync_type, progress);
+        }
         WorkerEvent::ReconcileProgress {
             account_id: _,
             stage,

@@ -2,6 +2,7 @@
 
 use tina_db::{ChatRow, MessageRow};
 
+use crate::app::ConnectionStatus;
 use crate::components::chat_area::ChatAreaOutput;
 use crate::components::sidebar::SidebarOutput;
 use crate::inventory::{AvatarInventory, MediaInventory};
@@ -33,6 +34,7 @@ pub enum MainInput {
         messages: Vec<MessageRow>,
     },
     SetRepairing(bool),
+    SetConnection(ConnectionStatus),
     RepairProgress {
         stage: String,
         current: i64,

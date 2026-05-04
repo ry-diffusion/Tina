@@ -14,7 +14,24 @@ pub enum Scene {
     QrLogin,
     Syncing,
     InApp,
+    /// Full-screen "Repairing…" overlay shown while a Reconcile is in
+    /// progress. Tracks the previous scene so we can return to it on
+    /// `RepairEnded` (always `InApp` in practice but kept generic).
+    Repairing,
     Error,
+}
+
+/// Connection state for the sidebar headerbar subtitle. `Connecting`
+/// is the boot/reconnect state — distinct from `Offline`, which is
+/// reserved for an explicit "we've given up" signal (no current event
+/// path sets it; left in the enum so future logout/network monitoring
+/// can use it without rewiring callers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    Connecting,
+    Connected,
+    #[allow(dead_code)]
+    Offline,
 }
 
 #[derive(Debug)]
@@ -43,6 +60,10 @@ pub enum AppMsg {
         messages: Vec<MessageRow>,
     },
     HistorySyncDone,
+    HistorySyncProgress {
+        sync_type: String,
+        progress: u32,
+    },
     RepairStarted,
     RepairProgress {
         stage: String,

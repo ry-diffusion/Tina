@@ -7,6 +7,7 @@ use relm4::Controller;
 use relm4::typed_view::list::TypedListView;
 use tina_db::ChatRow;
 
+use crate::app::ConnectionStatus;
 use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::ProfileMenu;
 use crate::inventory::AvatarInventory;
@@ -33,11 +34,60 @@ pub struct Sidebar {
     pub(super) repair_current: i64,
     pub(super) repair_total: i64,
     pub(super) repair_indeterminate: bool,
+    /// Worker-reported link state. Defaults to `Connecting` so a
+    /// freshly launched UI shows that state before the first
+    /// `Connected`/`Disconnected` event lands.
+    pub(super) connection: ConnectionStatus,
     pub(super) user_jid: Option<String>,
     pub(super) avatars: AvatarInventory,
 }
 
 impl Sidebar {
+    /// Subtitle for the headerbar `WindowTitle`. Empty when we're
+    /// online and idle so the title sits alone.
+    pub(super) fn status_subtitle(&self) -> String {
+        match self.connection {
+            ConnectionStatus::Offline => return "Offline".to_string(),
+            ConnectionStatus::Connecting => return "Connecting…".to_string(),
+            ConnectionStatus::Connected => {}
+        }
+        if self.repairing {
+            if self.repair_indeterminate || self.repair_total <= 0 {
+                return "Syncing…".to_string();
+            }
+            let pct = ((self.repair_current as f64) / (self.repair_total as f64) * 100.0)
+                .clamp(0.0, 100.0)
+                .round() as i64;
+            return format!("Syncing ({pct}%)");
+        }
+        String::new()
+    }
+
+    /// Whether the indeterminate top progress bar should pulse (no
+    /// known fraction). True for connecting + indeterminate repair.
+    pub(super) fn status_bar_pulsing(&self) -> bool {
+        matches!(self.connection, ConnectionStatus::Connecting)
+            || (self.repairing && (self.repair_indeterminate || self.repair_total <= 0))
+    }
+
+    /// Whether the thin top progress bar should be shown. Visible
+    /// while we're actively reaching the network (connecting) or
+    /// reconciling — not for `Offline`, which the subtitle alone
+    /// communicates.
+    pub(super) fn status_bar_visible(&self) -> bool {
+        self.repairing || matches!(self.connection, ConnectionStatus::Connecting)
+    }
+
+    /// Determinate fraction for the top progress bar; falls back to
+    /// pulsing when we don't have a known total.
+    pub(super) fn status_bar_fraction(&self) -> Option<f64> {
+        if self.repairing && !self.repair_indeterminate && self.repair_total > 0 {
+            Some((self.repair_current as f64) / (self.repair_total as f64))
+        } else {
+            None
+        }
+    }
+
     /// Linear search through the base store for a chat by id. The list
     /// is small enough (a few hundred chats max in practice) that the
     /// O(n) cost is invisible — and we already iterate the store on
@@ -64,7 +114,7 @@ impl Sidebar {
 
     pub(super) fn apply_chats_upserted(&mut self, rows: Vec<ChatRow>) {
         for row in &rows {
-            let mut item = ChatRowItem::from_row(row);
+            let mut item = ChatRowItem::from_row(row, self.avatars.clone());
             if let Some(pos) = self.find_chat_position(&item.chat_id) {
                 if let Some(prev) = self.list.get(pos) {
                     // `is_active` is owned by the chat area (via

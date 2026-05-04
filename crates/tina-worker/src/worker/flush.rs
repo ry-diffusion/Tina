@@ -55,27 +55,40 @@ async fn flush_messages(
 
         let inputs: Vec<tina_db::MessageBatchInput<'_>> = msgs
             .iter()
-            .map(|m| tina_db::MessageBatchInput {
-                message_id: &m.message_id,
-                chat_jid: &m.chat_jid,
-                sender_jid: if m.sender_jid.is_empty() {
-                    None
-                } else {
-                    Some(m.sender_jid.as_str())
-                },
-                content: m.content.as_deref(),
-                message_type: &m.message_type,
-                timestamp: m.timestamp,
-                is_from_me: m.is_from_me,
-                raw_json: m.raw_json.as_deref(),
-                media_mimetype: m.media_mimetype.as_deref(),
-                media_filename: m.media_filename.as_deref(),
-                media_duration_secs: m.media_duration_secs,
-                media_width: m.media_width,
-                media_height: m.media_height,
-                media_size_bytes: m.media_size_bytes,
-                media_sha256: m.media_sha256.as_deref(),
-                media_thumbnail: m.thumbnail.as_deref(),
+            .map(|m| {
+                let has_media = m.media_mimetype.is_some()
+                    || m.media_filename.is_some()
+                    || m.media_duration_secs.is_some()
+                    || m.media_width.is_some()
+                    || m.media_height.is_some()
+                    || m.media_size_bytes.is_some()
+                    || m.media_sha256.is_some()
+                    || m.thumbnail.is_some();
+                let media = has_media.then_some(tina_db::MediaMeta {
+                    mimetype: m.media_mimetype.as_deref(),
+                    filename: m.media_filename.as_deref(),
+                    duration_secs: m.media_duration_secs,
+                    width: m.media_width,
+                    height: m.media_height,
+                    size_bytes: m.media_size_bytes,
+                    sha256: m.media_sha256.as_deref(),
+                    thumbnail: m.thumbnail.as_deref(),
+                });
+                tina_db::MessageBatchInput {
+                    message_id: &m.message_id,
+                    chat_jid: &m.chat_jid,
+                    sender_jid: if m.sender_jid.is_empty() {
+                        None
+                    } else {
+                        Some(m.sender_jid.as_str())
+                    },
+                    content: m.content.as_deref(),
+                    message_type: &m.message_type,
+                    timestamp: m.timestamp,
+                    is_from_me: m.is_from_me,
+                    raw_json: m.raw_json.as_deref(),
+                    media,
+                }
             })
             .collect();
 

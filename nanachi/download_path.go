@@ -10,17 +10,19 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
-// mediaCacheDir devolve `~/.local/share/com.br.zesmoi.tina/media/`.
-// Casa com o ProjectDirs("com.br","zesmoi","tina") usado pelo Rust.
+// mediaCacheDir devolve `~/.local/share/tina/media/`. Casa com a raiz
+// que `directories::ProjectDirs::from("com.br","zesmoi","tina")` resolve
+// no Linux (qualifier/organization são ignorados — só o nome é usado),
+// mantendo todos os artefatos do app sob o mesmo diretório do `tina.db`.
 func mediaCacheDir() (string, error) {
 	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "com.br.zesmoi.tina", "media"), nil
+		return filepath.Join(xdg, "tina", "media"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "com.br.zesmoi.tina", "media"), nil
+	return filepath.Join(home, ".local", "share", "tina", "media"), nil
 }
 
 // extensionFor escolhe uma extensão a partir do mimetype com prioridade

@@ -17,16 +17,16 @@ import (
 )
 
 // avatarCacheDir mirrors mediaCacheDir() but for profile pictures.
-// `~/.local/share/com.br.zesmoi.tina/avatars/<sha[:2]>/<sha>.<ext>`.
+// `~/.local/share/tina/avatars/<sha[:2]>/<sha>.<ext>`.
 func avatarCacheDir() (string, error) {
 	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "com.br.zesmoi.tina", "avatars"), nil
+		return filepath.Join(xdg, "tina", "avatars"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "com.br.zesmoi.tina", "avatars"), nil
+	return filepath.Join(home, ".local", "share", "tina", "avatars"), nil
 }
 
 // fetchAvatar handles a FetchAvatar IPC command end-to-end:

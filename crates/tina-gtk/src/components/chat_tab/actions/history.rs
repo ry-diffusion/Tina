@@ -14,6 +14,7 @@ use crate::components::message_bubble::MessageItem;
 use super::super::build::{build_item, collapse_against};
 use super::super::messages::{ChatTabOutput, COLLAPSE_WINDOW_SECS};
 use super::super::model::ChatTab;
+use super::echo::match_pending_echoes;
 
 impl ChatTab {
     pub(in crate::components::chat_tab) fn handle_reset(
@@ -125,16 +126,12 @@ impl ChatTab {
         &mut self,
         rows: &[MessageRow],
     ) -> (Vec<String>, HashSet<String>) {
-        let mut avatar_fetches: Vec<String> = Vec::new();
-        let mut confirmed_server_ids: HashSet<String> = HashSet::new();
-        let mut confirmed_local_ids: Vec<String> = Vec::new();
-
         // Fast path: nothing pending → skip the O(n) walk over the
         // entire factory. History sync emits MessagesAppended for every
         // open tab; we'd otherwise pay the walk for every tab with no
         // optimistic echoes outstanding.
         if self.pending_echoes.is_empty() {
-            return (avatar_fetches, confirmed_server_ids);
+            return (Vec::new(), HashSet::new());
         }
 
         let local_idx_state: HashMap<String, (usize, bool)> = self
@@ -144,32 +141,10 @@ impl ChatTab {
             .enumerate()
             .map(|(i, f)| (f.item.id.clone(), (i, f.item.is_collapsed)))
             .collect();
-        let mut replacements: Vec<(usize, MessageRow, bool)> = Vec::new();
-        for r in rows {
-            if !r.is_from_me {
-                continue;
-            }
-            let body = r.content.clone().unwrap_or_default();
-            if body.is_empty() {
-                continue;
-            }
-            let Some(queue) = self.pending_echoes.get_mut(&body) else {
-                continue;
-            };
-            let Some(local_id) = queue.pop_front() else {
-                continue;
-            };
-            if queue.is_empty() {
-                self.pending_echoes.remove(&body);
-            }
-            if let Some((idx, was_collapsed)) = local_idx_state.get(&local_id).copied() {
-                replacements.push((idx, r.clone(), was_collapsed));
-                confirmed_server_ids.insert(r.message_id.clone());
-                confirmed_local_ids.push(local_id);
-            }
-        }
-        replacements.sort_by_key(|(idx, _, _)| std::cmp::Reverse(*idx));
-        for (idx, row, was_collapsed) in replacements {
+        let m = match_pending_echoes(rows, &mut self.pending_echoes, &local_idx_state);
+
+        let mut avatar_fetches: Vec<String> = Vec::new();
+        for (idx, row, was_collapsed) in m.replacements {
             let item = build_item(
                 &row,
                 was_collapsed,
@@ -182,13 +157,13 @@ impl ChatTab {
             guard.remove(idx);
             guard.insert(idx, item);
         }
-        for id in &confirmed_local_ids {
+        for id in &m.confirmed_local_ids {
             self.seen_message_ids.remove(id);
         }
-        for id in &confirmed_server_ids {
+        for id in &m.confirmed_server_ids {
             self.seen_message_ids.insert(id.clone());
         }
-        (avatar_fetches, confirmed_server_ids)
+        (avatar_fetches, m.confirmed_server_ids)
     }
 
     pub(in crate::components::chat_tab) fn handle_send(&mut self, sender: &ComponentSender<Self>) {

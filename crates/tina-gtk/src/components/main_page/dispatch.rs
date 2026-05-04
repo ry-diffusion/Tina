@@ -51,6 +51,9 @@ impl MainPage {
             MainInput::SetRepairing(r) => {
                 let _ = self.sidebar.sender().send(SidebarInput::SetRepairing(r));
             }
+            MainInput::SetConnection(c) => {
+                let _ = self.sidebar.sender().send(SidebarInput::SetConnection(c));
+            }
             MainInput::RepairProgress {
                 stage,
                 current,

@@ -1,22 +1,12 @@
-// Static placeholder pages for the Init / Syncing / Error scenes. The
-// real chat UI lives in `MainPage`; these are just simple AdwStatusPages.
+// Static placeholder pages for the Init / Error scenes. The
+// Syncing and Repairing scenes are now defined inline in the
+// view! macro so they can bind reactively to AppModel state.
 
 pub fn init_page() -> adw::StatusPage {
     let page = adw::StatusPage::builder()
-        .icon_name("chat-bubble-text-symbolic")
+        .icon_name("chat-bubble-dots-symbolic")
         .title("Tina")
         .description("Initialising…")
-        .build();
-    let spinner = gtk::Spinner::builder().spinning(true).build();
-    page.set_child(Some(&spinner));
-    page
-}
-
-pub fn syncing_page() -> adw::StatusPage {
-    let page = adw::StatusPage::builder()
-        .icon_name("emblem-synchronizing-symbolic")
-        .title("Syncing messages")
-        .description("Hang on while we pull your history.")
         .build();
     let spinner = gtk::Spinner::builder().spinning(true).build();
     page.set_child(Some(&spinner));

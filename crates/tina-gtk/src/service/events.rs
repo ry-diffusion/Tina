@@ -33,6 +33,7 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
             jid,
             push_name,
         } => {
+            info!(%account_id, ?phone_number, ?jid, "worker reported Connected");
             let _ = app.send(AppMsg::Connected {
                 account_id,
                 phone_number,
@@ -63,6 +64,17 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
             info!(messages_count, "history sync done");
             let _ = app.send(AppMsg::HistorySyncDone);
             let _ = app.send(AppMsg::RepairEnded);
+        }
+        WorkerEvent::HistorySyncProgress {
+            sync_type,
+            progress,
+            ..
+        } => {
+            info!(%sync_type, progress, "history sync progress");
+            let _ = app.send(AppMsg::HistorySyncProgress {
+                sync_type,
+                progress,
+            });
         }
         WorkerEvent::ReconcileProgress {
             stage,

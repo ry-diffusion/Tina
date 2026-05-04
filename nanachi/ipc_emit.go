@@ -99,6 +99,18 @@ func emitHistorySyncComplete(accountID string, count int) {
 	})
 }
 
+// emitHistorySyncProgress repassa o `progress` (0..100) que o whatsmeow
+// já calcula em cada chunk de HistorySync. `sync_type` carrega o nome
+// do enum (INITIAL_BOOTSTRAP, RECENT, FULL, …) pra a UI poder distinguir
+// "trazendo histórico antigo" vs. "pegando o último mês".
+func emitHistorySyncProgress(accountID, syncType string, progress uint32) {
+	emit("HistorySyncProgress", map[string]any{
+		"account_id": accountID,
+		"sync_type":  syncType,
+		"progress":   progress,
+	})
+}
+
 func emitReconcileProgress(accountID, stage string, current, total int, indeterminate bool) {
 	emit("ReconcileProgress", map[string]any{
 		"account_id":    accountID,

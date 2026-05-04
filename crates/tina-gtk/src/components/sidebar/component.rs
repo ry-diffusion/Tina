@@ -32,7 +32,33 @@ impl SimpleComponent for Sidebar {
                 #[wrap(Some)]
                 set_title_widget = &adw::WindowTitle {
                     set_title: "Tina",
+                    #[watch]
+                    set_subtitle: &model.status_subtitle(),
                 },
+            },
+
+            // Thin pulsing sliver pinned under the headerbar. Visible
+            // while we're indeterminate (Connecting, or repair waiting
+            // for its first stage). The pulse animation is driven by
+            // a glib timer started in `init()` — see `pulse_bar`.
+            #[name(headerbar_pulse_bar)]
+            add_top_bar = &gtk::ProgressBar {
+                add_css_class: "osd",
+                set_pulse_step: 0.08,
+                #[watch]
+                set_visible: model.status_bar_visible() && model.status_bar_pulsing(),
+            },
+
+            // Determinate sliver — only when we have a real fraction.
+            // Kept as a separate widget so we don't fight the pulse:
+            // calling `set_fraction()` cancels activity-mode in GTK,
+            // and `pulse()` cancels the fraction.
+            add_top_bar = &gtk::ProgressBar {
+                add_css_class: "osd",
+                #[watch]
+                set_visible: model.status_bar_visible() && !model.status_bar_pulsing(),
+                #[watch]
+                set_fraction: model.status_bar_fraction().unwrap_or(0.0),
             },
 
             #[wrap(Some)]
@@ -132,6 +158,7 @@ impl SimpleComponent for Sidebar {
             repair_current: 0,
             repair_total: 0,
             repair_indeterminate: true,
+            connection: crate::app::ConnectionStatus::Connecting,
             user_jid: None,
             avatars: init.avatars,
         };
@@ -140,6 +167,24 @@ impl SimpleComponent for Sidebar {
         let widgets = view_output!();
         let mut model = model;
         model.scroll = Some(widgets.scroll.clone());
+
+        // Drive the indeterminate sliver. We can't lean on
+        // `set_pulse_step` alone — `pulse()` has to be called
+        // periodically to actually animate. Weak ref so the timer
+        // self-terminates when the headerbar is destroyed.
+        {
+            use gtk::glib;
+            let weak = widgets.headerbar_pulse_bar.downgrade();
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                let Some(bar) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if bar.is_visible() {
+                    bar.pulse();
+                }
+                glib::ControlFlow::Continue
+            });
+        }
         ComponentParts { model, widgets }
     }
 

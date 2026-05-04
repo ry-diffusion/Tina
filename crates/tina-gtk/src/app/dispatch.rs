@@ -3,12 +3,13 @@
 // worker.
 
 use relm4::prelude::*;
+use tracing::info;
 
 use crate::components::login::LoginInput;
 use crate::components::main_page::MainInput;
 use crate::service::Cmd;
 
-use super::messages::{AppMsg, Scene};
+use super::messages::{AppMsg, ConnectionStatus, Scene};
 use super::model::AppModel;
 
 impl AppModel {
@@ -24,6 +25,15 @@ impl AppModel {
                 push_name,
             } => self.handle_connected(account_id, phone_number, jid, push_name),
             AppMsg::Disconnected(reason) => {
+                // Whatsmeow auto-reconnects on transient drops. We
+                // surface this as `Connecting` rather than `Offline`
+                // so a flicker on the wire doesn't read as "you're
+                // logged out". `LoggedOut` is the explicit terminal.
+                self.connection = ConnectionStatus::Connecting;
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::SetConnection(ConnectionStatus::Connecting));
                 self.toast(format!("Disconnected: {reason}"));
             }
             AppMsg::LoggedOut => self.handle_logged_out(),
@@ -49,21 +59,34 @@ impl AppModel {
                     messages,
                 });
             }
-            AppMsg::HistorySyncDone => self.handle_history_sync_done(),
-            AppMsg::RepairStarted => {
-                self.repairing = true;
-                let _ = self.main.sender().send(MainInput::SetRepairing(true));
+            AppMsg::HistorySyncDone => {
+                info!(
+                    scene = ?self.scene,
+                    "[sync] HistorySyncDone — Cmd::LoadChats",
+                );
+                self.handle_history_sync_done();
             }
+            AppMsg::HistorySyncProgress {
+                sync_type,
+                progress,
+            } => {
+                info!(
+                    %sync_type,
+                    progress,
+                    scene = ?self.scene,
+                    "[sync] HistorySyncProgress",
+                );
+                self.sync_type = sync_type;
+                self.sync_progress = progress.min(100);
+            }
+            AppMsg::RepairStarted => self.handle_repair_started(),
             AppMsg::RepairProgress {
                 stage,
                 current,
                 total,
                 indeterminate,
             } => self.handle_repair_progress(stage, current, total, indeterminate),
-            AppMsg::RepairEnded => {
-                self.repairing = false;
-                let _ = self.main.sender().send(MainInput::SetRepairing(false));
-            }
+            AppMsg::RepairEnded => self.handle_repair_ended(),
             AppMsg::FatalError(e) => {
                 self.error = Some(e);
                 self.scene = Scene::Error;
@@ -143,7 +166,12 @@ impl AppModel {
         push_name: Option<String>,
     ) {
         self.phone = phone_number.clone();
+        self.connection = ConnectionStatus::Connected;
         let base_j = jid.as_deref().map(crate::format::base_jid);
+        let _ = self
+            .main
+            .sender()
+            .send(MainInput::SetConnection(ConnectionStatus::Connected));
         let _ = self.main.sender().send(MainInput::SetIdentity {
             account_id,
             phone: phone_number,
@@ -168,9 +196,35 @@ impl AppModel {
 
     fn handle_history_sync_done(&mut self) {
         if self.scene == Scene::Syncing {
+            info!("[sync] Scene::Syncing → Scene::InApp");
             self.scene = Scene::InApp;
+            // Pin the bar at 100% on exit; nicer than letting it sit
+            // mid-fill if whatsmeow signalled "done" before we got a
+            // final 100% chunk.
+            self.sync_progress = 100;
         }
         self.service.handle.send(Cmd::LoadChats);
+    }
+
+    fn handle_repair_started(&mut self) {
+        self.repairing = true;
+        self.repair_stage.clear();
+        self.repair_current = 0;
+        self.repair_total = 0;
+        self.repair_indeterminate = true;
+        self.pre_repair_scene = Some(self.scene);
+        self.scene = Scene::Repairing;
+        let _ = self.main.sender().send(MainInput::SetRepairing(true));
+    }
+
+    fn handle_repair_ended(&mut self) {
+        self.repairing = false;
+        if self.scene == Scene::Repairing {
+            self.scene = self.pre_repair_scene.take().unwrap_or(Scene::InApp);
+        } else {
+            self.pre_repair_scene = None;
+        }
+        let _ = self.main.sender().send(MainInput::SetRepairing(false));
     }
 
     fn handle_repair_progress(

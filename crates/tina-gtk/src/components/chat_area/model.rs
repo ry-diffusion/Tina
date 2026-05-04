@@ -93,10 +93,9 @@ impl ChatArea {
 
     pub(super) fn apply_pane_avatar(&self, idx: usize) {
         let pane = &self.panes[idx];
-        let texture = pane
-            .current_chat_avatar
-            .as_deref()
-            .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+        let texture = self
+            .avatars
+            .load_texture(pane.current_chat_avatar.as_deref())
             .map(|t| t.upcast::<gtk::gdk::Paintable>());
         pane.avatar.set_custom_image(texture.as_ref());
     }

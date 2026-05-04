@@ -6,9 +6,10 @@ use std::cmp::Ordering;
 
 use tina_db::ChatRow;
 
+use crate::inventory::AvatarInventory;
 use crate::time::format_chat_timestamp;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ChatRowItem {
     pub chat_id: String,
     pub kind: String,
@@ -23,10 +24,14 @@ pub struct ChatRowItem {
     /// Drives both the sort key (active chats float to the top) and the
     /// `tina-tab-open` CSS class for the visual highlight.
     pub is_active: bool,
+    /// Carried so `bind` can hit the shared texture cache instead of
+    /// re-decoding the avatar file every time the row scrolls into
+    /// view. Cloning is just an `Rc` bump.
+    pub avatars: AvatarInventory,
 }
 
 impl ChatRowItem {
-    pub fn from_row(row: &ChatRow) -> Self {
+    pub fn from_row(row: &ChatRow, avatars: AvatarInventory) -> Self {
         let preview = build_preview(row);
         let last_ts = row.last_message_ts.unwrap_or(0);
         Self {
@@ -44,6 +49,7 @@ impl ChatRowItem {
             pinned: row.pinned,
             avatar_path: row.avatar_path.clone(),
             is_active: false,
+            avatars,
         }
     }
 }

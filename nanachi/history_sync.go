@@ -1,12 +1,30 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
 func (c *Client) onHistorySync(evt *events.HistorySync) {
+	syncType := evt.Data.GetSyncType().String()
+	progress := evt.Data.GetProgress()
 	conv := evt.Data.GetConversations()
+	// Goes to stderr so the Rust side surfaces it as a log line —
+	// stdout is reserved for the IPC JSON channel. Returning users
+	// don't see the syncing scene (the UI goes straight to InApp),
+	// so this is the only signal they have that whatsmeow is actually
+	// working through the chunked HistorySync.
+	fmt.Fprintf(os.Stderr,
+		"[sync] HistorySync chunk: account=%s type=%s progress=%d%% conversations=%d\n",
+		c.accountID, syncType, progress, len(conv),
+	)
+	// Emite antes do trabalho do chunk: a UI já sai de 0% assim que o
+	// primeiro evento chega, mesmo que parsing/emit dos contatos
+	// embutidos demore um pouco.
+	emitHistorySyncProgress(c.accountID, syncType, progress)
 	total := 0
 	for _, conversation := range conv {
 		chatJID, err := types.ParseJID(conversation.GetID())
@@ -54,5 +72,16 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 		total += len(msgs)
 	}
 	c.historyCount.Add(int64(total))
-	emitHistorySyncComplete(c.accountID, total)
+	// Antes este emit acontecia em todo chunk e fazia a UI pular pra
+	// "InApp" no primeiro pacote — anulando a tela de progresso.
+	// Agora só sinaliza completo quando o progress reportado atinge 100.
+	// OfflineSyncCompleted / AppStateSyncComplete continuam como rede
+	// de proteção pra dispositivos que nunca chegam a 100.
+	if progress >= 100 {
+		fmt.Fprintf(os.Stderr,
+			"[sync] HistorySync 100%% — emitting Complete (cumulative messages=%d)\n",
+			c.historyCount.Load(),
+		)
+		emitHistorySyncComplete(c.accountID, int(c.historyCount.Load()))
+	}
 }

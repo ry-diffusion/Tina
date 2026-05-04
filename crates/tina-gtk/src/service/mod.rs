@@ -9,6 +9,7 @@ mod cmd;
 mod events;
 mod handlers;
 mod runtime;
+mod state;
 
 pub use cmd::{Cmd, ServiceHandle};
 pub use runtime::ServiceWorker;

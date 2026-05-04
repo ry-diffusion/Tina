@@ -2,6 +2,7 @@
 
 use tina_db::ChatRow;
 
+use crate::app::ConnectionStatus;
 use crate::components::profile_menu::ProfileMenuOutput;
 use crate::inventory::AvatarInventory;
 
@@ -19,6 +20,9 @@ pub enum SidebarInput {
     ChatsUpserted(Vec<ChatRow>),
     SearchChanged(String),
     SetRepairing(bool),
+    /// Worker reported a connection-state transition; drives the
+    /// `Tina` headerbar subtitle ("", "Connecting…", "Offline").
+    SetConnection(ConnectionStatus),
     RepairProgress {
         stage: String,
         current: i64,

@@ -1,22 +1,33 @@
 // Implementations of every `Cmd` arm. The dispatcher in `runtime.rs`
 // reads commands off the channel and calls into these.
+//
+// All handlers go through `state.read().await.active_account()` to
+// resolve the target account. The `ServiceState` struct keeps a per-
+// account registry keyed by `account_id` plus an `active` pointer; the
+// UI flips the pointer when the user switches accounts. Handlers that
+// silently no-op when no account is active also cover the boot window
+// before `Initialize` has registered one.
 
 use std::sync::Arc;
 
 use relm4::Sender;
-use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, info};
 
 use tina_worker::TinaWorker;
 
 use crate::app::AppMsg;
 
 use super::cmd::Cmd;
+use super::state::SharedState;
+
+async fn active_account(state: &SharedState) -> Option<String> {
+    state.read().await.active_account()
+}
 
 pub(super) async fn initialize(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
 ) -> color_eyre::Result<()> {
     let mut accounts = worker.list_accounts().await?;
     let account = if let Some(first) = accounts.drain(..).next() {
@@ -27,17 +38,32 @@ pub(super) async fn initialize(
         worker.create_account(&id, None).await?
     };
 
-    *selected.lock().await = Some(account.id.clone());
+    state.write().await.set_active(account.id.clone());
 
     if account.phone_number.is_some() {
+        // Returning user: skip QR + Syncing scenes and go straight to
+        // the chat list. The whatsmeow auto-reconnect will still emit
+        // HistorySync events in the background — they show up in logs
+        // but don't visibly transition the UI.
+        info!(
+            account_id = %account.id,
+            phone = %account.phone_number.as_deref().unwrap_or(""),
+            "[sync] returning user — going straight to InApp; \
+             whatsmeow HistorySync will run in the background",
+        );
         let _ = app.send(AppMsg::ShowInApp);
         if let Ok(rows) = worker.list_chat_rows(&account.id).await {
             let _ = app.send(AppMsg::ChatsUpserted(rows));
         }
     } else {
+        info!(
+            account_id = %account.id,
+            "[sync] new account — showing QR login",
+        );
         let _ = app.send(AppMsg::ShowQrLogin);
     }
     worker.start_account(&account.id).await?;
+    info!(account_id = %account.id, "[sync] start_account dispatched to nanachi");
     Ok(())
 }
 
@@ -45,47 +71,43 @@ pub(super) async fn handle(
     cmd: Cmd,
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
 ) -> bool {
     match cmd {
         Cmd::Initialize => {
-            if let Err(e) = initialize(worker, app, selected).await {
+            if let Err(e) = initialize(worker, app, state).await {
                 let _ = app.send(AppMsg::FatalError(format!("initialize: {e}")));
             }
         }
-        Cmd::LoadChats => load_chats(worker, app, selected).await,
-        Cmd::OpenChat(id) => open_chat(worker, app, selected, id).await,
+        Cmd::LoadChats => load_chats(worker, app, state).await,
+        Cmd::OpenChat(id) => open_chat(worker, app, state, id).await,
         Cmd::CloseChat(chat_id) => {
-            if let Some(account_id) = selected.lock().await.clone() {
+            if let Some(account_id) = active_account(state).await {
                 worker.remove_open_chat(&account_id, &chat_id).await;
             }
         }
-        Cmd::SendText { chat_id, text } => send_text(worker, app, selected, chat_id, text).await,
-        Cmd::Repair => repair(worker, app, selected).await,
+        Cmd::SendText { chat_id, text } => send_text(worker, app, state, chat_id, text).await,
+        Cmd::Repair => repair(worker, app, state).await,
         Cmd::LoadOlder {
             chat_id,
             before_ts,
             limit,
-        } => load_older(worker, app, selected, chat_id, before_ts, limit).await,
-        Cmd::FetchAvatar { jid } => fetch_avatar(worker, selected, jid).await,
+        } => load_older(worker, app, state, chat_id, before_ts, limit).await,
+        Cmd::FetchAvatar { jid } => fetch_avatar(worker, state, jid).await,
         Cmd::DownloadMedia { message_id } => {
-            download_media(worker, app, selected, message_id).await
+            download_media(worker, app, state, message_id).await
         }
         Cmd::SetChatPinned { chat_id, pinned } => {
-            set_chat_pinned(worker, app, selected, chat_id, pinned).await
+            set_chat_pinned(worker, app, state, chat_id, pinned).await
         }
-        Cmd::Logout => logout(worker, selected).await,
+        Cmd::Logout => logout(worker, state).await,
         Cmd::Shutdown => return false,
     }
     true
 }
 
-async fn load_chats(
-    worker: &Arc<TinaWorker>,
-    app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
-) {
-    let Some(account_id) = selected.lock().await.clone() else {
+async fn load_chats(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &SharedState) {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     match worker.list_chat_rows(&account_id).await {
@@ -99,10 +121,10 @@ async fn load_chats(
 async fn open_chat(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
     id: String,
 ) {
-    let Some(account_id) = selected.lock().await.clone() else {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     worker.add_open_chat(&account_id, &id).await;
@@ -129,11 +151,11 @@ async fn open_chat(
 async fn send_text(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
     chat_id: String,
     text: String,
 ) {
-    let Some(account_id) = selected.lock().await.clone() else {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker.send_message(&account_id, &chat_id, &text).await {
@@ -165,12 +187,8 @@ async fn send_text(
     });
 }
 
-async fn repair(
-    worker: &Arc<TinaWorker>,
-    app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
-) {
-    let Some(account_id) = selected.lock().await.clone() else {
+async fn repair(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &SharedState) {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     let _ = app.send(AppMsg::RepairStarted);
@@ -183,12 +201,12 @@ async fn repair(
 async fn load_older(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
     chat_id: String,
     before_ts: i64,
     limit: i64,
 ) {
-    let Some(account_id) = selected.lock().await.clone() else {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     match worker
@@ -206,12 +224,8 @@ async fn load_older(
     }
 }
 
-async fn fetch_avatar(
-    worker: &Arc<TinaWorker>,
-    selected: &Arc<Mutex<Option<String>>>,
-    jid: String,
-) {
-    let Some(account_id) = selected.lock().await.clone() else {
+async fn fetch_avatar(worker: &Arc<TinaWorker>, state: &SharedState, jid: String) {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker.fetch_avatar(&account_id, &jid).await {
@@ -222,10 +236,10 @@ async fn fetch_avatar(
 async fn download_media(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
     message_id: String,
 ) {
-    let Some(account_id) = selected.lock().await.clone() else {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker.download_media(&account_id, &message_id).await {
@@ -240,11 +254,11 @@ async fn download_media(
 async fn set_chat_pinned(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
-    selected: &Arc<Mutex<Option<String>>>,
+    state: &SharedState,
     chat_id: String,
     pinned: bool,
 ) {
-    let Some(account_id) = selected.lock().await.clone() else {
+    let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker.set_chat_pinned(&account_id, &chat_id, pinned).await {
@@ -262,8 +276,8 @@ async fn set_chat_pinned(
     }
 }
 
-async fn logout(worker: &Arc<TinaWorker>, selected: &Arc<Mutex<Option<String>>>) {
-    if let Some(account_id) = selected.lock().await.clone() {
+async fn logout(worker: &Arc<TinaWorker>, state: &SharedState) {
+    if let Some(account_id) = active_account(state).await {
         worker.clear_open_chats(&account_id).await;
         if let Err(e) = worker.logout_account(&account_id).await {
             error!("logout: {e}");

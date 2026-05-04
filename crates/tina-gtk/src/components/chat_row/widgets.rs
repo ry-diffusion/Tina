@@ -64,9 +64,8 @@ impl RelmListItem for ChatRowItem {
     fn bind(&mut self, widgets: &mut Self::Widgets, root: &mut Self::Root) {
         widgets.avatar.set_text(Some(&self.name));
         let avatar_paintable: Option<gtk::gdk::Paintable> = self
-            .avatar_path
-            .as_deref()
-            .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
+            .avatars
+            .load_texture(self.avatar_path.as_deref())
             .map(|t| t.upcast());
         widgets.avatar.set_custom_image(avatar_paintable.as_ref());
 

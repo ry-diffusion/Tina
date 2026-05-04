@@ -240,8 +240,22 @@ impl FactoryComponent for MessageBubble {
                         #[watch]
                         set_visible: self.item.has_local_file()
                             && matches!(self.item.message_type.as_str(), "image" | "sticker"),
+                        // Gate the decode on `message_type` too:
+                        // `set_visible` only hides the widget, but the
+                        // paintable expression still runs for every
+                        // bubble — and feeding GdkPixbuf an audio file
+                        // (e.g. an OGG voice note) was logging
+                        // "Couldn't recognise the image file format"
+                        // for every audio message in the tab.
                         #[watch]
-                        set_paintable: load_image_paintable(self.item.media_path.as_deref())
+                        set_paintable: load_image_paintable(
+                            self.item.media_path
+                                .as_deref()
+                                .filter(|_| matches!(
+                                    self.item.message_type.as_str(),
+                                    "image" | "sticker"
+                                ))
+                        )
                             .as_ref()
                             .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
                         set_can_shrink: true,

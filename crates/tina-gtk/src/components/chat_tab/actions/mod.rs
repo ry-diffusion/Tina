@@ -5,6 +5,7 @@
 // calls.
 
 mod dispatch;
+mod echo;
 mod history;
 mod identity;
 mod media;

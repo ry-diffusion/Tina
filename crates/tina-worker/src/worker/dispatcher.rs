@@ -178,6 +178,7 @@ pub(super) fn event_kind(e: &IpcEvent) -> &'static str {
         IpcEvent::GroupsUpsert { .. } => "GroupsUpsert",
         IpcEvent::MessagesUpsert { .. } => "MessagesUpsert",
         IpcEvent::HistorySyncComplete { .. } => "HistorySyncComplete",
+        IpcEvent::HistorySyncProgress { .. } => "HistorySyncProgress",
         IpcEvent::ReconcileProgress { .. } => "ReconcileProgress",
         IpcEvent::Error { .. } => "Error",
         IpcEvent::MediaDownloadProgress { .. } => "MediaDownloadProgress",

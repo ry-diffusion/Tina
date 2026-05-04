@@ -7,6 +7,7 @@ use relm4::ComponentSender;
 use relm4::prelude::*;
 use tina_db::ChatRow;
 
+use crate::app::ConnectionStatus;
 use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::{ProfileMenuInput, ProfileMenuOutput};
 
@@ -76,6 +77,10 @@ impl Sidebar {
     pub(super) fn handle_search_changed(&mut self, text: String) {
         *self.search_query.borrow_mut() = text.to_lowercase();
         self.list.notify_filter_changed(0);
+    }
+
+    pub(super) fn handle_set_connection(&mut self, c: ConnectionStatus) {
+        self.connection = c;
     }
 
     pub(super) fn handle_set_repairing(&mut self, r: bool) {
@@ -168,6 +173,7 @@ impl Sidebar {
             SidebarInput::ChatsUpserted(rows) => self.handle_chats_upserted(rows, &sender),
             SidebarInput::SearchChanged(text) => self.handle_search_changed(text),
             SidebarInput::SetRepairing(r) => self.handle_set_repairing(r),
+            SidebarInput::SetConnection(c) => self.handle_set_connection(c),
             SidebarInput::RepairProgress {
                 stage,
                 current,

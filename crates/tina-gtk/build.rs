@@ -4,6 +4,12 @@ fn main() {
         Some("dev.tina.Tina"),
         None::<&str>,
         None::<&str>,
-        ["curved-arrow-left"],
+        [
+            "curved-arrow-left",
+            // Init page brand mark + status pages.
+            "chat-bubble-dots",
+            "loop",
+            "wrench",
+        ],
     );
 }

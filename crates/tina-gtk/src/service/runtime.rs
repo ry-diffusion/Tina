@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use relm4::Sender;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 
 use tina_worker::TinaWorker;
@@ -17,6 +17,7 @@ use crate::app::AppMsg;
 use super::cmd::{Cmd, ServiceHandle};
 use super::events::forward_events;
 use super::handlers::handle;
+use super::state::ServiceState;
 
 pub struct ServiceWorker {
     pub handle: ServiceHandle,
@@ -73,12 +74,16 @@ async fn run(
     let app_evt = app.clone();
     let event_pump = tokio::spawn(forward_events(event_rx, app_evt));
 
-    // Active account for this worker session. Single-account today;
-    // widening is a sender->Cmd refactor away.
-    let selected: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // Per-account state map keyed by account_id, plus an `active`
+    // pointer for the currently focused account. Single-account today
+    // — only one entry, `active` always populated — but the shape
+    // already supports multi-account; widening is a Cmd-side change
+    // away (each Cmd carries an account_id, handlers prefer it over
+    // the active pointer).
+    let state = Arc::new(RwLock::new(ServiceState::default()));
 
     while let Some(cmd) = rx.recv().await {
-        if !handle(cmd, &worker, &app, &selected).await {
+        if !handle(cmd, &worker, &app, &state).await {
             break;
         }
     }

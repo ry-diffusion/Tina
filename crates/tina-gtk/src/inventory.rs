@@ -9,7 +9,7 @@
 // state without round-tripping the worker again.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 /// JID kinds the WhatsApp profile-picture endpoint never serves. We
@@ -25,10 +25,69 @@ fn is_avatar_fetchable(jid: &str) -> bool {
 // AvatarInventory: jid → cached profile picture path
 // ============================================================================
 
+/// Bounded LRU keyed by avatar path. Decoding a 64x64 JPEG via
+/// `Texture::from_filename` is cheap individually but `chat_row::bind`
+/// runs every time a row scrolls into view — at hundreds of rows in the
+/// sidebar that's the same file decoded over and over. The cache is
+/// keyed by path (not JID) because avatars dedupe by sha256, so multiple
+/// JIDs share files.
+struct TextureCache {
+    map: HashMap<String, gtk::gdk::Texture>,
+    order: VecDeque<String>,
+    cap: usize,
+}
+
+impl TextureCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            cap,
+        }
+    }
+
+    fn touch(&mut self, path: &str) {
+        if let Some(pos) = self.order.iter().position(|p| p == path) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(path.to_string());
+    }
+
+    fn get(&mut self, path: &str) -> Option<gtk::gdk::Texture> {
+        let tex = self.map.get(path).cloned()?;
+        self.touch(path);
+        Some(tex)
+    }
+
+    fn insert(&mut self, path: String, tex: gtk::gdk::Texture) {
+        if self.map.contains_key(&path) {
+            self.touch(&path);
+            self.map.insert(path, tex);
+            return;
+        }
+        if self.map.len() >= self.cap
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.map.remove(&oldest);
+        }
+        self.order.push_back(path.clone());
+        self.map.insert(path, tex);
+    }
+
+    fn invalidate(&mut self, path: &str) {
+        if self.map.remove(path).is_some()
+            && let Some(pos) = self.order.iter().position(|p| p == path)
+        {
+            self.order.remove(pos);
+        }
+    }
+}
+
 #[derive(Default)]
 struct AvatarInner {
     paths: HashMap<String, String>,
     requested: HashSet<String>,
+    textures: Option<TextureCache>,
 }
 
 /// Single source of truth for "do we already have a profile picture for
@@ -38,6 +97,8 @@ struct AvatarInner {
 pub struct AvatarInventory {
     inner: Rc<RefCell<AvatarInner>>,
 }
+
+const TEXTURE_CACHE_CAP: usize = 256;
 
 impl AvatarInventory {
     pub fn new() -> Self {
@@ -76,6 +137,12 @@ impl AvatarInventory {
     /// Record a resolved avatar.
     pub fn put(&self, jid: String, path: String) {
         let mut inner = self.inner.borrow_mut();
+        // The path may have replaced an older one for the same JID
+        // (avatar refresh) — drop any cached texture for the *previous*
+        // path so we don't keep serving a stale paintable. We can't drop
+        // it from here because we don't track per-JID path history; the
+        // worker emits `AvatarReady` with the new path and we just trust
+        // that consumers re-`load_texture` after `put`.
         inner.paths.insert(jid.clone(), path);
         // Keep `requested` populated — the request resolved, no need to
         // re-issue. `invalidate` clears both when the avatar changes.
@@ -87,8 +154,34 @@ impl AvatarInventory {
     #[allow(dead_code)]
     pub fn invalidate(&self, jid: &str) {
         let mut inner = self.inner.borrow_mut();
-        inner.paths.remove(jid);
+        if let Some(path) = inner.paths.remove(jid)
+            && let Some(cache) = inner.textures.as_mut()
+        {
+            cache.invalidate(&path);
+        }
         inner.requested.remove(jid);
+    }
+
+    /// Look up (and amortise the decode of) a `gdk::Texture` for an
+    /// avatar file path. Returns `None` if `path` is `None`/empty or the
+    /// file can't be decoded. Callers should prefer this over
+    /// `Texture::from_filename` directly so repeated binds of the same
+    /// row don't redo the decode.
+    pub fn load_texture(&self, path: Option<&str>) -> Option<gtk::gdk::Texture> {
+        let path = path?;
+        if path.is_empty() {
+            return None;
+        }
+        let mut inner = self.inner.borrow_mut();
+        let cache = inner
+            .textures
+            .get_or_insert_with(|| TextureCache::new(TEXTURE_CACHE_CAP));
+        if let Some(tex) = cache.get(path) {
+            return Some(tex);
+        }
+        let tex = gtk::gdk::Texture::from_filename(path).ok()?;
+        cache.insert(path.to_string(), tex.clone());
+        Some(tex)
     }
 }
 

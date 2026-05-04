@@ -16,7 +16,7 @@ use crate::service::{Cmd, ServiceWorker};
 
 use super::messages::{AppInit, AppMsg, Scene};
 use super::model::AppModel;
-use super::pages::{error_page, init_page, syncing_page};
+use super::pages::{error_page, init_page};
 
 #[relm4::component(pub)]
 impl SimpleComponent for AppModel {
@@ -41,13 +41,93 @@ impl SimpleComponent for AppModel {
                         Scene::QrLogin => "qr",
                         Scene::Syncing => "sync",
                         Scene::InApp => "main",
+                        Scene::Repairing => "repair",
                         Scene::Error => "err",
                     },
 
                     add_named[Some("init")] = &init_page(),
                     add_named[Some("qr")] = model.login.widget(),
-                    add_named[Some("sync")] = &syncing_page(),
+
+                    // Initial-bootstrap full-screen page. Bound to the
+                    // live HistorySyncProgress percentage so the user
+                    // can watch the bar fill instead of staring at a
+                    // bare spinner.
+                    add_named[Some("sync")] = &adw::StatusPage {
+                        set_icon_name: Some("loop-symbolic"),
+                        set_title: "Syncing messages",
+                        #[watch]
+                        set_description: Some(&model.sync_stage_label()),
+
+                        #[wrap(Some)]
+                        set_child = &gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 12,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_width_request: 360,
+
+                            // Pulsing bar for the brief "0%" window
+                            // before whatsmeow's first chunk arrives.
+                            #[name(sync_pulse_bar)]
+                            gtk::ProgressBar {
+                                set_pulse_step: 0.08,
+                                #[watch]
+                                set_visible: model.sync_progress == 0,
+                            },
+                            gtk::ProgressBar {
+                                #[watch]
+                                set_visible: model.sync_progress > 0,
+                                #[watch]
+                                set_fraction: model.sync_fraction(),
+                                set_show_text: true,
+                                #[watch]
+                                set_text: Some(&model.sync_percent_text()),
+                            },
+                        },
+                    },
+
                     add_named[Some("main")] = model.main.widget(),
+
+                    // Full-screen overlay during a Reconcile (manual
+                    // repair). Replaces the in-app view so the user
+                    // can't poke the chat list while the worker is
+                    // mid-reconcile.
+                    add_named[Some("repair")] = &adw::StatusPage {
+                        set_icon_name: Some("wrench-symbolic"),
+                        #[watch]
+                        set_title: model.repair_title(),
+                        #[watch]
+                        set_description: Some(&model.repair_description()),
+
+                        #[wrap(Some)]
+                        set_child = &gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 12,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            set_width_request: 360,
+
+                            #[name(repair_pulse_bar)]
+                            gtk::ProgressBar {
+                                set_pulse_step: 0.08,
+                                #[watch]
+                                set_visible: model.repair_indeterminate
+                                    || model.repair_total <= 0,
+                            },
+                            gtk::ProgressBar {
+                                #[watch]
+                                set_visible: !model.repair_indeterminate
+                                    && model.repair_total > 0,
+                                #[watch]
+                                set_fraction: model.repair_fraction(),
+                                #[watch]
+                                set_show_text: !model.repair_progress_text().is_empty(),
+                                #[watch]
+                                set_text: Some(&model.repair_progress_text()),
+                            },
+                        },
+                    },
+
                     add_named[Some("err")] = &error_page(model.error.clone().unwrap_or_default()),
                 },
             },
@@ -89,12 +169,16 @@ impl SimpleComponent for AppModel {
             });
         let model = AppModel {
             scene: Scene::Init,
+            pre_repair_scene: None,
             error: None,
             repairing: false,
             repair_stage: String::new(),
             repair_current: 0,
             repair_total: 0,
             repair_indeterminate: true,
+            sync_progress: 0,
+            sync_type: String::new(),
+            connection: crate::app::ConnectionStatus::Connecting,
             phone: None,
             service,
             login,
@@ -103,6 +187,25 @@ impl SimpleComponent for AppModel {
         };
 
         let widgets = view_output!();
+
+        // Drive the indeterminate fillers on the syncing/repair pages.
+        // GTK's ProgressBar only animates when `pulse()` is called, so
+        // a recurring glib timer ticks both bars; weak refs let the
+        // timer self-terminate on widget destruction.
+        for weak in [
+            widgets.sync_pulse_bar.downgrade(),
+            widgets.repair_pulse_bar.downgrade(),
+        ] {
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                let Some(bar) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if bar.is_visible() {
+                    bar.pulse();
+                }
+                glib::ControlFlow::Continue
+            });
+        }
 
         if !gtk::gdk_pixbuf::Pixbuf::formats()
             .iter()

@@ -114,6 +114,26 @@ pub struct ChatRow {
     pub pinned: bool,
 }
 
+/// Metadados de mídia extraídos do proto. `Some(_)` em
+/// `MessageBatchInput::media` é o sinal type-level de que a linha carrega
+/// mídia; `None` é texto puro. Vêm preenchidos pra image/audio/video/
+/// sticker/document; o download real é separado e atualiza a linha.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MediaMeta<'a> {
+    pub mimetype: Option<&'a str>,
+    pub filename: Option<&'a str>,
+    pub duration_secs: Option<i64>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub size_bytes: Option<i64>,
+    /// Hash sha256 do conteúdo claro. Mesmo arquivo enviado em vários chats
+    /// gera o mesmo hash → cache deduplica.
+    pub sha256: Option<&'a str>,
+    /// JPEG/PNG inline preview pra image/video/sticker/document. Persisted
+    /// como BLOB e renderizado pela UI antes do download.
+    pub thumbnail: Option<&'a [u8]>,
+}
+
 /// Input para `TinaDb::run_message_batch` — empréstimo direto dos campos
 /// necessários, sem alocação extra.
 #[derive(Debug, Clone, Copy)]
@@ -126,20 +146,9 @@ pub struct MessageBatchInput<'a> {
     pub timestamp: i64,
     pub is_from_me: bool,
     pub raw_json: Option<&'a str>,
-    /// Metadados de mídia (NULL para texto). Vêm do nanachi extraindo do
-    /// proto sem baixar — o download real é separado e atualiza a linha.
-    pub media_mimetype: Option<&'a str>,
-    pub media_filename: Option<&'a str>,
-    pub media_duration_secs: Option<i64>,
-    pub media_width: Option<i64>,
-    pub media_height: Option<i64>,
-    pub media_size_bytes: Option<i64>,
-    /// Hash sha256 do conteúdo claro. Mesmo arquivo enviado em vários chats
-    /// gera o mesmo hash → cache deduplica.
-    pub media_sha256: Option<&'a str>,
-    /// JPEG/PNG inline preview pra image/video/sticker/document. Persisted
-    /// como BLOB e renderizado pela UI antes do download.
-    pub media_thumbnail: Option<&'a [u8]>,
+    /// `Some(_)` para image/audio/video/sticker/document; `None` para
+    /// texto puro.
+    pub media: Option<MediaMeta<'a>>,
 }
 
 #[derive(Debug, Clone)]

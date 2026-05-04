@@ -7,5 +7,5 @@ mod messages;
 mod model;
 mod pages;
 
-pub use messages::{AppInit, AppMsg};
+pub use messages::{AppInit, AppMsg, ConnectionStatus};
 pub use model::AppModel;

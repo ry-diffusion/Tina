@@ -79,6 +79,17 @@ pub enum IpcEvent {
 
     HistorySyncComplete { account_id: String, messages_count: usize },
 
+    /// Per-chunk progress reported by whatsmeow during the initial
+    /// `events.HistorySync` stream. `progress` is a 0..100 percent
+    /// already calculated by the proto; `sync_type` is the enum name
+    /// (INITIAL_BOOTSTRAP, RECENT, FULL, …) so the UI can show a
+    /// meaningful stage label.
+    HistorySyncProgress {
+        account_id: String,
+        sync_type: String,
+        progress: u32,
+    },
+
     /// Progresso da reconciliação. `total = 0` significa indeterminado
     /// (mostra spinner, sem barra). Stage é texto pronto pra UI.
     ReconcileProgress {

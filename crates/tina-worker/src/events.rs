@@ -30,6 +30,14 @@ pub enum WorkerEvent {
 
     HistorySyncComplete { account_id: String, messages_count: usize },
 
+    /// Live percentage from whatsmeow's `HistorySync.Progress` (0..100),
+    /// emitted per chunk. Drives the syncing-scene progress bar.
+    HistorySyncProgress {
+        account_id: String,
+        sync_type: String,
+        progress: u32,
+    },
+
     /// Atualização de progresso de uma reconciliação em andamento.
     /// `total = 0` ⇒ indeterminado (spinner).
     ReconcileProgress {

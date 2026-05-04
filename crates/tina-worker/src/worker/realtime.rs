@@ -76,6 +76,19 @@ pub(super) async fn handle_realtime_event(
                 })
                 .await;
         }
+        IpcEvent::HistorySyncProgress {
+            account_id,
+            sync_type,
+            progress,
+        } => {
+            let _ = event_tx
+                .send(WorkerEvent::HistorySyncProgress {
+                    account_id,
+                    sync_type,
+                    progress,
+                })
+                .await;
+        }
         IpcEvent::Error { account_id, error } => {
             let _ = event_tx
                 .send(WorkerEvent::Error { account_id, error })

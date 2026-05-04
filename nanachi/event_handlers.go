@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -9,6 +12,7 @@ import (
 func (c *Client) handleEvent(rawEvt any) {
 	switch evt := rawEvt.(type) {
 	case *events.Connected:
+		fmt.Fprintf(os.Stderr, "[sync] Connected event for %s\n", c.accountID)
 		c.onConnected()
 
 	case *events.PairSuccess:
@@ -35,6 +39,10 @@ func (c *Client) handleEvent(rawEvt any) {
 		c.onHistorySync(evt)
 
 	case *events.OfflineSyncCompleted:
+		fmt.Fprintf(os.Stderr,
+			"[sync] OfflineSyncCompleted for %s (cumulative messages=%d)\n",
+			c.accountID, c.historyCount.Load(),
+		)
 		// Sinal canônico do whatsmeow de que a sincronização inicial
 		// (mensagens offline + app state) acabou. Sem isso, a UI fica
 		// travada na tela "Syncing Messages" esperando HistorySync.
@@ -45,6 +53,9 @@ func (c *Client) handleEvent(rawEvt any) {
 		go c.reconcile()
 
 	case *events.AppStateSyncComplete:
+		fmt.Fprintf(os.Stderr,
+			"[sync] AppStateSyncComplete for %s\n", c.accountID,
+		)
 		// Backup: alguns dispositivos só emitem AppStateSyncComplete.
 		emitHistorySyncComplete(c.accountID, int(c.historyCount.Load()))
 		go c.reconcile()
