@@ -17,6 +17,7 @@ mod inventory;
 mod qr;
 mod service;
 mod time;
+mod wa_id;
 
 /// Constants for the icons we bundle via relm4-icons-build (see `build.rs`).
 /// Both shipped (icon-development-kit feature) and custom icons are loaded

@@ -54,6 +54,15 @@ impl ChatArea {
     ) {
         self.chat_meta
             .insert(chat_id.clone(), (name.clone(), kind.clone()));
+        // Feed the inventory + auto-refresh on miss. Channel chats
+        // open with `name == chat_id` until `GetNewsletterInfo`
+        // resolves; the inventory dedupes the request so opening
+        // the same channel twice in a session only round-trips once.
+        self.chats
+            .ingest_row(&chat_id, &kind, &name, self.avatars.get(&chat_id).as_deref());
+        if matches!(kind.as_str(), "newsletter" | "group") && (name.is_empty() || name == chat_id) {
+            self.chats.request_refresh(&chat_id);
+        }
         if let Some((controller, page, _)) = self.open_tabs.get(&chat_id) {
             let _ = controller.sender().send(ChatTabInput::SetMeta {
                 name: name.clone(),

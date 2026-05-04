@@ -122,6 +122,7 @@ impl ChatTab {
             });
         }
 
+        let chat_ctx = self.chat_context();
         {
             let mut guard = self.messages.guard();
             let mut sender_cursor: Option<String> = None;
@@ -141,6 +142,7 @@ impl ChatTab {
                     &self.avatars,
                     &self.media,
                     self.user_jid.as_deref(),
+                    &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
                 guard.push_front(item);

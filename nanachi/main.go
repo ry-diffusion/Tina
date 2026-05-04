@@ -179,6 +179,18 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 			}
 		}()
 
+	case "RefreshChat":
+		var p struct {
+			AccountID string `json:"account_id"`
+			ChatJID   string `json:"chat_jid"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		emitCommandResult(msg.ID, true, nil, nil)
+		go refreshChat(mgr, p.AccountID, p.ChatJID)
+
 	case "Shutdown":
 		emitCommandResult(msg.ID, true, nil, nil)
 		mgr.shutdown()

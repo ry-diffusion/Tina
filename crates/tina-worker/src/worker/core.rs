@@ -156,10 +156,30 @@ impl TinaWorker {
         Ok(())
     }
 
+    /// Pull a chat's metadata from whatsmeow (newsletter or group).
+    /// The Go side picks the right API based on the JID's server.
+    pub async fn refresh_chat(&self, account_id: &str, chat_jid: &str) -> Result<()> {
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::RefreshChat {
+                account_id: account_id.to_string(),
+                chat_jid: chat_jid.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
     // ---- Chat-list / messages para a UI ----
 
     pub async fn list_chat_rows(&self, account_id: &str) -> Result<Vec<ChatRow>> {
         Ok(self.db.list_chat_rows(account_id).await?)
+    }
+
+    pub async fn list_status_authors(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<tina_db::StatusAuthorRow>> {
+        Ok(self.db.list_status_authors(account_id).await?)
     }
 
     /// Persist a chat's pinned flag. The UI's `ChatsUpserted` push will

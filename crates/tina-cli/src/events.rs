@@ -41,6 +41,9 @@ pub fn handle_event(event: WorkerEvent) {
                 );
             }
         }
+        WorkerEvent::StatusAuthorsUpserted { account_id, rows } => {
+            println!("\n📸 {} status author(s) for {}", rows.len(), account_id);
+        }
         WorkerEvent::MessagesAppended {
             account_id,
             chat_id,

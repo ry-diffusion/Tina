@@ -32,6 +32,7 @@ impl ChatTab {
         self.bottomed.set(true);
         let mut avatar_fetches: Vec<String> = Vec::new();
         {
+            let chat_ctx = self.chat_context();
             let mut guard = self.messages.guard();
             guard.clear();
             self.seen_message_ids.clear();
@@ -47,6 +48,7 @@ impl ChatTab {
                     &self.avatars,
                     &self.media,
                     self.user_jid.as_deref(),
+                    &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
                 guard.push_back(item);
@@ -90,6 +92,7 @@ impl ChatTab {
         // messages if we trusted a stale `last_sender`. The factory IS
         // the source of truth.
         let (mut cursor_sender, mut cursor_ts) = self.factory_tail_cursor();
+        let chat_ctx = self.chat_context();
         {
             let mut guard = self.messages.guard();
             for row in &new_rows {
@@ -100,6 +103,7 @@ impl ChatTab {
                     &self.avatars,
                     &self.media,
                     self.user_jid.as_deref(),
+                    &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
                 guard.push_back(item);
@@ -144,6 +148,7 @@ impl ChatTab {
         let m = match_pending_echoes(rows, &mut self.pending_echoes, &local_idx_state);
 
         let mut avatar_fetches: Vec<String> = Vec::new();
+        let chat_ctx = self.chat_context();
         for (idx, row, was_collapsed) in m.replacements {
             let item = build_item(
                 &row,
@@ -151,6 +156,7 @@ impl ChatTab {
                 &self.avatars,
                 &self.media,
                 self.user_jid.as_deref(),
+                &chat_ctx,
                 &mut |jid| avatar_fetches.push(jid),
             );
             let mut guard = self.messages.guard();
@@ -241,6 +247,13 @@ impl ChatTab {
             sender_name: String::new(),
             sender_jid: self.user_jid.clone(),
             sender_avatar_path: local_avatar,
+            chat_kind: self.kind.clone(),
+            chat_display_name: if self.name.is_empty() {
+                None
+            } else {
+                Some(self.name.clone())
+            },
+            chat_avatar_path: self.avatars.get(&self.chat_id),
             is_collapsed: local_collapsed,
             content: trimmed.to_string(),
             message_type: "text".to_string(),

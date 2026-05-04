@@ -1,6 +1,6 @@
 // State + read/write helpers for the sidebar.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use relm4::Controller;
@@ -10,7 +10,10 @@ use tina_db::ChatRow;
 use crate::app::ConnectionStatus;
 use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::ProfileMenu;
-use crate::inventory::AvatarInventory;
+use crate::inventory::{AvatarInventory, ChatInventory};
+
+use super::messages::ChatFilter;
+use super::status_row::StatusAuthorItem;
 
 pub struct Sidebar {
     /// Typed wrapper around `gtk::ListView` + `gio::ListStore` +
@@ -18,9 +21,18 @@ pub struct Sidebar {
     /// API; the unsafe boxing/unboxing of the row data happens inside
     /// the relm4 abstraction.
     pub(super) list: TypedListView<ChatRowItem, gtk::SingleSelection>,
-    /// Search query backing the (only) filter we register on `list`.
+    /// Second list view, only visible when the Status tab is active.
+    /// One row per contact who's posted to `status@broadcast`. Built
+    /// from `WorkerEvent::StatusAuthorsUpserted` and refreshed on tab
+    /// activation — not part of the regular chat-row stream.
+    pub(super) status_list: TypedListView<StatusAuthorItem, gtk::SingleSelection>,
+    /// Search query backing the search filter we register on `list`.
     /// Mutated on `SearchChanged`; the filter closure reads through it.
     pub(super) search_query: Rc<RefCell<String>>,
+    /// Active tab. Shared with the per-row filter closure via `Rc`
+    /// so flipping the tab from a button click only mutates a Cell;
+    /// `notify_filter_changed` then re-runs the closure on every row.
+    pub(super) chat_filter: Rc<Cell<ChatFilter>>,
     /// Stashed for the scroll-pinning snap. Captured from the view!
     /// macro at init time. While the user is parked at the top, every
     /// `ChatsUpserted` batch nudges the viewport back to 0 so the
@@ -50,6 +62,7 @@ pub struct Sidebar {
     pub(super) history_sync_type: String,
     pub(super) user_jid: Option<String>,
     pub(super) avatars: AvatarInventory,
+    pub(super) chats: ChatInventory,
 }
 
 impl Sidebar {
@@ -151,6 +164,26 @@ impl Sidebar {
 
     pub(super) fn apply_chats_upserted(&mut self, rows: Vec<ChatRow>) {
         for row in &rows {
+            // Feed every upserted row into the chat inventory so
+            // any later widget (chat tab header, message bubble in
+            // a newsletter, status row resolver) can pick up the
+            // resolved name + avatar synchronously.
+            self.chats.ingest_row(
+                &row.chat_id,
+                &row.kind,
+                &row.name,
+                row.avatar_path.as_deref(),
+            );
+            // Auto-fetch trigger: rows whose name is still the raw
+            // chat_id (no `display_name` yet) come from the
+            // chat_row_select_clause's `COALESCE(... c.chat_id)`
+            // fallback. Channels follow this path until
+            // `GetNewsletterInfo` resolves.
+            if matches!(row.kind.as_str(), "newsletter" | "group")
+                && (row.name.is_empty() || row.name == row.chat_id)
+            {
+                self.chats.request_refresh(&row.chat_id);
+            }
             let mut item = ChatRowItem::from_row(row, self.avatars.clone());
             if let Some(pos) = self.find_chat_position(&item.chat_id) {
                 if let Some(prev) = self.list.get(pos) {

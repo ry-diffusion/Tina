@@ -10,6 +10,20 @@ pub enum Cmd {
     Initialize,
     /// Re-emits the latest snapshot of chats for the active account.
     LoadChats,
+    /// Compute the Status authors list (everyone who's posted to
+    /// `status@broadcast`) and push it back as
+    /// `AppMsg::StatusAuthorsUpserted`. Triggered by the user
+    /// switching to the Status tab; not part of the regular
+    /// `ChatsUpserted` flow because the rows are aggregated from
+    /// messages, not stored as chat rows.
+    LoadStatuses,
+    /// Fetch the recent `status@broadcast` posts of one sender and
+    /// push them back as `AppMsg::ShowStoriesViewer` so the
+    /// dispatcher can open the carousel.
+    OpenStatusAuthor {
+        sender_jid: String,
+        name: String,
+    },
     /// Open (or re-load) a chat: fetches metadata + last 200 messages,
     /// adds the chat to the worker's open-tab set, and emits
     /// `AppMsg::ChatOpened`. Membership in the set is what gates whether
@@ -28,6 +42,9 @@ pub enum Cmd {
     /// Fetch a profile picture for the given JID (chat_id, contact_id,
     /// etc — anything that resolves through the worker's aliases).
     FetchAvatar { jid: String },
+    /// Re-pull a chat's display name + avatar (newsletters / groups).
+    /// Triggered by `ChatInventory` when it sees a render miss.
+    RefreshChat { chat_jid: String },
     /// Lazy-load older messages (page back). The UI passes the timestamp
     /// of its currently-oldest row; the worker returns the next batch
     /// strictly older than that.

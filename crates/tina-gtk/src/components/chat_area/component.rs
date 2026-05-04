@@ -82,6 +82,7 @@ impl SimpleComponent for ChatArea {
             focused_pane: 0,
             avatars: init.avatars,
             media: init.media,
+            chats: init.chats,
             user_jid: None,
         };
         model.refresh_pane_visibility();

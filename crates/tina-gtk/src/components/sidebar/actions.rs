@@ -11,8 +11,9 @@ use crate::app::ConnectionStatus;
 use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::{ProfileMenuInput, ProfileMenuOutput};
 
-use super::messages::{SidebarInput, SidebarOutput};
+use super::messages::{ChatFilter, SidebarInput, SidebarOutput};
 use super::model::Sidebar;
+use super::status_row::StatusAuthorItem;
 
 impl Sidebar {
     pub(super) fn handle_set_identity(
@@ -91,6 +92,69 @@ impl Sidebar {
     pub(super) fn handle_history_sync_ended(&mut self) {
         self.history_sync_progress = None;
         self.history_sync_type.clear();
+    }
+
+    pub(super) fn handle_set_chat_filter(
+        &mut self,
+        f: ChatFilter,
+        sender: &ComponentSender<Self>,
+    ) {
+        self.chat_filter.set(f);
+        // The Cell mutation is invisible to the SortListModel until
+        // we explicitly re-run the filter pass. Otherwise the tab
+        // click would only take effect after the next ChatsUpserted
+        // reordering.
+        self.list.notify_filter_changed(0);
+        // The Status tab pulls a separate aggregate (one row per
+        // contact who's posted) — refresh it lazily when the user
+        // first switches in. The chats list is fed by the regular
+        // ChatsUpserted stream so it doesn't need a refresh here.
+        if matches!(f, ChatFilter::Status) {
+            let _ = sender.output(SidebarOutput::RequestLoadStatuses);
+        }
+    }
+
+    pub(super) fn handle_status_activated(
+        &mut self,
+        pos: u32,
+        sender: &ComponentSender<Self>,
+    ) {
+        // `get_visible` returns the filtered+sorted item; no filter
+        // is registered on the status list so it's equivalent to
+        // `get(pos)`, but staying consistent with the chat-row
+        // pattern keeps the surprise low.
+        let Some(item) = self.status_list.get_visible(pos) else {
+            tracing::warn!(pos, "status row activated but no item at position");
+            return;
+        };
+        let item = item.borrow();
+        tracing::info!(
+            sender_jid = %item.sender_jid,
+            name = %item.name,
+            post_count = item.post_count,
+            "status author activated",
+        );
+        let _ = sender.output(SidebarOutput::OpenStatusAuthor {
+            sender_jid: item.sender_jid.clone(),
+            name: item.name.clone(),
+        });
+    }
+
+    pub(super) fn handle_status_authors_upserted(
+        &mut self,
+        rows: Vec<tina_db::StatusAuthorRow>,
+    ) {
+        // Replace the whole list — these are aggregated and we
+        // re-fetch on every Status-tab click, so an in-place reapply
+        // would just be more code for the same outcome.
+        let total = self.status_list.len();
+        for _ in 0..total {
+            self.status_list.remove(0);
+        }
+        for row in &rows {
+            self.status_list
+                .append(StatusAuthorItem::from_row(row, self.avatars.clone()));
+        }
     }
 
     pub(super) fn handle_set_repairing(&mut self, r: bool) {
@@ -189,6 +253,13 @@ impl Sidebar {
                 progress,
             } => self.handle_history_sync_progress(sync_type, progress),
             SidebarInput::HistorySyncEnded => self.handle_history_sync_ended(),
+            SidebarInput::SetChatFilter(f) => self.handle_set_chat_filter(f, &sender),
+            SidebarInput::StatusAuthorsUpserted(rows) => {
+                self.handle_status_authors_upserted(rows);
+            }
+            SidebarInput::StatusAuthorActivated(pos) => {
+                self.handle_status_activated(pos, &sender);
+            }
             SidebarInput::RepairProgress {
                 stage,
                 current,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +34,20 @@ type Client struct {
 	// timers (whatsmeow fires it once per app-state name on every
 	// sync — 5+ times during the initial boot).
 	fallbackScheduled atomic.Bool
+	// newsletterRefreshes dedupes async newsletter-info fetches
+	// across HistorySync chunks. The same channel JID often shows
+	// up in multiple chunks during the initial bootstrap; without
+	// this we'd fire N duplicate GraphQL queries.
+	newsletterRefreshes sync.Map
+}
+
+// queueNewsletterRefresh returns true the first time it sees a JID
+// (the caller should kick off the fetch). Subsequent calls return
+// false — caller skips. Resets are not needed: newsletter JIDs
+// don't recycle within a session.
+func (c *Client) queueNewsletterRefresh(jid types.JID) bool {
+	_, loaded := c.newsletterRefreshes.LoadOrStore(jid.String(), struct{}{})
+	return !loaded
 }
 
 // scheduleFallbackHistoryComplete arms a one-shot timer that emits

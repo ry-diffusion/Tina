@@ -80,6 +80,10 @@ pub(super) async fn handle(
             }
         }
         Cmd::LoadChats => load_chats(worker, app, state).await,
+        Cmd::LoadStatuses => load_statuses(worker, app, state).await,
+        Cmd::OpenStatusAuthor { sender_jid, name } => {
+            open_status_author(worker, app, state, sender_jid, name).await
+        }
         Cmd::OpenChat(id) => open_chat(worker, app, state, id).await,
         Cmd::CloseChat(chat_id) => {
             if let Some(account_id) = active_account(state).await {
@@ -94,6 +98,7 @@ pub(super) async fn handle(
             limit,
         } => load_older(worker, app, state, chat_id, before_ts, limit).await,
         Cmd::FetchAvatar { jid } => fetch_avatar(worker, state, jid).await,
+        Cmd::RefreshChat { chat_jid } => refresh_chat(worker, state, chat_jid).await,
         Cmd::DownloadMedia { message_id } => {
             download_media(worker, app, state, message_id).await
         }
@@ -119,6 +124,60 @@ async fn load_chats(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &Shar
             let _ = app.send(AppMsg::ChatsUpserted(rows));
         }
         Err(e) => error!("list_chat_rows: {e}"),
+    }
+}
+
+async fn load_statuses(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &SharedState) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    match worker.list_status_authors(&account_id).await {
+        Ok(rows) => {
+            let _ = app.send(AppMsg::StatusAuthorsUpserted(rows));
+        }
+        Err(e) => error!("list_status_authors: {e}"),
+    }
+}
+
+async fn open_status_author(
+    worker: &Arc<TinaWorker>,
+    app: &Sender<AppMsg>,
+    state: &SharedState,
+    sender_jid: String,
+    name: String,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    info!(%sender_jid, %name, "[stories] fetching posts for author");
+    match worker
+        .get_message_rows(&account_id, "status@broadcast", 200, 0)
+        .await
+    {
+        Ok(rows) => {
+            let total = rows.len();
+            let posts: Vec<_> = rows
+                .into_iter()
+                .filter(|r| {
+                    r.sender_jid.as_deref() == Some(sender_jid.as_str())
+                        || r.sender_contact_id.as_deref() == Some(sender_jid.as_str())
+                })
+                .collect();
+            info!(
+                total,
+                matched = posts.len(),
+                "[stories] filter result",
+            );
+            // `get_message_rows` returns newest-first for the chat
+            // tab; the carousel reads oldest-first so the user's
+            // "back" gesture moves into older posts.
+            let mut posts = posts;
+            posts.sort_by_key(|r| r.timestamp);
+            let _ = app.send(AppMsg::ShowStoriesViewer { name, posts });
+        }
+        Err(e) => {
+            error!("get_message_rows for status author: {e}");
+        }
     }
 }
 
@@ -234,6 +293,15 @@ async fn fetch_avatar(worker: &Arc<TinaWorker>, state: &SharedState, jid: String
     };
     if let Err(e) = worker.fetch_avatar(&account_id, &jid).await {
         error!("fetch_avatar: {e}");
+    }
+}
+
+async fn refresh_chat(worker: &Arc<TinaWorker>, state: &SharedState, chat_jid: String) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    if let Err(e) = worker.refresh_chat(&account_id, &chat_jid).await {
+        error!("refresh_chat: {e}");
     }
 }
 

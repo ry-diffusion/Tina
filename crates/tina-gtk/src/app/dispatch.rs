@@ -41,6 +41,12 @@ impl AppModel {
             AppMsg::ChatsUpserted(rows) => {
                 let _ = self.main.sender().send(MainInput::ChatsUpserted(rows));
             }
+            AppMsg::StatusAuthorsUpserted(rows) => {
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::StatusAuthorsUpserted(rows));
+            }
             AppMsg::MessagesAppended { chat_id, messages } => {
                 let _ = self
                     .main
@@ -118,6 +124,18 @@ impl AppModel {
             }
             AppMsg::RequestRepair => self.service.handle.send(Cmd::Repair),
             AppMsg::RequestPreferences => self.handle_open_preferences(),
+            AppMsg::RequestLoadStatuses => self.service.handle.send(Cmd::LoadStatuses),
+            AppMsg::RequestRefreshChat(chat_jid) => {
+                self.service.handle.send(Cmd::RefreshChat { chat_jid });
+            }
+            AppMsg::OpenStatusAuthor { sender_jid, name } => {
+                info!(%sender_jid, %name, "[stories] OpenStatusAuthor dispatched");
+                self.service.handle.send(Cmd::OpenStatusAuthor { sender_jid, name });
+            }
+            AppMsg::ShowStoriesViewer { name, posts } => {
+                info!(%name, count = posts.len(), "[stories] ShowStoriesViewer");
+                self.handle_open_stories(name, posts);
+            }
             AppMsg::RequestLogout => self.service.handle.send(Cmd::Logout),
             AppMsg::SetDownloadMethod(m) => {
                 self.service.handle.send(Cmd::SetDownloadMethod(m));
@@ -231,6 +249,14 @@ impl AppModel {
             .root()
             .and_then(|r| r.downcast::<gtk::Window>().ok());
         dialog.present(parent.as_ref());
+    }
+
+    fn handle_open_stories(&self, name: String, posts: Vec<tina_db::MessageRow>) {
+        // Same anchor pattern as `lightbox.rs`: pass any widget that's
+        // a descendant of the application window and let `AdwDialog`
+        // walk up to find the right parent. The toast overlay is
+        // always mounted so it's a stable handle.
+        crate::components::stories::open_stories_viewer(&self.toast_overlay, &name, posts);
     }
 
     fn handle_open_preferences(&self) {

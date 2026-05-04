@@ -16,6 +16,18 @@ pub struct MessageItem {
     pub sender_name: String,
     pub sender_jid: Option<String>,
     pub sender_avatar_path: Option<String>,
+    /// Chat kind (`dm`, `group`, `newsletter`, …) — used by the
+    /// header to swap "Unknown" for the channel's own name when the
+    /// row sits inside a newsletter (every post comes from the
+    /// channel itself, individual senders aren't exposed).
+    pub chat_kind: String,
+    /// Display name of the enclosing chat. Only meaningful for
+    /// newsletters; `None` for everything else so the regular sender
+    /// resolution stays in charge.
+    pub chat_display_name: Option<String>,
+    /// Cached avatar of the enclosing chat. Same scope as
+    /// `chat_display_name`.
+    pub chat_avatar_path: Option<String>,
     /// `true` when the previous row in the thread had the same sender
     /// within ~10 minutes. Suppresses the avatar/header; only the
     /// content (and a hover-only timestamp) is shown.
@@ -54,6 +66,9 @@ impl MessageItem {
             ),
             sender_jid: row.sender_jid.clone(),
             sender_avatar_path: row.sender_avatar_path.clone(),
+            chat_kind: String::new(),
+            chat_display_name: None,
+            chat_avatar_path: None,
             is_collapsed,
             content: display,
             message_type: row.message_type.clone(),
@@ -128,17 +143,45 @@ impl MessageItem {
             .unwrap_or(false)
     }
 
-    pub(super) fn header_markup(&self) -> String {
-        let name = if self.from_me {
-            "You"
-        } else if self.sender_name.is_empty() {
+    /// Display name shown above the bubble. Newsletters always speak
+    /// as the channel itself, so we substitute the chat's own name +
+    /// avatar instead of letting "Unknown" leak through when the
+    /// per-message sender lookup fails.
+    pub(super) fn display_sender_name(&self) -> &str {
+        if self.from_me {
+            return "You";
+        }
+        if self.chat_kind == "newsletter"
+            && let Some(n) = self.chat_display_name.as_deref()
+            && !n.is_empty()
+        {
+            return n;
+        }
+        if self.sender_name.is_empty() {
             "Unknown"
         } else {
             self.sender_name.as_str()
-        };
+        }
+    }
+
+    /// Avatar path used by the bubble's gutter. Newsletters reuse the
+    /// chat's own avatar — same fallback path as the sender name.
+    pub(super) fn display_avatar_path(&self) -> Option<&str> {
+        if self.from_me {
+            return self.sender_avatar_path.as_deref();
+        }
+        if self.chat_kind == "newsletter" {
+            if let Some(p) = self.chat_avatar_path.as_deref() {
+                return Some(p);
+            }
+        }
+        self.sender_avatar_path.as_deref()
+    }
+
+    pub(super) fn header_markup(&self) -> String {
         format!(
             "<b>{}</b>  <span alpha=\"60%\" size=\"small\">{}</span>",
-            glib_markup_escape(name),
+            glib_markup_escape(self.display_sender_name()),
             glib_markup_escape(&self.timestamp),
         )
     }

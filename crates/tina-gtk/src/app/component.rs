@@ -151,12 +151,25 @@ impl SimpleComponent for AppModel {
 
         let avatars = crate::inventory::AvatarInventory::new();
         let media = crate::inventory::MediaInventory::new();
+        let chats = crate::inventory::ChatInventory::new();
+        // Wire the inventory's miss callback to bubble up as
+        // `RequestRefreshChat`. Closes the loop: any render that asks
+        // for a missing chat name → `Cmd::RefreshChat` → nanachi
+        // GraphQL → `GroupsUpsert` → next ChatsUpserted has the data.
+        // Same lazy pattern as Amnesia.
+        {
+            let app_sender = sender.input_sender().clone();
+            chats.set_miss_handler(move |chat_id| {
+                let _ = app_sender.send(AppMsg::RequestRefreshChat(chat_id));
+            });
+        }
 
         let main = MainPage::builder()
             .launch(crate::components::main_page::MainInit {
                 service: service.handle.clone(),
                 avatars,
                 media,
+                chats,
             })
             .forward(sender.input_sender(), |o| match o {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),
@@ -164,6 +177,10 @@ impl SimpleComponent for AppModel {
                 MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
                 MainOutput::RequestPreferences => AppMsg::RequestPreferences,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
+                MainOutput::RequestLoadStatuses => AppMsg::RequestLoadStatuses,
+                MainOutput::OpenStatusAuthor { sender_jid, name } => {
+                    AppMsg::OpenStatusAuthor { sender_jid, name }
+                }
                 MainOutput::RequestMediaDownload(id) => AppMsg::RequestMediaDownload(id),
                 MainOutput::RequestLoadOlder { chat_id, before_ts } => {
                     AppMsg::RequestLoadOlder { chat_id, before_ts }

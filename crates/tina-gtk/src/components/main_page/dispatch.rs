@@ -26,6 +26,12 @@ impl MainPage {
                     .sender()
                     .send(SidebarInput::ChatsUpserted(rows));
             }
+            MainInput::StatusAuthorsUpserted(rows) => {
+                let _ = self
+                    .sidebar
+                    .sender()
+                    .send(SidebarInput::StatusAuthorsUpserted(rows));
+            }
             MainInput::ChatOpened {
                 chat_id: Some(chat_id),
                 name,
@@ -170,6 +176,12 @@ impl MainPage {
             }
             SidebarOutput::RequestPreferences => {
                 let _ = sender.output(MainOutput::RequestPreferences);
+            }
+            SidebarOutput::RequestLoadStatuses => {
+                let _ = sender.output(MainOutput::RequestLoadStatuses);
+            }
+            SidebarOutput::OpenStatusAuthor { sender_jid, name } => {
+                let _ = sender.output(MainOutput::OpenStatusAuthor { sender_jid, name });
             }
             SidebarOutput::RequestLogout => {
                 let _ = sender.output(MainOutput::RequestLogout);

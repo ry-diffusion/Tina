@@ -96,6 +96,21 @@ pub struct Chat {
     pub updated_at: i64,
 }
 
+/// One row per contact who has posted to `status@broadcast`.
+/// Aggregated from the messages table — there's no separate "status
+/// authors" table, the data is just messages with `chat_jid =
+/// 'status@broadcast'` grouped by sender.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StatusAuthorRow {
+    pub sender_jid: String,
+    pub name: String,
+    pub avatar_path: Option<String>,
+    pub last_ts: i64,
+    pub last_message_type: String,
+    pub last_preview: Option<String>,
+    pub post_count: i64,
+}
+
 /// Linha pronta para a UI: o `name` já vem resolvido via JOIN com `contacts`
 /// quando o chat é DM. Para grupos/newsletters cai no `display_name` próprio.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -112,6 +127,12 @@ pub struct ChatRow {
     pub last_message_duration_secs: Option<i64>,
     pub unread_count: i64,
     pub pinned: bool,
+    /// Display name of the contact who sent the chat's last message,
+    /// resolved via JOIN on `last_sender_contact_id`. `None` when
+    /// the message was from the user (covered by `from_me`) or when
+    /// the row hasn't received any message yet. Used by the chat-list
+    /// preview to prefix `Author: …` for groups and newsletters.
+    pub last_sender_name: Option<String>,
 }
 
 /// Metadados de mídia extraídos do proto. `Some(_)` em

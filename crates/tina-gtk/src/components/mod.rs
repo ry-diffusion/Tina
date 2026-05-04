@@ -7,3 +7,4 @@ pub mod message_bubble;
 pub mod profile_menu;
 pub mod settings;
 pub mod sidebar;
+pub mod stories;

@@ -46,6 +46,7 @@ impl SimpleComponent for MainPage {
         let sidebar = Sidebar::builder()
             .launch(SidebarInit {
                 avatars: init.avatars.clone(),
+                chats: init.chats.clone(),
             })
             .forward(sender.input_sender(), MainInput::FromSidebar);
 
@@ -53,6 +54,7 @@ impl SimpleComponent for MainPage {
             .launch(ChatAreaInit {
                 avatars: init.avatars.clone(),
                 media: init.media.clone(),
+                chats: init.chats.clone(),
             })
             .forward(sender.input_sender(), MainInput::FromChatArea);
 

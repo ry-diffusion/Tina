@@ -5,6 +5,7 @@ mod actions;
 mod component;
 mod messages;
 mod model;
+mod status_row;
 
 pub use messages::{SidebarInit, SidebarInput, SidebarOutput};
 pub use model::Sidebar;

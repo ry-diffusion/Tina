@@ -7,7 +7,7 @@ use adw::prelude::*;
 use relm4::Controller;
 
 use crate::components::chat_tab::ChatTab;
-use crate::inventory::{AvatarInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory};
 
 use super::pane::Pane;
 
@@ -27,6 +27,7 @@ pub struct ChatArea {
     pub(super) focused_pane: usize,
     pub(super) avatars: AvatarInventory,
     pub(super) media: MediaInventory,
+    pub(super) chats: ChatInventory,
     pub(super) user_jid: Option<String>,
 }
 

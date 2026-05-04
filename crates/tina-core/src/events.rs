@@ -54,6 +54,15 @@ pub enum IpcCommand {
         account_id: String,
         jid: String,
     },
+    /// Re-fetch metadata for a single chat (newsletter / group). The
+    /// nanachi handler dispatches based on the JID server: routes
+    /// `*@newsletter` to `GetNewsletterInfo`, `*@g.us` to
+    /// `GetGroupInfo`. Used by the UI's `ChatInventory` to pull
+    /// missing display names + avatars on demand.
+    RefreshChat {
+        account_id: String,
+        chat_jid: String,
+    },
     Shutdown,
 }
 

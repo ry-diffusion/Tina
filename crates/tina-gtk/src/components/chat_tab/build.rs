@@ -18,6 +18,18 @@ pub fn sender_key(row: &MessageRow) -> String {
     }
 }
 
+/// Optional context about the chat the row sits in. Threaded into
+/// `build_item` so newsletter posts can render the channel's name +
+/// avatar (the per-message sender for a newsletter is always the
+/// channel itself; resolving it through the contacts table dead-ends
+/// at "Unknown" because newsletters aren't contacts).
+#[derive(Default, Clone)]
+pub struct ChatContext {
+    pub kind: String,
+    pub display_name: Option<String>,
+    pub avatar_path: Option<String>,
+}
+
 /// Build a `MessageItem` from a row, hydrating avatar + media state from
 /// the shared inventories and emitting fetch requests as needed via
 /// `request_fetch_avatar`.
@@ -27,9 +39,14 @@ pub fn build_item(
     avatars: &AvatarInventory,
     media: &MediaInventory,
     user_jid: Option<&str>,
+    chat: &ChatContext,
     request_fetch_avatar: &mut impl FnMut(String),
 ) -> MessageItem {
     let mut item = MessageItem::from_row(row, is_collapsed);
+
+    item.chat_kind = chat.kind.clone();
+    item.chat_display_name = chat.display_name.clone();
+    item.chat_avatar_path = chat.avatar_path.clone();
 
     // For from_me messages the DB stores sender_contact_id=NULL (we
     // never auto-register a contact for the signed-in user), so the

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -76,4 +77,57 @@ func (c *Client) refreshGroup(jid types.JID) {
 		return
 	}
 	emitGroups(c.accountID, []GroupData{groupFromInfo(info)})
+}
+
+// refreshChat is the IPC entry point for `Cmd::RefreshChat`. Picks
+// the right whatsmeow API based on the JID's server: newsletter
+// metadata for channels, group info for groups. Anything else is a
+// no-op (DMs already resolve via the contacts pipeline; status@broadcast
+// has no metadata to fetch).
+func refreshChat(mgr *Manager, accountID, chatJIDRaw string) {
+	mgr.mu.Lock()
+	c, ok := mgr.clients[accountID]
+	mgr.mu.Unlock()
+	if !ok {
+		return
+	}
+	chatJID, err := types.ParseJID(chatJIDRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"[refresh] bad JID %q: %v\n", chatJIDRaw, err)
+		return
+	}
+	switch chatJID.Server {
+	case types.NewsletterServer:
+		c.refreshNewsletter(chatJID)
+	case types.GroupServer:
+		c.refreshGroup(chatJID)
+	default:
+		// DMs and status — caller should be using avatar fetches /
+		// contact resolution instead.
+		fmt.Fprintf(os.Stderr,
+			"[refresh] %s has no metadata endpoint; ignoring\n",
+			chatJID.String(),
+		)
+	}
+}
+
+// refreshNewsletter pulls a single newsletter's metadata via the
+// whatsmeow GraphQL endpoint and emits a GroupsUpsert with the
+// resolved name. Fired from `onHistorySync` for any newsletter chat
+// we don't already have a `display_name` for — `GetSubscribedNewsletters`
+// (which `fetchAllNewsletters` already calls) misses channels the user
+// only follows but isn't subscribed to push from.
+func (c *Client) refreshNewsletter(jid types.JID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	info, err := c.wa.GetNewsletterInfo(ctx, jid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"[newsletter] GetNewsletterInfo(%s): %v\n",
+			jid.String(), err,
+		)
+		return
+	}
+	emitGroups(c.accountID, []GroupData{newsletterToGroup(info)})
 }

@@ -10,4 +10,5 @@ mod lightbox;
 
 pub use css::MESSAGE_ROW_CSS;
 pub use factory::{MessageBubble, MessageBubbleInput, MessageBubbleOut};
+pub use image::load_image_paintable;
 pub use item::MessageItem;

@@ -36,6 +36,16 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 		if err != nil {
 			continue
 		}
+		// Newsletters that arrive via HistorySync but aren't in
+		// `GetSubscribedNewsletters` come back without a name on
+		// our side — the row falls back to its raw JID. Trigger an
+		// async metadata fetch so the next ChatsUpserted carries the
+		// resolved channel name + description. Idempotent — the
+		// dedupSet keeps us from re-querying the same JID for every
+		// chunk.
+		if chatJID.Server == types.NewsletterServer && c.queueNewsletterRefresh(chatJID) {
+			go c.refreshNewsletter(chatJID)
+		}
 		// `Pinned` on a Conversation is the unix-second when the user
 		// pinned it (0 = not pinned). We only care about the boolean
 		// flip; the timestamp would let us preserve pin order but

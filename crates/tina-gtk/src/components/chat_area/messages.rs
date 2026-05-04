@@ -2,11 +2,12 @@
 
 use tina_db::MessageRow;
 
-use crate::inventory::{AvatarInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory};
 
 pub struct ChatAreaInit {
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
+    pub chats: ChatInventory,
 }
 
 #[derive(Debug)]

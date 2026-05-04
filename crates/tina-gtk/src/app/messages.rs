@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tina_db::{ChatRow, MessageRow};
+use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 pub struct AppInit {
     pub nanachi_dir: PathBuf,
@@ -49,6 +49,7 @@ pub enum AppMsg {
     Disconnected(String),
     LoggedOut,
     ChatsUpserted(Vec<ChatRow>),
+    StatusAuthorsUpserted(Vec<StatusAuthorRow>),
     MessagesAppended {
         chat_id: String,
         messages: Vec<MessageRow>,
@@ -115,6 +116,20 @@ pub enum AppMsg {
     RequestRepair,
     RequestPreferences,
     RequestLogout,
+    RequestLoadStatuses,
+    /// Triggered by `ChatInventory` when it sees a chat without a
+    /// resolved display name. Routed to `Cmd::RefreshChat`.
+    RequestRefreshChat(String),
+    OpenStatusAuthor {
+        sender_jid: String,
+        name: String,
+    },
+    /// Worker pushed back the timeline of one author's status posts;
+    /// the dispatcher presents the stories viewer dialog with them.
+    ShowStoriesViewer {
+        name: String,
+        posts: Vec<MessageRow>,
+    },
     SetChatPinned { chat_id: String, pinned: bool },
 
     /// Settings dialog finished applying the user's choice.

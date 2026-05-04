@@ -4,7 +4,7 @@
 // state plumbing than the raw factory + qdata approach), and the
 // repair progress bar at the bottom.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -14,8 +14,9 @@ use relm4::typed_view::list::TypedListView;
 use crate::components::chat_row::{ChatRowItem, install_context_menu_sender};
 use crate::components::profile_menu::ProfileMenu;
 
-use super::messages::{SidebarInit, SidebarInput, SidebarOutput};
+use super::messages::{ChatFilter, SidebarInit, SidebarInput, SidebarOutput};
 use super::model::Sidebar;
+use super::status_row::StatusAuthorItem;
 
 #[relm4::component(pub)]
 impl SimpleComponent for Sidebar {
@@ -65,6 +66,64 @@ impl SimpleComponent for Sidebar {
             set_content = &gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
 
+                // Filter tab strip — All / Groups / Channels / Status.
+                // `linked` collapses the toggle buttons into a single
+                // segmented control. `set_active(true)` on init for
+                // `All` makes it the default; the toggled handler
+                // ignores fires from buttons that are turning OFF
+                // (released by the new selection) so we don't get a
+                // double-fire.
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_homogeneous: true,
+                    set_margin_top: 6,
+                    set_margin_bottom: 6,
+                    set_margin_start: 12,
+                    set_margin_end: 12,
+                    add_css_class: "linked",
+
+                    #[name(filter_btn_all)]
+                    gtk::ToggleButton {
+                        set_label: "All",
+                        set_active: true,
+                        connect_toggled[sender] => move |b| {
+                            if b.is_active() {
+                                sender.input(SidebarInput::SetChatFilter(ChatFilter::All));
+                            }
+                        },
+                    },
+                    #[name(filter_btn_groups)]
+                    gtk::ToggleButton {
+                        set_label: "Groups",
+                        set_group: Some(&filter_btn_all),
+                        connect_toggled[sender] => move |b| {
+                            if b.is_active() {
+                                sender.input(SidebarInput::SetChatFilter(ChatFilter::Groups));
+                            }
+                        },
+                    },
+                    #[name(filter_btn_channels)]
+                    gtk::ToggleButton {
+                        set_label: "Channels",
+                        set_group: Some(&filter_btn_all),
+                        connect_toggled[sender] => move |b| {
+                            if b.is_active() {
+                                sender.input(SidebarInput::SetChatFilter(ChatFilter::Channels));
+                            }
+                        },
+                    },
+                    #[name(filter_btn_status)]
+                    gtk::ToggleButton {
+                        set_label: "Status",
+                        set_group: Some(&filter_btn_all),
+                        connect_toggled[sender] => move |b| {
+                            if b.is_active() {
+                                sender.input(SidebarInput::SetChatFilter(ChatFilter::Status));
+                            }
+                        },
+                    },
+                },
+
                 gtk::SearchEntry {
                     set_margin_top: 6,
                     set_margin_bottom: 6,
@@ -76,15 +135,67 @@ impl SimpleComponent for Sidebar {
                     },
                 },
 
-                #[name(scroll)]
-                gtk::ScrolledWindow {
+                // Stack switches between the regular chat list and the
+                // status authors list based on the active tab. Both
+                // views are scrolled, so the Stack lives directly
+                // inside the sidebar Box with `vexpand: true` to take
+                // all leftover space above the repair affordance.
+                gtk::Stack {
                     set_vexpand: true,
-                    set_hscrollbar_policy: gtk::PolicyType::Never,
+                    set_transition_type: gtk::StackTransitionType::Crossfade,
 
-                    #[local_ref]
-                    list_view -> gtk::ListView {
-                        add_css_class: "navigation-sidebar",
-                        set_single_click_activate: true,
+                    #[name(scroll)]
+                    add_named[Some("chats")] = &gtk::ScrolledWindow {
+                        set_vexpand: true,
+                        set_hscrollbar_policy: gtk::PolicyType::Never,
+
+                        #[local_ref]
+                        list_view -> gtk::ListView {
+                            add_css_class: "navigation-sidebar",
+                            set_single_click_activate: true,
+                        },
+                    },
+
+                    // Status page is itself a Stack so we can swap to
+                    // an empty-state placeholder when the author list
+                    // is empty (no recent posts from contacts). Saves
+                    // the user from staring at a blank list.
+                    add_named[Some("status")] = &gtk::Stack {
+                        #[watch]
+                        set_visible_child_name: if model.status_list.len() == 0 {
+                            "empty"
+                        } else {
+                            "list"
+                        },
+
+                        add_named[Some("list")] = &gtk::ScrolledWindow {
+                            set_vexpand: true,
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
+
+                            #[local_ref]
+                            status_list_view -> gtk::ListView {
+                                add_css_class: "navigation-sidebar",
+                                set_single_click_activate: true,
+                            },
+                        },
+
+                        add_named[Some("empty")] = &adw::StatusPage {
+                            set_icon_name: Some("loop-symbolic"),
+                            set_title: "No status updates",
+                            set_description: Some(
+                                "Recent status posts from your contacts will show up here."
+                            ),
+                            set_vexpand: true,
+                        },
+                    },
+
+                    #[watch]
+                    set_visible_child_name: if model.chat_filter.get()
+                        == ChatFilter::Status
+                    {
+                        "status"
+                    } else {
+                        "chats"
                     },
                 },
 
@@ -129,9 +240,19 @@ impl SimpleComponent for Sidebar {
     ) -> ComponentParts<Self> {
         let mut list: TypedListView<ChatRowItem, gtk::SingleSelection> =
             TypedListView::with_sorting();
+        let status_list: TypedListView<StatusAuthorItem, gtk::SingleSelection> =
+            TypedListView::with_sorting();
+        // Status list shouldn't auto-select either — same reason as
+        // the chat list (sort churn drags the view).
+        status_list.selection_model.set_autoselect(false);
+        status_list.selection_model.set_can_unselect(true);
+        status_list
+            .selection_model
+            .set_selected(gtk::INVALID_LIST_POSITION);
 
         let search_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
-        wire_search_filter(&mut list, search_query.clone());
+        let chat_filter: Rc<Cell<ChatFilter>> = Rc::new(Cell::new(ChatFilter::All));
+        wire_search_filter(&mut list, search_query.clone(), chat_filter.clone());
 
         // No auto-selection: without this the SingleSelection picks the
         // first item the moment one arrives, and the ListView promptly
@@ -142,6 +263,7 @@ impl SimpleComponent for Sidebar {
         list.selection_model.set_selected(gtk::INVALID_LIST_POSITION);
 
         wire_activate(&list.view, sender.input_sender());
+        wire_status_activate(&status_list.view, sender.input_sender());
         install_context_menu_sender(sender.input_sender().clone());
 
         let profile = ProfileMenu::builder()
@@ -150,7 +272,9 @@ impl SimpleComponent for Sidebar {
 
         let model = Sidebar {
             list,
+            status_list,
             search_query,
+            chat_filter,
             scroll: None,
             profile,
             repairing: false,
@@ -163,9 +287,11 @@ impl SimpleComponent for Sidebar {
             history_sync_type: String::new(),
             user_jid: None,
             avatars: init.avatars,
+            chats: init.chats,
         };
 
         let list_view = &model.list.view;
+        let status_list_view = &model.status_list.view;
         let widgets = view_output!();
         let mut model = model;
         model.scroll = Some(widgets.scroll.clone());
@@ -201,8 +327,15 @@ impl SimpleComponent for Sidebar {
 fn wire_search_filter(
     list: &mut TypedListView<ChatRowItem, gtk::SingleSelection>,
     query: Rc<RefCell<String>>,
+    filter: Rc<Cell<ChatFilter>>,
 ) {
     list.add_filter(move |item: &ChatRowItem| {
+        // Tab filter first — cheaper than the lowercase/contains
+        // search string match, and short-circuits early on tabs that
+        // hide whole categories (e.g. Status under "All").
+        if !filter.get().matches(&item.kind) {
+            return false;
+        }
         let needle = query.borrow();
         if needle.is_empty() {
             return true;
@@ -218,5 +351,12 @@ fn wire_activate(view: &gtk::ListView, input: &relm4::Sender<SidebarInput>) {
     let s = input.clone();
     view.connect_activate(move |_, pos| {
         let _ = s.send(SidebarInput::RowActivated(pos));
+    });
+}
+
+fn wire_status_activate(view: &gtk::ListView, input: &relm4::Sender<SidebarInput>) {
+    let s = input.clone();
+    view.connect_activate(move |_, pos| {
+        let _ = s.send(SidebarInput::StatusAuthorActivated(pos));
     });
 }

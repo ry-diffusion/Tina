@@ -1,4 +1,4 @@
-use tina_db::{ChatRow, MessageRow};
+use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
@@ -17,6 +17,13 @@ pub enum WorkerEvent {
 
     /// Snapshot completo (lista inicial) ou parcial (após batch) de chats.
     ChatsUpserted { account_id: String, rows: Vec<ChatRow> },
+
+    /// One row per contact who has posted to `status@broadcast`.
+    /// Drives the Status tab's vertical author list.
+    StatusAuthorsUpserted {
+        account_id: String,
+        rows: Vec<StatusAuthorRow>,
+    },
 
     /// Mensagens novas para um chat com tab aberta na UI (registrado via
     /// `add_open_chat`). Chats fechados não geram este evento durante sync —

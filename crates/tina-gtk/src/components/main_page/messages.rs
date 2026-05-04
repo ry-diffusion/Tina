@@ -1,17 +1,18 @@
 // Init / Input / Output for the in-app page.
 
-use tina_db::{ChatRow, MessageRow};
+use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 use crate::app::ConnectionStatus;
 use crate::components::chat_area::ChatAreaOutput;
 use crate::components::sidebar::SidebarOutput;
-use crate::inventory::{AvatarInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory};
 use crate::service::ServiceHandle;
 
 pub struct MainInit {
     pub service: ServiceHandle,
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
+    pub chats: ChatInventory,
 }
 
 #[derive(Debug)]
@@ -23,6 +24,7 @@ pub enum MainInput {
         push_name: Option<String>,
     },
     ChatsUpserted(Vec<ChatRow>),
+    StatusAuthorsUpserted(Vec<StatusAuthorRow>),
     ChatOpened {
         chat_id: Option<String>,
         name: String,
@@ -72,6 +74,11 @@ pub enum MainOutput {
     SendText { chat_id: String, text: String },
     RequestPreferences,
     RequestLogout,
+    RequestLoadStatuses,
+    OpenStatusAuthor {
+        sender_jid: String,
+        name: String,
+    },
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
     RequestFetchAvatar(String),

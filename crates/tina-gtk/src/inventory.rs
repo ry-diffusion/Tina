@@ -259,3 +259,119 @@ impl MediaInventory {
         );
     }
 }
+
+// ============================================================================
+// ChatInventory: chat_id → resolved metadata + auto-refresh on miss
+// ============================================================================
+
+#[derive(Clone, Default, Debug)]
+pub struct ChatMeta {
+    pub kind: String,
+    pub display_name: Option<String>,
+    pub avatar_path: Option<String>,
+}
+
+#[derive(Default)]
+struct ChatInner {
+    metas: HashMap<String, ChatMeta>,
+    /// JIDs we've already asked the worker to refresh. Without
+    /// this, every chat-tab open or every list-row bind would queue
+    /// another fetch — the deepwiki notes whatsmeow's
+    /// `GetNewsletterInfo` is a real GraphQL roundtrip, not free.
+    refresh_requested: HashSet<String>,
+}
+
+/// Cache + auto-refresh for chat-level metadata (display name,
+/// avatar). Indexed by raw chat_id (the same key the DB uses). On
+/// miss the inventory pings a sender that the AppModel routes back
+/// to the worker (`Cmd::RefreshChat`), so callers can stay
+/// synchronous without thinking about IPC.
+///
+/// Inspired by the way "Amnesia" pulls missing data on demand:
+/// every render lazily fills in what it doesn't have, and the next
+/// frame already has the answer. The inventory dedupes the requests
+/// per chat_id so a 50-row sidebar bind doesn't fan out 50 IPCs.
+#[derive(Clone, Default)]
+pub struct ChatInventory {
+    inner: Rc<RefCell<ChatInner>>,
+    /// Out-channel for missing-data fetches. Wired by the AppModel
+    /// to `AppMsg::RequestRefreshChat`. None during tests / before
+    /// the worker is up; misses just stay misses.
+    on_miss: Rc<RefCell<Option<Box<dyn Fn(String)>>>>,
+}
+
+impl ChatInventory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_miss_handler<F: Fn(String) + 'static>(&self, f: F) {
+        *self.on_miss.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Apply a snapshot from `ChatsUpserted` so subsequent renders
+    /// hit the cache without firing a refresh.
+    pub fn ingest_row(&self, chat_id: &str, kind: &str, name: &str, avatar: Option<&str>) {
+        let resolved_name = if name.is_empty() {
+            None
+        } else {
+            // Treat raw JIDs as "no name yet" — the cache should
+            // hold real display names only, otherwise miss-detection
+            // never fires for a chat whose row already echoes its
+            // own JID back.
+            if matches!(crate::wa_id::WaIdentity::parse(name), crate::wa_id::WaIdentity::Unknown(_)) {
+                Some(name.to_string())
+            } else if name == chat_id {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        };
+        let meta = ChatMeta {
+            kind: kind.to_string(),
+            display_name: resolved_name,
+            avatar_path: avatar.map(|s| s.to_string()),
+        };
+        self.inner
+            .borrow_mut()
+            .metas
+            .insert(chat_id.to_string(), meta);
+    }
+
+    #[allow(dead_code)] // consumed by future render-time accessors
+    pub fn get(&self, chat_id: &str) -> Option<ChatMeta> {
+        self.inner.borrow().metas.get(chat_id).cloned()
+    }
+
+    /// Returns the cached meta, OR fires a refresh request and
+    /// returns whatever stale value we have (possibly `None`). The
+    /// refresh is deduped per chat_id so calling this on every row
+    /// bind is cheap.
+    #[allow(dead_code)] // consumed by future render-time accessors
+    pub fn get_or_request(&self, chat_id: &str) -> Option<ChatMeta> {
+        let cached = self.get(chat_id);
+        let needs_refresh = match cached.as_ref() {
+            None => true,
+            Some(m) => m.display_name.is_none(),
+        };
+        if needs_refresh {
+            self.request_refresh(chat_id);
+        }
+        cached
+    }
+
+    /// Fire a refresh, deduped per chat_id. Idempotent; safe to call
+    /// from binding paths that run on every scroll.
+    pub fn request_refresh(&self, chat_id: &str) {
+        let already = {
+            let mut inner = self.inner.borrow_mut();
+            !inner.refresh_requested.insert(chat_id.to_string())
+        };
+        if already {
+            return;
+        }
+        if let Some(cb) = self.on_miss.borrow().as_ref() {
+            cb(chat_id.to_string());
+        }
+    }
+}

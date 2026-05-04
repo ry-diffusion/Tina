@@ -45,6 +45,39 @@ impl ChatTab {
         &self.chat_id
     }
 
+    /// True for chat kinds the protocol won't let us send to:
+    /// newsletters / channels (read-only by spec — only the channel
+    /// owner publishes), the `status@broadcast` pseudo-chat (status
+    /// posts go through a different API), and broadcast lists.
+    pub(super) fn is_read_only(&self) -> bool {
+        matches!(self.kind.as_str(), "newsletter" | "status" | "broadcast")
+    }
+
+    pub(super) fn read_only_label(&self) -> &'static str {
+        match self.kind.as_str() {
+            "newsletter" => "You can't reply to channels.",
+            "status" => "Status updates can't be answered here.",
+            "broadcast" => "Broadcast lists are read-only.",
+            _ => "Read-only.",
+        }
+    }
+
+    /// Bundle the chat's kind + display name + avatar path for the
+    /// per-row builder. The avatar path is pulled from the inventory
+    /// because the chat's own row already lives in the sidebar list
+    /// and we don't otherwise track it on `ChatTab`.
+    pub(super) fn chat_context(&self) -> super::build::ChatContext {
+        super::build::ChatContext {
+            kind: self.kind.clone(),
+            display_name: if self.name.is_empty() {
+                None
+            } else {
+                Some(self.name.clone())
+            },
+            avatar_path: self.avatars.get(&self.chat_id),
+        }
+    }
+
     /// `(sender_key, timestamp)` for the trailing item in the factory.
     /// Used to seed collapse decisions for incoming Append batches and
     /// optimistic Send echoes — the factory is the single source of

@@ -100,16 +100,9 @@ impl FactoryComponent for MessageBubble {
                         set_visible: !self.item.is_collapsed,
                         set_size: AVATAR_SIZE,
                         set_show_initials: true,
-                        set_text: Some(if self.item.from_me {
-                            "You"
-                        } else if self.item.sender_name.is_empty() {
-                            "?"
-                        } else {
-                            self.item.sender_name.as_str()
-                        }),
+                        set_text: Some(self.item.display_sender_name()),
                         #[watch]
-                        set_custom_image: self.item.sender_avatar_path
-                            .as_deref()
+                        set_custom_image: self.item.display_avatar_path()
                             .and_then(|p| gtk::gdk::Texture::from_filename(p).ok())
                             .map(|t| t.upcast::<gtk::gdk::Paintable>())
                             .as_ref(),
@@ -425,10 +418,17 @@ impl FactoryComponent for MessageBubble {
                         },
                     },
 
-                    // Text / caption.
+                    // Text / caption — rendered as Pango markup so
+                    // WhatsApp's `*bold*`, `_italic_`, `~strike~`,
+                    // backtick code spans, and bare URLs come through
+                    // looking like the official client. Conversion
+                    // lives in `format::wa_markdown_to_pango`.
                     gtk::Label {
                         set_visible: !self.item.is_media() || self.item.caption().is_some(),
-                        set_label: self.item.caption().unwrap_or(&self.item.content),
+                        set_use_markup: true,
+                        set_markup: &super::format::wa_markdown_to_pango(
+                            self.item.caption().unwrap_or(&self.item.content),
+                        ),
                         set_xalign: 0.0,
                         set_wrap: true,
                         set_wrap_mode: gtk::pango::WrapMode::WordChar,

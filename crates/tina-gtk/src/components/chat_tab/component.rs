@@ -48,28 +48,63 @@ impl SimpleComponent for ChatTab {
 
             gtk::Separator {},
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                set_margin_top: 6,
-                set_margin_bottom: 6,
-                set_margin_start: 12,
-                set_margin_end: 12,
-                set_spacing: 6,
-
-                gtk::Entry {
-                    set_buffer: &model.composer_buffer,
-                    set_hexpand: true,
-                    set_placeholder_text: Some("Message…"),
-                    connect_activate => ChatTabInput::Send,
+            // Composer / read-only banner — newsletters and the
+            // status@broadcast pseudo-chat don't accept replies, so we
+            // swap the Entry+Send pair for a centred dim label rather
+            // than show a deceptively typeable composer that errors
+            // out on send.
+            gtk::Stack {
+                set_transition_type: gtk::StackTransitionType::Crossfade,
+                #[watch]
+                set_visible_child_name: if model.is_read_only() {
+                    "readonly"
+                } else {
+                    "compose"
                 },
 
-                gtk::Button {
-                    // Bundled from relm4-icons (icon-development-kit set);
-                    // see crates/tina-gtk/icons/ + icons.toml.
-                    set_icon_name: "curved-arrow-left-symbolic",
-                    set_tooltip_text: Some("Send"),
-                    add_css_class: "suggested-action",
-                    connect_clicked => ChatTabInput::Send,
+                add_named[Some("compose")] = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_margin_top: 6,
+                    set_margin_bottom: 6,
+                    set_margin_start: 12,
+                    set_margin_end: 12,
+                    set_spacing: 6,
+
+                    gtk::Entry {
+                        set_buffer: &model.composer_buffer,
+                        set_hexpand: true,
+                        set_placeholder_text: Some("Message…"),
+                        connect_activate => ChatTabInput::Send,
+                    },
+
+                    gtk::Button {
+                        // Bundled from relm4-icons (icon-development-kit set);
+                        // see crates/tina-gtk/icons/ + icons.toml.
+                        set_icon_name: "curved-arrow-left-symbolic",
+                        set_tooltip_text: Some("Send"),
+                        add_css_class: "suggested-action",
+                        connect_clicked => ChatTabInput::Send,
+                    },
+                },
+
+                add_named[Some("readonly")] = &gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_halign: gtk::Align::Center,
+                    set_margin_top: 12,
+                    set_margin_bottom: 12,
+                    set_margin_start: 12,
+                    set_margin_end: 12,
+                    set_spacing: 8,
+
+                    gtk::Image {
+                        set_icon_name: Some("channel-secure-symbolic"),
+                        add_css_class: "dim-label",
+                    },
+                    gtk::Label {
+                        #[watch]
+                        set_label: model.read_only_label(),
+                        add_css_class: "dim-label",
+                    },
                 },
             },
         }
@@ -95,6 +130,15 @@ impl SimpleComponent for ChatTab {
         let mut last_sender: Option<String> = None;
         let mut last_ts: Option<i64> = None;
         let mut avatar_fetches: Vec<String> = Vec::new();
+        let init_chat_ctx = super::build::ChatContext {
+            kind: init.kind.clone(),
+            display_name: if init.name.is_empty() {
+                None
+            } else {
+                Some(init.name.clone())
+            },
+            avatar_path: init.avatars.get(&init.chat_id),
+        };
         {
             let mut guard = messages.guard();
             for row in &init.initial {
@@ -105,6 +149,7 @@ impl SimpleComponent for ChatTab {
                     &init.avatars,
                     &init.media,
                     init.user_jid.as_deref(),
+                    &init_chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
                 guard.push_back(item);

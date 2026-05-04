@@ -50,6 +50,9 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
         WorkerEvent::ChatsUpserted { rows, .. } => {
             let _ = app.send(AppMsg::ChatsUpserted(rows));
         }
+        WorkerEvent::StatusAuthorsUpserted { rows, .. } => {
+            let _ = app.send(AppMsg::StatusAuthorsUpserted(rows));
+        }
         WorkerEvent::MessagesAppended {
             chat_id, messages, ..
         } => {
