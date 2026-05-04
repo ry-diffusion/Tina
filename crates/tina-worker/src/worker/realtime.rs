@@ -92,10 +92,37 @@ pub(super) async fn handle_realtime_event(
         IpcEvent::ChatsPinUpdate { account_id, items } => {
             handle_chats_pin_update(db, event_tx, account_id, items).await;
         }
+        IpcEvent::ChatsReadHint { account_id, items } => {
+            handle_chats_read_hint(db, event_tx, account_id, items).await;
+        }
         IpcEvent::Error { account_id, error } => {
             let _ = event_tx
                 .send(WorkerEvent::Error { account_id, error })
                 .await;
+        }
+        IpcEvent::Notice { account_id, message } => {
+            let _ = event_tx
+                .send(WorkerEvent::Notice { account_id, message })
+                .await;
+        }
+        IpcEvent::ReceiptUpdate {
+            account_id,
+            message_ids,
+            status,
+        } => {
+            let updated = db
+                .update_delivery_status(&account_id, &message_ids, &status)
+                .await
+                .unwrap_or(0);
+            if updated > 0 {
+                let _ = event_tx
+                    .send(WorkerEvent::ReceiptUpdate {
+                        account_id,
+                        message_ids,
+                        status,
+                    })
+                    .await;
+            }
         }
         IpcEvent::MediaDownloadProgress {
             account_id,
@@ -256,6 +283,39 @@ async fn handle_chats_pin_update(
         }
         Ok(_) => {}
         Err(e) => tracing::error!("get_chat_rows after pin update: {e}"),
+    }
+}
+
+async fn handle_chats_read_hint(
+    db: &TinaDb,
+    event_tx: &mpsc::Sender<WorkerEvent>,
+    account_id: String,
+    items: Vec<tina_core::ChatReadHintItem>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let mut affected: Vec<String> = Vec::with_capacity(items.len());
+    for item in &items {
+        let raw = item.chat_jid.raw();
+        if let Err(e) = db
+            .set_chat_last_read_ts(&account_id, raw, item.last_read_ts)
+            .await
+        {
+            tracing::debug!(chat = %raw, "set_chat_last_read_ts skipped: {e}");
+            continue;
+        }
+        affected.push(raw.to_string());
+    }
+    if affected.is_empty() {
+        return;
+    }
+    if let Ok(rows) = db.get_chat_rows(&account_id, &affected).await
+        && !rows.is_empty()
+    {
+        let _ = event_tx
+            .send(WorkerEvent::ChatsUpserted { account_id, rows })
+            .await;
     }
 }
 

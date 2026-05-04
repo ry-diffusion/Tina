@@ -122,6 +122,23 @@ impl AppModel {
             AppMsg::SendText { chat_id, text } => {
                 self.service.handle.send(Cmd::SendText { chat_id, text });
             }
+            AppMsg::SendMedia {
+                chat_id,
+                kind,
+                path,
+                caption,
+                mimetype,
+                filename,
+            } => {
+                self.service.handle.send(Cmd::SendMedia {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                });
+            }
             AppMsg::RequestRepair => {
                 // Close the Preferences dialog when the action fires —
                 // the user kicked off a long-running command from
@@ -129,6 +146,35 @@ impl AppModel {
                 // is what they should be watching now.
                 self.settings.widget().close();
                 self.service.handle.send(Cmd::Repair);
+            }
+            AppMsg::RequestStickers { chat_id } => {
+                self.service.handle.send(Cmd::LoadStickers {
+                    chat_id,
+                    limit: 64,
+                });
+            }
+            AppMsg::MarkChatRead {
+                chat_id,
+                sender_jid,
+                message_ids,
+            } => {
+                self.service.handle.send(Cmd::MarkChatRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                });
+            }
+            AppMsg::ReceiptUpdate { message_ids, status } => {
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::ReceiptUpdate { message_ids, status });
+            }
+            AppMsg::StickersLoaded { chat_id, items } => {
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::StickersLoaded { chat_id, items });
             }
             AppMsg::RequestPreferences => self.handle_open_preferences(),
             AppMsg::RequestLoadStatuses => self.service.handle.send(Cmd::LoadStatuses),

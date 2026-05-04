@@ -51,6 +51,14 @@ impl TinaDb {
             tally_inserted(messages, &pending, &existing_ids, active_chat);
 
         flush_chat_last_message(&mut tx, account_id, &latest).await?;
+        // Slide the read-watermark of the active chat forward so the
+        // messages the user is currently looking at don't bump the
+        // unread badge as they arrive. Other chats' watermarks stay
+        // put — the auto-derived COUNT in `chat_row_select_clause`
+        // picks the new rows up as unread.
+        if let Some(active) = active_chat {
+            advance_active_chat_read_ts(&mut tx, account_id, active, &latest).await?;
+        }
 
         tx.commit().await?;
 
@@ -275,6 +283,35 @@ fn tally_inserted(
             }
     }
     (affected_chats, active_inserted, new_per_chat)
+}
+
+/// Bump `chats.last_read_ts` for the active chat to whatever the
+/// newest message in this batch carries. Any incoming row added in
+/// the same transaction therefore sits on or below the watermark
+/// and gets discounted by the unread query — matches WhatsApp Web's
+/// "messages typed-and-read in real time don't reappear as unread".
+async fn advance_active_chat_read_ts(
+    tx: &mut Transaction<'_, Sqlite>,
+    account_id: &str,
+    active_chat: &str,
+    latest: &HashMap<String, Latest<'_>>,
+) -> Result<()> {
+    let Some(l) = latest.get(active_chat) else {
+        return Ok(());
+    };
+    sqlx::query(
+        r#"UPDATE chats
+           SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?),
+               updated_at   = ?
+           WHERE account_id = ? AND chat_id = ?"#,
+    )
+    .bind(l.ts)
+    .bind(now_ts())
+    .bind(account_id)
+    .bind(active_chat)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 async fn flush_chat_last_message(

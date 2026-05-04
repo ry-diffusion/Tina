@@ -175,8 +175,8 @@ fn build_bottom_row(body: &gtk::Box) -> (gtk::Label, gtk::Image, gtk::Label) {
     bottom.append(&pin_icon);
 
     let badge = gtk::Label::new(None);
-    badge.add_css_class("accent");
-    badge.add_css_class("caption-heading");
+    badge.add_css_class("tina-unread-badge");
+    badge.set_valign(gtk::Align::Center);
     badge.set_visible(false);
     bottom.append(&badge);
 

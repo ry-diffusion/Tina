@@ -6,7 +6,12 @@
 /// - v4: avatar_path em chats e contacts (cache local de profile pics).
 /// - v5: last_message_type + last_message_duration_secs em chats (preview).
 /// - v6: media_thumbnail BLOB em messages (inline preview JPEG/PNG).
-pub const SCHEMA_VERSION: i64 = 7;
+/// - v7: quoted_* + mentions_json em messages.
+/// - v8: delivery_status em messages (pending/sent/delivered/read/played/failed).
+/// - v9: last_read_ts em chats (auto-detect unread count via
+///       COUNT(messages WHERE timestamp > last_read_ts), evita drift
+///       do contador persistido).
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -40,6 +45,12 @@ CREATE TABLE IF NOT EXISTS chats (
     last_message_type TEXT,                          -- 'text','image','audio','video','sticker','document'
     last_message_duration_secs INTEGER,              -- preenchido só pra audio/video
     unread_count INTEGER NOT NULL DEFAULT 0,
+    -- Timestamp watermark used to derive the unread badge. Every
+    -- incoming message with `timestamp > last_read_ts` counts as
+    -- unread. Opening the chat (or sending a Read receipt) bumps
+    -- this to the chat's `last_message_ts`. NULL = "never opened",
+    -- which makes the chat unread until first interaction.
+    last_read_ts INTEGER,
     pinned INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     muted_until INTEGER,
@@ -140,6 +151,16 @@ CREATE TABLE IF NOT EXISTS messages (
     -- (`proto.contextInfo.mentionedJID`). Renderer replaces each
     -- `@<digits>` substring with the resolved contact name.
     mentions_json TEXT,
+    -- Outgoing-message delivery status. One of:
+    --   pending   — local optimistic echo, not acked by server yet
+    --   sent      — server accepted; default for history-sync rows
+    --   delivered — peer's device received
+    --   read      — peer opened it
+    --   played    — voice note: peer pressed play
+    --   failed    — send failed (rare; reserved for future)
+    -- Incoming rows are inserted as 'sent' but the field is never read
+    -- for them; only `from_me=1` rows render a status icon.
+    delivery_status TEXT NOT NULL DEFAULT 'sent',
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(account_id, message_id),
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
@@ -178,6 +199,20 @@ ALTER TABLE messages ADD COLUMN quoted_message_id TEXT;
 ALTER TABLE messages ADD COLUMN quoted_sender_id TEXT;
 ALTER TABLE messages ADD COLUMN quoted_preview TEXT;
 ALTER TABLE messages ADD COLUMN mentions_json TEXT;
+"#;
+
+pub const MIGRATION_V7_TO_V8: &str = r#"
+ALTER TABLE messages ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'sent';
+"#;
+
+pub const MIGRATION_V8_TO_V9: &str = r#"
+ALTER TABLE chats ADD COLUMN last_read_ts INTEGER;
+-- Seed the watermark for already-known chats. Without this every
+-- chat would suddenly show its full history-sync count as unread on
+-- first launch after upgrade. The seed assumes "everything we have
+-- so far has been seen on your phone" — same assumption WhatsApp
+-- Web makes when you pair a fresh device.
+UPDATE chats SET last_read_ts = COALESCE(last_message_ts, 0);
 "#;
 
 /// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda

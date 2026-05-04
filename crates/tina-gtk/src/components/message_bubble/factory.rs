@@ -66,6 +66,41 @@ pub enum MessageBubbleInput {
     /// per-process fd limit ("Too many open files") on chats with many
     /// voice notes.
     ExpandMedia,
+    /// Receipt-driven flip of the delivery-status icon. Only
+    /// honoured for from_me rows; ignored otherwise.
+    SetDeliveryStatus(String),
+}
+
+/// Maps wire-level status strings to symbolic icons. Names match
+/// what `build.rs` bundles via relm4-icons-build — we don't fall
+/// back on the host icon theme so the bubble looks identical on
+/// minimal Adwaita / Breeze / etc. installations.
+pub(super) fn delivery_icon_name(status: &str) -> &'static str {
+    match status {
+        // Spinner-style icon while we're waiting for server ack.
+        "pending" => "clock-loader-40-symbolic",
+        // Server ack but peer device hasn't received yet — single
+        // check (WhatsApp's "✓").
+        "sent" | "server_ack" => "check-symbolic",
+        // Peer device got it — double check ("✓✓"). Same icon as
+        // `read`; the difference shows up via the CSS color class
+        // (`tina-status-read` paints the read variant blue).
+        "delivered" => "done-all-symbolic",
+        // Peer opened the chat / pressed play — blue ✓✓.
+        "read" | "played" => "done-all-symbolic",
+        "failed" => "warning-symbolic",
+        _ => "clock-loader-40-symbolic",
+    }
+}
+
+pub(super) fn delivery_css_class(status: &str) -> &'static str {
+    match status {
+        "read" | "played" => "tina-status-read",
+        "delivered" => "tina-status-delivered",
+        "pending" => "tina-status-pending",
+        "failed" => "tina-status-failed",
+        _ => "tina-status-sent",
+    }
 }
 
 pub struct MessageBubble {
@@ -152,14 +187,42 @@ impl FactoryComponent for MessageBubble {
                     set_spacing: 2,
                     set_margin_end: 12,
 
-                    gtk::Label {
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 6,
                         set_visible: !self.item.is_collapsed,
-                        set_use_markup: true,
-                        set_label: &self.item.header_markup(),
-                        set_xalign: 0.0,
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
-                        set_single_line_mode: true,
-                        add_css_class: "message-cozy-header",
+
+                        gtk::Label {
+                            set_use_markup: true,
+                            set_label: &self.item.header_markup(),
+                            set_xalign: 0.0,
+                            set_hexpand: true,
+                            set_ellipsize: gtk::pango::EllipsizeMode::End,
+                            set_single_line_mode: true,
+                            add_css_class: "message-cozy-header",
+                        },
+
+                        // Delivery-status icon (from_me only). The
+                        // icon swaps via #[watch] when the bubble
+                        // receives a SetDeliveryStatus input from the
+                        // chat tab.
+                        #[name(status_icon)]
+                        gtk::Image {
+                            #[watch]
+                            set_visible: self.item.from_me
+                                && self.item.delivery_status != "sent",
+                            #[watch]
+                            set_icon_name: Some(
+                                delivery_icon_name(&self.item.delivery_status),
+                            ),
+                            #[watch]
+                            set_css_classes: &[
+                                "tina-delivery-status",
+                                delivery_css_class(&self.item.delivery_status),
+                            ],
+                            set_pixel_size: 14,
+                            set_valign: gtk::Align::Center,
+                        },
                     },
 
                     // Reply / quoted-message header — the dissent-style
@@ -686,6 +749,9 @@ impl FactoryComponent for MessageBubble {
             MessageBubbleInput::Confirmed => {}
             MessageBubbleInput::ExpandMedia => {
                 self.media_expanded = true;
+            }
+            MessageBubbleInput::SetDeliveryStatus(status) => {
+                self.item.delivery_status = status;
             }
         }
     }

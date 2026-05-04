@@ -3,10 +3,93 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+// computeReadWatermark turns a HistorySync `Conversation` into a
+// `last_read_ts` value the Rust side stamps onto `chats.last_read_ts`.
+// The contract:
+//
+//   - `UnreadCount=0` → user has read everything; watermark is the
+//     newest message in the conversation (so any future arrival
+//     bumps the badge).
+//   - `UnreadCount=N` → the most recent N incoming messages are
+//     unread; watermark is the timestamp just BEFORE the Nth
+//     newest incoming row, i.e. the last row the user actually saw.
+//   - `MarkedAsUnread=true` → user explicitly tagged this chat as
+//     unread; watermark stays at zero so the badge persists.
+//
+// Returns `(0, false)` when we don't have enough data to make a
+// confident call (no messages in the chunk, missing timestamps).
+// The caller skips emitting a hint in that case — the seed migration
+// or a later chunk handles it.
+func computeReadWatermark(conv *waHistorySync.Conversation) (int64, bool) {
+	if conv.GetMarkedAsUnread() {
+		return 0, true
+	}
+	msgs := conv.GetMessages()
+	if len(msgs) == 0 {
+		return 0, false
+	}
+	// Collect (timestamp, fromMe) pairs. We don't trust insertion
+	// order — the iOS client streams oldest-first, Android
+	// newest-first. Sort newest-first ourselves.
+	type row struct {
+		ts     int64
+		fromMe bool
+	}
+	rows := make([]row, 0, len(msgs))
+	for _, m := range msgs {
+		wmi := m.GetMessage()
+		if wmi == nil {
+			continue
+		}
+		ts := int64(wmi.GetMessageTimestamp())
+		if ts <= 0 {
+			continue
+		}
+		fromMe := false
+		if k := wmi.GetKey(); k != nil {
+			fromMe = k.GetFromMe()
+		}
+		rows = append(rows, row{ts: ts, fromMe: fromMe})
+	}
+	if len(rows) == 0 {
+		return 0, false
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ts > rows[j].ts })
+
+	unread := int(conv.GetUnreadCount())
+	if unread <= 0 {
+		// Everything seen — watermark = newest message.
+		return rows[0].ts, true
+	}
+	// Walk newest-first, skip `unread` incoming rows, take the next
+	// row's ts as the watermark. If the chunk doesn't carry enough
+	// incoming messages to satisfy the count we fall back to one
+	// second before the oldest row in the chunk — guarantees the
+	// rows present here are flagged unread without dragging older
+	// (already-read) rows back into the count.
+	skipped := 0
+	for _, r := range rows {
+		if r.fromMe {
+			continue
+		}
+		if skipped < unread {
+			skipped++
+			continue
+		}
+		return r.ts, true
+	}
+	if last := rows[len(rows)-1].ts; last > 0 {
+		return last - 1, true
+	}
+	return 0, true
+}
 
 func (c *Client) onHistorySync(evt *events.HistorySync) {
 	syncType := evt.Data.GetSyncType().String()
@@ -103,6 +186,23 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 	// flush we just need any later upsert to bring the row in and the
 	// next pin batch to catch it.
 	emitChatsPinUpdate(c.accountID, pins)
+	// Read-watermark seeding. WhatsApp ships per-conversation unread
+	// counts in HistorySync; turn them into a `last_read_ts` for each
+	// chat so the sidebar shows the same numbers your phone does
+	// instead of "everything in the backlog is unread". Computed
+	// from the conversation's messages — see `computeReadWatermark`.
+	hints := make([]chatReadHintItem, 0, len(conv))
+	for _, conversation := range conv {
+		if ts, ok := computeReadWatermark(conversation); ok {
+			hints = append(hints, chatReadHintItem{
+				ChatJID:    conversation.GetID(),
+				LastReadTs: ts,
+			})
+		}
+	}
+	if len(hints) > 0 {
+		emitChatsReadHint(c.accountID, hints)
+	}
 	// Antes este emit acontecia em todo chunk e fazia a UI pular pra
 	// "InApp" no primeiro pacote — anulando a tela de progresso.
 	// Agora só sinaliza completo quando o progress reportado atinge 100.

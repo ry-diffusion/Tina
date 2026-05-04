@@ -132,6 +132,34 @@ func (c *Client) disconnect(reason string) {
 	emitDisconnected(c.accountID, reason)
 }
 
+// markRead sends a Read receipt for one or more incoming messages
+// in a chat. The whatsmeow API requires that all ids belong to the
+// same sender per call; we filter / accept whatever the caller
+// provided since the UI already groups by sender JID.
+func (c *Client) markRead(p MarkReadPayload) error {
+	if !c.wa.IsConnected() {
+		return errors.New("client not connected")
+	}
+	if len(p.MessageIDs) == 0 {
+		return nil
+	}
+	chatJID, err := types.ParseJID(p.ChatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat jid: %w", err)
+	}
+	senderJID, err := types.ParseJID(p.SenderJID)
+	if err != nil {
+		return fmt.Errorf("invalid sender jid: %w", err)
+	}
+	ids := make([]types.MessageID, 0, len(p.MessageIDs))
+	for _, id := range p.MessageIDs {
+		ids = append(ids, types.MessageID(id))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return c.wa.MarkRead(ctx, ids, time.Now(), chatJID, senderJID)
+}
+
 func (c *Client) send(to, content string) (bool, error) {
 	jid, err := types.ParseJID(to)
 	if err != nil {

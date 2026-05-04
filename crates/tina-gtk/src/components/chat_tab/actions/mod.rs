@@ -4,9 +4,11 @@
 // methods. The dispatcher in `dispatch.rs` is what `component.rs::update`
 // calls.
 
+mod attach;
 mod dispatch;
 mod echo;
 mod history;
 mod identity;
 mod media;
 mod scroll;
+mod stickers;

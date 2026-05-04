@@ -91,6 +91,19 @@ pub(super) async fn handle(
             }
         }
         Cmd::SendText { chat_id, text } => send_text(worker, app, state, chat_id, text).await,
+        Cmd::SendMedia {
+            chat_id,
+            kind,
+            path,
+            caption,
+            mimetype,
+            filename,
+        } => {
+            send_media(
+                worker, app, state, chat_id, kind, path, caption, mimetype, filename,
+            )
+            .await
+        }
         Cmd::Repair => repair(worker, app, state).await,
         Cmd::LoadOlder {
             chat_id,
@@ -109,6 +122,14 @@ pub(super) async fn handle(
         Cmd::LoadPreferences => load_preferences(worker, app).await,
         Cmd::SetDownloadMethod(m) => set_download_method(worker, m).await,
         Cmd::ClearMediaCache => clear_media_cache(worker, app).await,
+        Cmd::LoadStickers { chat_id, limit } => {
+            load_stickers(worker, app, state, chat_id, limit).await
+        }
+        Cmd::MarkChatRead {
+            chat_id,
+            sender_jid,
+            message_ids,
+        } => mark_chat_read(worker, state, chat_id, sender_jid, message_ids).await,
         Cmd::ClearAvatarCache => clear_avatar_cache(worker, app).await,
         Cmd::Shutdown => return false,
     }
@@ -124,6 +145,45 @@ async fn load_chats(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &Shar
             let _ = app.send(AppMsg::ChatsUpserted(rows));
         }
         Err(e) => error!("list_chat_rows: {e}"),
+    }
+}
+
+async fn mark_chat_read(
+    worker: &Arc<TinaWorker>,
+    state: &SharedState,
+    chat_id: String,
+    sender_jid: String,
+    message_ids: Vec<String>,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    if let Err(e) = worker
+        .mark_read(&account_id, &chat_id, &sender_jid, message_ids)
+        .await
+    {
+        error!("mark_read: {e}");
+    }
+    // Drop the unread badge locally too — the read receipt the peer
+    // gets matches what the sidebar shows.
+    let _ = worker.clear_chat_unread(&account_id, &chat_id).await;
+}
+
+async fn load_stickers(
+    worker: &Arc<TinaWorker>,
+    app: &Sender<AppMsg>,
+    state: &SharedState,
+    chat_id: String,
+    limit: i64,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    match worker.list_recent_sticker_paths(&account_id, limit).await {
+        Ok(items) => {
+            let _ = app.send(AppMsg::StickersLoaded { chat_id, items });
+        }
+        Err(e) => error!("list_recent_sticker_paths: {e}"),
     }
 }
 
@@ -204,6 +264,15 @@ async fn open_chat(
         .get_message_rows(&account_id, &id, 50, 0)
         .await
         .unwrap_or_default();
+    // Drop the unread badge — the user's looking at the messages now.
+    // Refresh the sidebar so the pill disappears immediately. We
+    // don't gate on `clear_chat_unread`'s return value because
+    // ChatOpened already implies a UI repaint and the chat list
+    // refresh is dirt-cheap.
+    let _ = worker.clear_chat_unread(&account_id, &id).await;
+    if let Ok(rows) = worker.list_chat_rows(&account_id).await {
+        let _ = app.send(AppMsg::ChatsUpserted(rows));
+    }
     let _ = app.send(AppMsg::ChatOpened {
         chat_id: Some(id),
         name,
@@ -247,6 +316,57 @@ async fn send_text(
             }
             Ok(_) => {}
             Err(e) => error!("post-send fetch: {e}"),
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_media(
+    worker: &Arc<TinaWorker>,
+    app: &Sender<AppMsg>,
+    state: &SharedState,
+    chat_id: String,
+    kind: tina_core::MediaKind,
+    path: String,
+    caption: Option<String>,
+    mimetype: Option<String>,
+    filename: Option<String>,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    if let Err(e) = worker
+        .send_media(
+            &account_id,
+            &chat_id,
+            kind,
+            &path,
+            caption.as_deref(),
+            mimetype.as_deref(),
+            filename.as_deref(),
+        )
+        .await
+    {
+        error!("send_media: {e}");
+        return;
+    }
+    // Same belt-and-suspenders re-fetch as send_text: the dispatcher's
+    // synthetic echo should already have routed the bubble through,
+    // but a tail re-read covers the (rare) case where the upload took
+    // longer than a single flush window.
+    let app = app.clone();
+    let worker = worker.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        match worker.get_message_rows(&account_id, &chat_id, 20, 0).await {
+            Ok(messages) if !messages.is_empty() => {
+                let _ = app.send(AppMsg::MessagesAppended {
+                    chat_id,
+                    messages,
+                });
+            }
+            Ok(_) => {}
+            Err(e) => error!("post-send-media fetch: {e}"),
         }
     });
 }

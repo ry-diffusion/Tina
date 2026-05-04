@@ -54,6 +54,18 @@ impl MainPage {
                     .sender()
                     .send(ChatAreaInput::MessagesAppended { chat_id, messages });
             }
+            MainInput::StickersLoaded { chat_id, items } => {
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::StickersLoaded { chat_id, items });
+            }
+            MainInput::ReceiptUpdate { message_ids, status } => {
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::ReceiptUpdate { message_ids, status });
+            }
             MainInput::SetRepairing(r) => {
                 let _ = self.sidebar.sender().send(SidebarInput::SetRepairing(r));
             }
@@ -206,6 +218,23 @@ impl MainPage {
             ChatAreaOutput::SendText { chat_id, text } => {
                 let _ = sender.output(MainOutput::SendText { chat_id, text });
             }
+            ChatAreaOutput::SendMedia {
+                chat_id,
+                kind,
+                path,
+                caption,
+                mimetype,
+                filename,
+            } => {
+                let _ = sender.output(MainOutput::SendMedia {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                });
+            }
             ChatAreaOutput::CloseChat(id) => {
                 let _ = sender.output(MainOutput::CloseChat(id));
             }
@@ -217,6 +246,20 @@ impl MainPage {
             }
             ChatAreaOutput::RequestFetchAvatar(jid) => {
                 let _ = sender.output(MainOutput::RequestFetchAvatar(jid));
+            }
+            ChatAreaOutput::RequestStickers { chat_id } => {
+                let _ = sender.output(MainOutput::RequestStickers { chat_id });
+            }
+            ChatAreaOutput::RequestMarkRead {
+                chat_id,
+                sender_jid,
+                message_ids,
+            } => {
+                let _ = sender.output(MainOutput::RequestMarkRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                });
             }
             ChatAreaOutput::ActiveTabsChanged(ids) => {
                 // Sidebar uses this to pin active chats to the top

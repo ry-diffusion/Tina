@@ -111,6 +111,21 @@ impl ChatArea {
                 ChatTabOutput::Send { chat_id, text } => {
                     ChatAreaInput::SendFromTab { chat_id, text }
                 }
+                ChatTabOutput::SendMedia {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                } => ChatAreaInput::SendMediaFromTab {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                },
                 ChatTabOutput::Close { chat_id } => {
                     ChatAreaInput::TabClosed { pane: 0, chat_id }
                 }
@@ -123,6 +138,18 @@ impl ChatArea {
                 ChatTabOutput::RequestFetchAvatar(jid) => {
                     ChatAreaInput::RequestFetchAvatar(jid)
                 }
+                ChatTabOutput::RequestStickers { chat_id } => {
+                    ChatAreaInput::RequestStickers { chat_id }
+                }
+                ChatTabOutput::RequestMarkRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                } => ChatAreaInput::RequestMarkRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                },
             });
         let widget = controller.widget().clone();
         let page = self.panes[target_pane].tab_view.append(&widget);

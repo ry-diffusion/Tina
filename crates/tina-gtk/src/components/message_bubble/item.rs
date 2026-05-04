@@ -43,6 +43,17 @@ pub struct MessageItem {
     pub media_path: Option<String>,
     pub media_status: String,
     pub media_filename: Option<String>,
+    /// Lower-hex SHA-256 of the cleartext media. Used by the
+    /// optimistic-echo dedup logic to match a local placeholder
+    /// against the real row when the worker echoes it back.
+    pub media_sha256: Option<String>,
+    /// Delivery status for outgoing rows. One of:
+    /// `pending` | `sent` | `delivered` | `read` | `played` |
+    /// `failed`. Default is `sent` for any incoming history-sync
+    /// row (we don't track receipts retroactively); local
+    /// optimistic echoes start at `pending` and flip as receipts
+    /// arrive.
+    pub delivery_status: String,
     /// Inline preview (JPEG/PNG bytes) for image/video/sticker/document.
     /// Rendered as a `gtk::Picture` placeholder while the user hasn't
     /// triggered the full download yet — much nicer than the generic
@@ -93,6 +104,8 @@ impl MessageItem {
             media_path: row.media_path.clone(),
             media_status: row.media_status.clone(),
             media_filename: row.media_filename.clone(),
+            media_sha256: row.media_sha256.clone(),
+            delivery_status: row.delivery_status.clone(),
             thumbnail: row.media_thumbnail.clone(),
             quoted_message_id: row.quoted_message_id.clone(),
             quoted_sender_id: row.quoted_sender_id.clone(),

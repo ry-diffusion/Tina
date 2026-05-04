@@ -129,6 +129,25 @@ func emitChatsPinUpdate(accountID string, items []chatPinItem) {
 	})
 }
 
+// chatReadHintItem carries a per-chat `last_read_ts` watermark
+// derived from the WhatsApp HistorySync `Conversation.UnreadCount`.
+// The Rust side bumps `chats.last_read_ts` so the auto-derived
+// unread badge matches what your phone shows.
+type chatReadHintItem struct {
+	ChatJID    string `json:"chat_jid"`
+	LastReadTs int64  `json:"last_read_ts"`
+}
+
+func emitChatsReadHint(accountID string, items []chatReadHintItem) {
+	if len(items) == 0 {
+		return
+	}
+	emit("ChatsReadHint", map[string]any{
+		"account_id": accountID,
+		"items":      items,
+	})
+}
+
 func emitReconcileProgress(accountID, stage string, current, total int, indeterminate bool) {
 	emit("ReconcileProgress", map[string]any{
 		"account_id":    accountID,
@@ -143,6 +162,24 @@ func emitError(accountID *string, err string) {
 	emit("Error", map[string]any{
 		"account_id": accountID,
 		"error":      err,
+	})
+}
+
+// emitNotice surfaces a non-fatal, user-visible warning — silently
+// degraded operations like a missing ffmpeg still completed, but the
+// UI should let the user know which corner was cut.
+func emitNotice(accountID *string, message string) {
+	emit("Notice", map[string]any{
+		"account_id": accountID,
+		"message":    message,
+	})
+}
+
+func emitReceiptUpdate(accountID string, messageIDs []string, status string) {
+	emit("ReceiptUpdate", map[string]any{
+		"account_id":  accountID,
+		"message_ids": messageIDs,
+		"status":      status,
 	})
 }
 

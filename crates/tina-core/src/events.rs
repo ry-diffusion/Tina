@@ -28,6 +28,34 @@ mod thumbnail_base64 {
     }
 }
 
+/// Kinds of outgoing media. Wire format is the lowercased variant
+/// name; the Go side switches on this to pick the right
+/// `*waE2E.Message` field. `Voice` is audio sent as a PTT (push-to-
+/// talk) note — same upload path as `Audio`, different proto bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    Image,
+    Video,
+    Audio,
+    Voice,
+    Sticker,
+    Document,
+}
+
+impl MediaKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MediaKind::Image => "image",
+            MediaKind::Video => "video",
+            MediaKind::Audio => "audio",
+            MediaKind::Voice => "voice",
+            MediaKind::Sticker => "sticker",
+            MediaKind::Document => "document",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum IpcCommand {
@@ -38,6 +66,31 @@ pub enum IpcCommand {
         account_id: String,
         to: WaIdentity,
         content: String,
+    },
+    /// Send a media message (image / video / audio / voice note /
+    /// sticker / document). The Go side reads `path` from disk,
+    /// uploads it through whatsmeow, builds the matching
+    /// `*waE2E.Message` payload and dispatches it. The optimistic
+    /// echo from `client_lifecycle.send` is reused so the UI shows
+    /// the bubble immediately.
+    SendMedia {
+        account_id: String,
+        to: WaIdentity,
+        kind: MediaKind,
+        path: String,
+        /// Caption shown alongside the media. Only honoured for
+        /// image / video / document; ignored elsewhere.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        /// Override the auto-detected mimetype. Mostly useful for
+        /// stickers (force `image/webp`) or to disambiguate exotic
+        /// document formats. `None` ⇒ Go infers from the file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mimetype: Option<String>,
+        /// Display name for documents. `None` ⇒ Go uses
+        /// `path::Base()`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
     },
     /// Re-pesca contatos/grupos/newsletters do whatsmeow e re-emite eventos
     /// de upsert. Usado pra reconstruir a tabela do tina a partir do que o
@@ -68,6 +121,16 @@ pub enum IpcCommand {
     RefreshChat {
         account_id: String,
         chat_jid: WaIdentity,
+    },
+    /// Send a Read receipt for a batch of incoming messages in one
+    /// chat. The Go side calls `whatsmeow.Client.MarkRead`.
+    /// `sender_jid` is required for groups (whatsmeow's API
+    /// expects a participant JID); for DMs it can be the chat JID.
+    MarkRead {
+        account_id: String,
+        chat_jid: WaIdentity,
+        sender_jid: WaIdentity,
+        message_ids: Vec<String>,
     },
     Shutdown,
 }
@@ -103,6 +166,15 @@ pub enum IpcEvent {
         items: Vec<ChatPinItem>,
     },
 
+    /// Per-chat read watermark derived from
+    /// `Conversation.UnreadCount` in HistorySync. Stamped onto
+    /// `chats.last_read_ts` so the auto-derived unread badge
+    /// matches what the user's phone shows.
+    ChatsReadHint {
+        account_id: String,
+        items: Vec<ChatReadHintItem>,
+    },
+
     /// Per-chunk progress reported by whatsmeow during the initial
     /// `events.HistorySync` stream. `progress` is a 0..100 percent
     /// already calculated by the proto; `sync_type` is the enum name
@@ -125,6 +197,22 @@ pub enum IpcEvent {
     },
 
     Error { account_id: Option<String>, error: String },
+
+    /// Soft warning surfaced to the user as a toast — used when a
+    /// non-fatal degradation happens (missing host tool, optional
+    /// step skipped) and we want the UI to know without blocking
+    /// the operation.
+    Notice { account_id: Option<String>, message: String },
+
+    /// whatsmeow `*events.Receipt` mapped onto a wire-level status.
+    /// Status ∈ {delivered, read, played}. The Rust worker uses this
+    /// to bump `messages.delivery_status` and push the new state to
+    /// the open chat tab.
+    ReceiptUpdate {
+        account_id: String,
+        message_ids: Vec<String>,
+        status: String,
+    },
 
     /// Progresso de download de mídia. `total = 0` ⇒ desconhecido.
     MediaDownloadProgress {
@@ -167,6 +255,12 @@ pub enum IpcEvent {
 pub struct ChatPinItem {
     pub chat_jid: WaIdentity,
     pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatReadHintItem {
+    pub chat_jid: WaIdentity,
+    pub last_read_ts: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

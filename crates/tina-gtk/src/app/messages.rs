@@ -106,6 +106,13 @@ pub enum AppMsg {
         path: String,
     },
     RequestFetchAvatar(WaIdentity),
+    /// Worker propagated a receipt update — flip the matching
+    /// outgoing rows' `delivery_status` icon. Multiple ids per
+    /// status because whatsmeow batches them.
+    ReceiptUpdate {
+        message_ids: Vec<String>,
+        status: String,
+    },
 
     // From the UI:
     OpenChatNew(String),
@@ -113,6 +120,16 @@ pub enum AppMsg {
     SendText {
         chat_id: String,
         text: String,
+    },
+    /// User confirmed a media-attach preview. Routes to
+    /// `Cmd::SendMedia` and the worker forwards it to nanachi.
+    SendMedia {
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
     },
     RequestRepair,
     RequestPreferences,
@@ -143,6 +160,24 @@ pub enum AppMsg {
     },
     /// Settings dialog asked us to drop the on-disk media cache.
     ClearMediaCache,
+    /// Sticker picker requested its catalog. Carries the active
+    /// chat id so the result can be routed back to the right
+    /// `ChatTab`.
+    RequestStickers { chat_id: String },
+    /// ChatTab observed unread incoming messages while the user
+    /// is at the bottom of the thread. Routed to `Cmd::MarkChatRead`
+    /// → IPC → `whatsmeow.Client.MarkRead`.
+    MarkChatRead {
+        chat_id: String,
+        sender_jid: String,
+        message_ids: Vec<String>,
+    },
+    /// Worker pushed the recently-received stickers up. Forwarded
+    /// straight to the matching `ChatTab` so its picker can repaint.
+    StickersLoaded {
+        chat_id: String,
+        items: Vec<(String, String)>,
+    },
     /// Settings dialog asked us to drop the on-disk avatar cache.
     ClearAvatarCache,
 }

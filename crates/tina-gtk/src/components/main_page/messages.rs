@@ -37,6 +37,18 @@ pub enum MainInput {
         chat_id: String,
         messages: Vec<MessageRow>,
     },
+    /// Worker delivered the recent-stickers catalog. Forwarded to
+    /// the matching tab's picker.
+    StickersLoaded {
+        chat_id: String,
+        items: Vec<(String, String)>,
+    },
+    /// Receipt update broadcast — fan out to every open tab so the
+    /// matching from_me row updates its status icon.
+    ReceiptUpdate {
+        message_ids: Vec<String>,
+        status: String,
+    },
     SetRepairing(bool),
     SetConnection(ConnectionStatus),
     HistorySyncProgress { sync_type: String, progress: u32 },
@@ -74,6 +86,14 @@ pub enum MainOutput {
     OpenChatNew(String),
     CloseChat(String),
     SendText { chat_id: String, text: String },
+    SendMedia {
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
+    },
     RequestPreferences,
     RequestLogout,
     RequestLoadStatuses,
@@ -85,4 +105,12 @@ pub enum MainOutput {
     RequestLoadOlder { chat_id: String, before_ts: i64 },
     RequestFetchAvatar(WaIdentity),
     SetChatPinned { chat_id: String, pinned: bool },
+    /// Sticker-picker popover wants the recent-stickers catalog.
+    RequestStickers { chat_id: String },
+    /// Tab observed unread incoming rows while bottomed.
+    RequestMarkRead {
+        chat_id: String,
+        sender_jid: String,
+        message_ids: Vec<String>,
+    },
 }

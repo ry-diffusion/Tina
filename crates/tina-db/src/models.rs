@@ -261,6 +261,10 @@ pub struct MessageRow {
     pub quoted_sender_name: Option<String>,
     /// JSON-encoded `[String]` of mentioned JIDs.
     pub mentions_json: Option<String>,
+    /// Outgoing delivery state: `pending`/`sent`/`delivered`/`read`/
+    /// `played`/`failed`. Default `sent` for incoming rows; only
+    /// renderered for `from_me=true`.
+    pub delivery_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -284,6 +288,7 @@ pub struct Message {
     pub media_sha256: Option<String>,
     pub media_path: Option<String>,
     pub media_status: String,
+    pub delivery_status: String,
     pub created_at: i64,
 }
 

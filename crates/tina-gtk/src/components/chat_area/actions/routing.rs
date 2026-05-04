@@ -109,6 +109,65 @@ impl ChatArea {
         let _ = sender.output(ChatAreaOutput::SendText { chat_id, text });
     }
 
+    pub(in crate::components::chat_area) fn forward_request_stickers(
+        &mut self,
+        chat_id: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::RequestStickers { chat_id });
+    }
+
+    pub(in crate::components::chat_area) fn handle_stickers_loaded(
+        &mut self,
+        chat_id: String,
+        items: Vec<(String, String)>,
+    ) {
+        if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
+            let _ = controller
+                .sender()
+                .send(crate::components::chat_tab::ChatTabInput::StickersLoaded(items));
+        }
+    }
+
+    pub(in crate::components::chat_area) fn handle_receipt_update(
+        &mut self,
+        message_ids: Vec<String>,
+        status: String,
+    ) {
+        // Fan-out: we don't know which tab holds these ids without
+        // walking each one's seen-set, so just push to all and let
+        // each ChatTab no-op when it doesn't recognize anything.
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller.sender().send(
+                crate::components::chat_tab::ChatTabInput::ReceiptUpdate {
+                    message_ids: message_ids.clone(),
+                    status: status.clone(),
+                },
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::components::chat_area) fn forward_send_media(
+        &mut self,
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::SendMedia {
+            chat_id,
+            kind,
+            path,
+            caption,
+            mimetype,
+            filename,
+        });
+    }
+
     pub(in crate::components::chat_area) fn forward_media_download(
         &mut self,
         id: String,

@@ -142,6 +142,37 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 		}
 		emitCommandResult(msg.ID, ok, nil, errStr)
 
+	case "MarkRead":
+		var p MarkReadPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		emitCommandResult(msg.ID, true, nil, nil)
+		go func() {
+			if err := mgr.markRead(p); err != nil {
+				emitError(&p.AccountID, fmt.Sprintf("mark read: %v", err))
+			}
+		}()
+
+	case "SendMedia":
+		var p SendMediaPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		// Upload + send is async to keep the IPC loop responsive
+		// (large files can take tens of seconds). The synchronous
+		// CommandResult only acknowledges acceptance; success/failure
+		// surfaces later via the synthetic Messages echo or an
+		// error event.
+		emitCommandResult(msg.ID, true, nil, nil)
+		go func() {
+			if _, err := mgr.sendMedia(p); err != nil {
+				emitError(&p.AccountID, fmt.Sprintf("send media: %v", err))
+			}
+		}()
+
 	case "DownloadMedia":
 		var p struct {
 			AccountID string  `json:"account_id"`

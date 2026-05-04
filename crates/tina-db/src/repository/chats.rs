@@ -86,6 +86,63 @@ impl TinaDb {
         Ok(())
     }
 
+    /// Slide `chats.last_read_ts` forward to the chat's most recent
+    /// message timestamp (or NOW if the chat is empty), which makes
+    /// the auto-derived `unread_count` from `chat_row_select_clause`
+    /// drop to zero. Called from the open-chat + mark-read paths.
+    /// Returns whether the watermark actually moved so callers can
+    /// skip a redundant ChatsUpserted push.
+    /// Stamp `chats.last_read_ts` from the HistorySync hint. Uses
+    /// MAX with the existing watermark so a HistorySync chunk that
+    /// arrives AFTER the user already opened the chat (sliding the
+    /// watermark forward) doesn't roll the unread badge back to a
+    /// stale state.
+    pub async fn set_chat_last_read_ts(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        last_read_ts: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"UPDATE chats
+               SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?),
+                   updated_at = ?
+               WHERE account_id = ? AND chat_id = ?"#,
+        )
+        .bind(last_read_ts)
+        .bind(now_ts())
+        .bind(account_id)
+        .bind(chat_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_chat_unread(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+    ) -> Result<u64> {
+        let res = sqlx::query(
+            r#"UPDATE chats
+               SET last_read_ts = MAX(
+                       COALESCE(last_read_ts, 0),
+                       COALESCE(last_message_ts, ?)
+                   ),
+                   updated_at = ?
+               WHERE account_id = ? AND chat_id = ?
+                 AND COALESCE(last_read_ts, 0)
+                     < COALESCE(last_message_ts, 0)"#,
+        )
+        .bind(now_ts())
+        .bind(now_ts())
+        .bind(account_id)
+        .bind(chat_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn set_chat_pinned(
         &self,
         account_id: &str,
@@ -262,7 +319,22 @@ pub(super) fn chat_row_select_clause(filter_by_ids: bool) -> String {
             c.last_message_from_me,
             c.last_message_type,
             c.last_message_duration_secs,
-            c.unread_count,
+            -- Unread is derived: count incoming messages newer than
+            -- the chat's `last_read_ts` watermark. NULL watermark
+            -- (chat never opened) → COUNT-since-zero, which means
+            -- every incoming message we know about counts. Cap via
+            -- the COALESCE so a freshly-paired account doesn't show
+            -- thousands of unreads from history-sync rows that the
+            -- user already saw on their phone — we initialise
+            -- last_read_ts to last_message_ts on first list-render
+            -- through `seed_last_read_ts` below.
+            (
+                SELECT COUNT(*) FROM messages m
+                WHERE m.account_id = c.account_id
+                  AND m.chat_id    = c.chat_id
+                  AND m.is_from_me = 0
+                  AND m.timestamp  > COALESCE(c.last_read_ts, 0)
+            ) AS unread_count,
             c.pinned,
             CASE
                 WHEN c.last_sender_contact_id IS NULL THEN NULL

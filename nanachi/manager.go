@@ -139,6 +139,26 @@ func (m *Manager) sendMessage(accountID, to, content string) (bool, error) {
 	return client.send(to, content)
 }
 
+func (m *Manager) sendMedia(p SendMediaPayload) (string, error) {
+	m.mu.Lock()
+	client := m.clients[p.AccountID]
+	m.mu.Unlock()
+	if client == nil {
+		return "", errors.New("account not connected")
+	}
+	return client.sendMedia(p)
+}
+
+func (m *Manager) markRead(p MarkReadPayload) error {
+	m.mu.Lock()
+	client := m.clients[p.AccountID]
+	m.mu.Unlock()
+	if client == nil {
+		return errors.New("account not connected")
+	}
+	return client.markRead(p)
+}
+
 func (m *Manager) shutdown() {
 	m.mu.Lock()
 	clients := make([]*Client, 0, len(m.clients))

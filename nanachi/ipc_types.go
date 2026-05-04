@@ -32,6 +32,29 @@ type SendMessagePayload struct {
 	Content   string `json:"content"`
 }
 
+// MarkReadPayload mirrors `IpcCommand::MarkRead`. `SenderJID` matches
+// whatsmeow's MarkRead semantics: required for group chats (the
+// participant), redundant-but-fine for DMs where it should equal the
+// chat JID.
+type MarkReadPayload struct {
+	AccountID  string   `json:"account_id"`
+	ChatJID    string   `json:"chat_jid"`
+	SenderJID  string   `json:"sender_jid"`
+	MessageIDs []string `json:"message_ids"`
+}
+
+// SendMediaPayload mirrors `IpcCommand::SendMedia` from the Rust side.
+// `Kind` is one of: image, video, audio, voice, sticker, document.
+type SendMediaPayload struct {
+	AccountID string  `json:"account_id"`
+	To        string  `json:"to"`
+	Kind      string  `json:"kind"`
+	Path      string  `json:"path"`
+	Caption   *string `json:"caption,omitempty"`
+	Mimetype  *string `json:"mimetype,omitempty"`
+	Filename  *string `json:"filename,omitempty"`
+}
+
 // Eventos Go → Rust.
 type ContactData struct {
 	JID          string  `json:"jid"`

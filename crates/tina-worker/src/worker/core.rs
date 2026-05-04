@@ -142,6 +142,57 @@ impl TinaWorker {
         Ok(())
     }
 
+    /// Send a Read receipt for `message_ids` in `chat_jid`. Groups
+    /// require `sender_jid` (the participant who sent the message);
+    /// DMs can pass the chat jid here. The Go side handles the
+    /// actual `whatsmeow.Client.MarkRead` call.
+    pub async fn mark_read(
+        &self,
+        account_id: &str,
+        chat_jid: &str,
+        sender_jid: &str,
+        message_ids: Vec<String>,
+    ) -> Result<()> {
+        if message_ids.is_empty() {
+            return Ok(());
+        }
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::MarkRead {
+                account_id: account_id.to_string(),
+                chat_jid: tina_core::WaIdentity::parse(chat_jid),
+                sender_jid: tina_core::WaIdentity::parse(sender_jid),
+                message_ids,
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn send_media(
+        &self,
+        account_id: &str,
+        to: &str,
+        kind: tina_core::MediaKind,
+        path: &str,
+        caption: Option<&str>,
+        mimetype: Option<&str>,
+        filename: Option<&str>,
+    ) -> Result<()> {
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::SendMedia {
+                account_id: account_id.to_string(),
+                to: tina_core::WaIdentity::parse(to),
+                kind,
+                path: path.to_string(),
+                caption: caption.map(|s| s.to_string()),
+                mimetype: mimetype.map(|s| s.to_string()),
+                filename: filename.map(|s| s.to_string()),
+            })
+            .await?;
+        Ok(())
+    }
+
     /// Solicita o profile picture de um JID. Sempre dispara IPC — o
     /// nanachi é quem faz dedup por sha256 do binário antes de baixar
     /// de novo.
@@ -180,6 +231,21 @@ impl TinaWorker {
         account_id: &str,
     ) -> Result<Vec<tina_db::StatusAuthorRow>> {
         Ok(self.db.list_status_authors(account_id).await?)
+    }
+
+    /// Reset `chats.unread_count` for a chat (called from open-chat
+    /// + mark-read paths). Returns whether the count actually changed
+    /// so callers can skip a redundant ChatsUpserted broadcast.
+    pub async fn clear_chat_unread(&self, account_id: &str, chat_id: &str) -> Result<bool> {
+        Ok(self.db.clear_chat_unread(account_id, chat_id).await? > 0)
+    }
+
+    pub async fn list_recent_sticker_paths(
+        &self,
+        account_id: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        Ok(self.db.list_recent_sticker_paths(account_id, limit).await?)
     }
 
     /// Persist a chat's pinned flag. The UI's `ChatsUpserted` push will

@@ -9,6 +9,23 @@ use crate::components::message_bubble::MessageBubbleInput;
 use super::super::messages::ChatTabOutput;
 use super::super::model::ChatTab;
 
+/// Ordered ranks for `delivery_status`. Used to gate factory
+/// repaint requests: only flip the icon when the new status is
+/// strictly higher in the chain (peers occasionally deliver a
+/// `delivered` receipt after the user already pressed read).
+fn status_rank(s: &str) -> u8 {
+    match s {
+        "pending" => 0,
+        "sent" => 1,
+        "server_ack" => 1,
+        "delivered" => 2,
+        "read" => 3,
+        "played" => 4,
+        "failed" => 5,
+        _ => 0,
+    }
+}
+
 impl ChatTab {
     pub(in crate::components::chat_tab) fn handle_media_ready(
         &mut self,
@@ -55,6 +72,46 @@ impl ChatTab {
                     status: "failed".into(),
                     mimetype: None,
                 },
+            );
+        }
+    }
+
+    pub(in crate::components::chat_tab) fn handle_receipt_update(
+        &mut self,
+        message_ids: Vec<String>,
+        status: String,
+    ) {
+        let id_set: HashSet<&String> = message_ids.iter().collect();
+        let indices: Vec<usize> = self
+            .messages
+            .guard()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                if !f.item.from_me {
+                    return None;
+                }
+                if !id_set.contains(&f.item.id) {
+                    return None;
+                }
+                // Don't downgrade: read > delivered > sent >
+                // pending. The wire status arrives out-of-order
+                // sometimes (a delivered receipt after a read one
+                // for the same message group).
+                let cur = status_rank(&f.item.delivery_status);
+                let new = status_rank(&status);
+                if new <= cur {
+                    return None;
+                }
+                Some(i)
+            })
+            .collect();
+        for idx in indices {
+            self.messages.send(
+                idx,
+                crate::components::message_bubble::MessageBubbleInput::SetDeliveryStatus(
+                    status.clone(),
+                ),
             );
         }
     }

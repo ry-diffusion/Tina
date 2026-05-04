@@ -36,6 +36,18 @@ pub enum Cmd {
     CloseChat(String),
     /// Send a plain-text message to a chat.
     SendText { chat_id: String, text: String },
+    /// Send a media message (image / video / audio / voice / sticker
+    /// / document). `path` is read by the Go side; the worker just
+    /// forwards through IPC. `caption` is honoured for image / video
+    /// / document and ignored otherwise.
+    SendMedia {
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
+    },
     /// Trigger reconcile (whatsmeow → tina).
     Repair,
     /// Trigger an async media download for a specific message.
@@ -70,6 +82,20 @@ pub enum Cmd {
     /// Wipe the on-disk media cache (`~/.local/share/tina/media/`)
     /// and null out `messages.media_path`. The next access re-fetches.
     ClearMediaCache,
+    /// Pull the most recent received stickers (deduped by SHA-256)
+    /// for the active account so the sticker-picker popover can
+    /// render thumbnails. `chat_id` round-trips with the result so
+    /// the right `ChatTab` repaints — necessary because every open
+    /// tab can launch its own picker.
+    LoadStickers { chat_id: String, limit: i64 },
+    /// Send Read receipts for a batch of incoming messages in one
+    /// chat. The UI throttles its own emission so we don't fire
+    /// once per row during fast scroll.
+    MarkChatRead {
+        chat_id: String,
+        sender_jid: String,
+        message_ids: Vec<String>,
+    },
     /// Wipe the on-disk avatar cache + null out `chats.avatar_path`,
     /// `contacts.avatar_path`. Avatars re-fetch on next render.
     ClearAvatarCache,

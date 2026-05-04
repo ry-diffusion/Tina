@@ -131,6 +131,74 @@ impl TinaDb {
         Ok(ids)
     }
 
+    /// Backing query for the sticker-picker popover. Returns recent
+    /// downloaded stickers (`media_path` non-null) deduped by
+    /// `media_sha256` so the same sticker forwarded twice doesn't
+    /// occupy two slots in the picker. Newest-first, capped at
+    /// `limit`. The mimetype is included so the caller can build
+    /// the SendMedia call without a second round trip.
+    /// Update the `delivery_status` for a batch of message ids
+    /// belonging to one account. Called by the receipt-event
+    /// handler. Returns the number of rows actually changed (so the
+    /// UI dispatcher can short-circuit a no-op push when the
+    /// status is already current).
+    pub async fn update_delivery_status(
+        &self,
+        account_id: &str,
+        message_ids: &[String],
+        status: &str,
+    ) -> Result<u64> {
+        if message_ids.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = std::iter::repeat_n("?", message_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE messages SET delivery_status = ? \
+             WHERE account_id = ? \
+               AND delivery_status != ? \
+               AND message_id IN ({placeholders})"
+        );
+        let mut q = sqlx::query(&sql)
+            .bind(status)
+            .bind(account_id)
+            .bind(status);
+        for id in message_ids {
+            q = q.bind(id);
+        }
+        let res = q.execute(&self.pool).await?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn list_recent_sticker_paths(
+        &self,
+        account_id: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            r#"SELECT media_path, media_mimetype FROM (
+                 SELECT media_path, media_mimetype, media_sha256, MAX(timestamp) AS ts
+                 FROM messages
+                 WHERE account_id = ?
+                   AND message_type = 'sticker'
+                   AND media_path IS NOT NULL
+                   AND media_path != ''
+                 GROUP BY media_sha256
+               )
+               ORDER BY ts DESC
+               LIMIT ?"#,
+        )
+        .bind(account_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(p, m)| (p, m.unwrap_or_else(|| "image/webp".into())))
+            .collect())
+    }
+
     /// Lookup auxiliar pra dedup pré-download: dado um sha256, devolve
     /// o path se já existe alguma cópia em outra mensagem.
     pub async fn find_existing_media_path(

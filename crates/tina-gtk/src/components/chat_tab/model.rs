@@ -28,6 +28,13 @@ pub struct ChatTab {
     pub(super) loading_older: bool,
     pub(super) reached_top: bool,
     pub(super) pending_echoes: HashMap<String, VecDeque<String>>,
+    /// Pending media echoes keyed by lower-hex SHA-256 of the source
+    /// file. The Go side echoes the row back with the same hash, so
+    /// matching here is exact and immune to caption mismatches that
+    /// broke the body-text path. Multiple sends of the same file
+    /// (e.g. forwarding the same sticker twice in a row) queue under
+    /// the same key, FIFO.
+    pub(super) pending_media_echoes: HashMap<String, VecDeque<String>>,
     /// Sticky-bottom state, ported from dissent's autoscroll.Window. When
     /// `true`, every `vadj.changed` (new content added → upper grew)
     /// re-scrolls to `upper - page_size`. Cleared when the user scrolls
@@ -38,6 +45,18 @@ pub struct ChatTab {
     /// reads it to distinguish "GTK relayout finished" from "user
     /// dragged the scrollbar".
     pub(super) updated_value: Rc<Cell<bool>>,
+    /// Active voice-record handle. `Some` while a `gst-launch-1.0`
+    /// pipeline is capturing; toggled off by `ToggleRecord` (which
+    /// SIGINTs the child and waits for the writer to flush). The
+    /// state is signalled to the view via `recording_active`.
+    pub(super) recorder: Option<super::record::RecordingHandle>,
+    pub(super) recording_active: Rc<Cell<bool>>,
+    /// Live state of the sticker-picker popover. The popover widget
+    /// is shared here so Open/StickersLoaded can repaint it without
+    /// wiring a separate sub-component, and the FlowBox below holds
+    /// the tile widgets we recreate on each refresh.
+    pub(super) sticker_popover: Option<gtk::Popover>,
+    pub(super) sticker_grid: Option<gtk::FlowBox>,
 }
 
 impl ChatTab {

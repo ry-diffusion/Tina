@@ -45,6 +45,9 @@ func (c *Client) handleEvent(rawEvt any) {
 	case *events.Message:
 		c.handleMessage(evt)
 
+	case *events.Receipt:
+		c.handleReceipt(evt)
+
 	case *events.HistorySync:
 		c.onHistorySync(evt)
 
@@ -96,6 +99,33 @@ func (c *Client) handleEvent(rawEvt any) {
 		// passadas; remoção total fica para um evento dedicado no futuro).
 		_ = evt
 	}
+}
+
+// handleReceipt maps whatsmeow's events.Receipt onto our wire-level
+// "delivery_status" string. We only care about the receipt types
+// that surface in the bubble's status icon: delivered, read, played.
+// Sender / Retry / etc. are silently dropped.
+func (c *Client) handleReceipt(evt *events.Receipt) {
+	if len(evt.MessageIDs) == 0 {
+		return
+	}
+	status := receiptStatus(evt.Type)
+	if status == "" {
+		return
+	}
+	emitReceiptUpdate(c.accountID, evt.MessageIDs, status)
+}
+
+func receiptStatus(t types.ReceiptType) string {
+	switch t {
+	case types.ReceiptTypeDelivered:
+		return "delivered"
+	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
+		return "read"
+	case types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
+		return "played"
+	}
+	return ""
 }
 
 func (c *Client) handleMessage(evt *events.Message) {

@@ -97,6 +97,14 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
             error!(%error, "worker error");
             let _ = app.send(AppMsg::Toast(error));
         }
+        WorkerEvent::Notice { message, .. } => {
+            let _ = app.send(AppMsg::Toast(message));
+        }
+        WorkerEvent::ReceiptUpdate {
+            message_ids, status, ..
+        } => {
+            let _ = app.send(AppMsg::ReceiptUpdate { message_ids, status });
+        }
         WorkerEvent::MediaDownloadProgress {
             message_id,
             current,

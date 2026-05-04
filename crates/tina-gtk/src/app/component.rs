@@ -179,6 +179,21 @@ impl SimpleComponent for AppModel {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),
                 MainOutput::CloseChat(id) => AppMsg::CloseChat(id),
                 MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
+                MainOutput::SendMedia {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                } => AppMsg::SendMedia {
+                    chat_id,
+                    kind,
+                    path,
+                    caption,
+                    mimetype,
+                    filename,
+                },
                 MainOutput::RequestPreferences => AppMsg::RequestPreferences,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
                 MainOutput::RequestLoadStatuses => AppMsg::RequestLoadStatuses,
@@ -193,6 +208,18 @@ impl SimpleComponent for AppModel {
                 MainOutput::SetChatPinned { chat_id, pinned } => {
                     AppMsg::SetChatPinned { chat_id, pinned }
                 }
+                MainOutput::RequestStickers { chat_id } => {
+                    AppMsg::RequestStickers { chat_id }
+                }
+                MainOutput::RequestMarkRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                } => AppMsg::MarkChatRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                },
             });
 
         // Held over the app's lifetime; presented on demand from the

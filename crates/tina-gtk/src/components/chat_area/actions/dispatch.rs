@@ -50,11 +50,39 @@ impl ChatArea {
             ChatAreaInput::SendFromTab { chat_id, text } => {
                 self.forward_send(chat_id, text, &sender)
             }
+            ChatAreaInput::SendMediaFromTab {
+                chat_id,
+                kind,
+                path,
+                caption,
+                mimetype,
+                filename,
+            } => self.forward_send_media(chat_id, kind, path, caption, mimetype, filename, &sender),
             ChatAreaInput::RequestMediaDownload(id) => self.forward_media_download(id, &sender),
             ChatAreaInput::RequestLoadOlder { chat_id, before_ts } => {
                 self.forward_load_older(chat_id, before_ts, &sender)
             }
             ChatAreaInput::RequestFetchAvatar(jid) => self.forward_fetch_avatar(jid, &sender),
+            ChatAreaInput::RequestStickers { chat_id } => {
+                self.forward_request_stickers(chat_id, &sender);
+            }
+            ChatAreaInput::RequestMarkRead {
+                chat_id,
+                sender_jid,
+                message_ids,
+            } => {
+                let _ = sender.output(super::super::messages::ChatAreaOutput::RequestMarkRead {
+                    chat_id,
+                    sender_jid,
+                    message_ids,
+                });
+            }
+            ChatAreaInput::StickersLoaded { chat_id, items } => {
+                self.handle_stickers_loaded(chat_id, items);
+            }
+            ChatAreaInput::ReceiptUpdate { message_ids, status } => {
+                self.handle_receipt_update(message_ids, status);
+            }
             ChatAreaInput::SetUserJid(jid) => self.handle_set_user_jid(jid),
         }
     }

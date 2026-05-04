@@ -70,6 +70,127 @@ impl SimpleComponent for ChatTab {
                     set_margin_end: 12,
                     set_spacing: 6,
 
+                    // Attach popover. Each row is a dedicated kind so
+                    // the file dialog can apply a sensible mime
+                    // filter. Stickers stay separate from images on
+                    // purpose — they ship with a forced image/webp
+                    // mimetype on the wire, and silently rebranding
+                    // an arbitrary jpg as a sticker would surface as
+                    // a broken bubble on the peer.
+                    gtk::MenuButton {
+                        set_icon_name: "attachment-symbolic",
+                        set_tooltip_text: Some("Attach"),
+                        set_valign: gtk::Align::Center,
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            set_position: gtk::PositionType::Top,
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 2,
+
+                                gtk::Button {
+                                    set_label: "Photo",
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |btn| {
+                                        if let Some(pop) = btn
+                                            .ancestor(gtk::Popover::static_type())
+                                            .and_downcast::<gtk::Popover>()
+                                        {
+                                            pop.popdown();
+                                        }
+                                        let _ = sender.input_sender().send(
+                                            ChatTabInput::PickAttachment(
+                                                tina_core::MediaKind::Image,
+                                            ),
+                                        );
+                                    },
+                                },
+                                gtk::Button {
+                                    set_label: "Video",
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |btn| {
+                                        if let Some(pop) = btn
+                                            .ancestor(gtk::Popover::static_type())
+                                            .and_downcast::<gtk::Popover>()
+                                        {
+                                            pop.popdown();
+                                        }
+                                        let _ = sender.input_sender().send(
+                                            ChatTabInput::PickAttachment(
+                                                tina_core::MediaKind::Video,
+                                            ),
+                                        );
+                                    },
+                                },
+                                gtk::Button {
+                                    set_label: "Audio file",
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |btn| {
+                                        if let Some(pop) = btn
+                                            .ancestor(gtk::Popover::static_type())
+                                            .and_downcast::<gtk::Popover>()
+                                        {
+                                            pop.popdown();
+                                        }
+                                        let _ = sender.input_sender().send(
+                                            ChatTabInput::PickAttachment(
+                                                tina_core::MediaKind::Audio,
+                                            ),
+                                        );
+                                    },
+                                },
+                                gtk::Button {
+                                    set_label: "Sticker (file)",
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |btn| {
+                                        if let Some(pop) = btn
+                                            .ancestor(gtk::Popover::static_type())
+                                            .and_downcast::<gtk::Popover>()
+                                        {
+                                            pop.popdown();
+                                        }
+                                        let _ = sender.input_sender().send(
+                                            ChatTabInput::PickAttachment(
+                                                tina_core::MediaKind::Sticker,
+                                            ),
+                                        );
+                                    },
+                                },
+                                gtk::Button {
+                                    set_label: "Document",
+                                    add_css_class: "flat",
+                                    connect_clicked[sender] => move |btn| {
+                                        if let Some(pop) = btn
+                                            .ancestor(gtk::Popover::static_type())
+                                            .and_downcast::<gtk::Popover>()
+                                        {
+                                            pop.popdown();
+                                        }
+                                        let _ = sender.input_sender().send(
+                                            ChatTabInput::PickAttachment(
+                                                tina_core::MediaKind::Document,
+                                            ),
+                                        );
+                                    },
+                                },
+                            },
+                        },
+                    },
+
+                    // Sticker picker. The Popover stores the catalog
+                    // FlowBox; we cache widget refs on `model` so
+                    // `StickersLoaded` can repaint without rebuilding
+                    // the popover hierarchy.
+                    #[name(sticker_picker_btn)]
+                    gtk::Button {
+                        set_icon_name: "sticker-regular-symbolic",
+                        set_tooltip_text: Some("Stickers"),
+                        set_valign: gtk::Align::Center,
+                        connect_clicked => ChatTabInput::OpenStickerPicker,
+                    },
+
+                    #[name(composer_entry)]
                     gtk::Entry {
                         set_buffer: &model.composer_buffer,
                         set_hexpand: true,
@@ -77,10 +198,38 @@ impl SimpleComponent for ChatTab {
                         connect_activate => ChatTabInput::Send,
                     },
 
+                    // Voice-record toggle. Tap to start, tap again to
+                    // stop — tracking active state via a Cell so the
+                    // icon + tooltip can flip without a full
+                    // ChatTabInput round trip.
                     gtk::Button {
-                        // Bundled from relm4-icons (icon-development-kit set);
-                        // see crates/tina-gtk/icons/ + icons.toml.
-                        set_icon_name: "curved-arrow-left-symbolic",
+                        #[watch]
+                        set_icon_name: if model.recording_active.get() {
+                            "media-playback-stop-symbolic"
+                        } else {
+                            "mic-3-symbolic"
+                        },
+                        #[watch]
+                        set_tooltip_text: Some(if model.recording_active.get() {
+                            "Stop recording"
+                        } else {
+                            "Record voice note"
+                        }),
+                        #[watch]
+                        set_css_classes: if model.recording_active.get() {
+                            &["destructive-action"]
+                        } else {
+                            &[]
+                        },
+                        connect_clicked => ChatTabInput::ToggleRecord,
+                    },
+
+                    gtk::Button {
+                        // Paper-plane bundled from relm4-icons. The
+                        // older curved-arrow asset is kept in
+                        // build.rs for compatibility but the WhatsApp
+                        // mental model maps better to a send icon.
+                        set_icon_name: "paper-plane-symbolic",
                         set_tooltip_text: Some("Send"),
                         add_css_class: "suggested-action",
                         connect_clicked => ChatTabInput::Send,
@@ -196,13 +345,53 @@ impl SimpleComponent for ChatTab {
             loading_older: false,
             reached_top: false,
             pending_echoes: HashMap::new(),
+            pending_media_echoes: HashMap::new(),
             bottomed: bottomed.clone(),
             updated_value: updated_value.clone(),
+            recorder: None,
+            recording_active: Rc::new(Cell::new(false)),
+            sticker_popover: None,
+            sticker_grid: None,
         };
 
         let messages_list = model.messages.widget();
         let widgets = view_output!();
         model.scroll = Some(widgets.scroll.clone());
+
+        // Build the sticker-picker popover post-view so we can
+        // anchor it to the live button. Stays empty until the
+        // first OpenStickerPicker triggers a worker fetch.
+        let sticker_grid = gtk::FlowBox::builder()
+            .min_children_per_line(4)
+            .max_children_per_line(4)
+            .selection_mode(gtk::SelectionMode::None)
+            .row_spacing(4)
+            .column_spacing(4)
+            .homogeneous(true)
+            .build();
+        let scrolled = gtk::ScrolledWindow::builder()
+            .min_content_width(380)
+            .min_content_height(280)
+            .child(&sticker_grid)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        let sticker_popover = gtk::Popover::builder()
+            .child(&scrolled)
+            .position(gtk::PositionType::Top)
+            .has_arrow(true)
+            .build();
+        sticker_popover.set_parent(&widgets.sticker_picker_btn);
+        model.sticker_popover = Some(sticker_popover);
+        model.sticker_grid = Some(sticker_grid);
+
+        // Ctrl+V on the composer pastes images straight into the
+        // attach-preview flow. Default GtkEntry paste only handles
+        // text, so we install a capture-phase key controller that
+        // checks the clipboard for image content first.
+        super::clipboard_paste::wire_paste(
+            &widgets.composer_entry,
+            sender.input_sender().clone(),
+        );
 
         wire_changed(&widgets.scroll, bottomed.clone(), updated_value.clone());
         wire_value_changed(

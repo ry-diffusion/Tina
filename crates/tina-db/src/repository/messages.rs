@@ -166,7 +166,8 @@ fn message_rows_by_ids_select() -> &'static str {
          m.quoted_sender_id,
          m.quoted_preview,
          COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
-         m.mentions_json
+         m.mentions_json,
+         m.delivery_status
        FROM messages m
        LEFT JOIN contacts ct
          ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -202,7 +203,8 @@ const MESSAGE_ROWS_BY_CHAT_SQL: &str = r#"SELECT
      m.quoted_sender_id,
      m.quoted_preview,
      COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
-     m.mentions_json
+     m.mentions_json,
+         m.delivery_status
    FROM messages m
    LEFT JOIN contacts ct
      ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
@@ -239,7 +241,8 @@ const MESSAGE_ROWS_BEFORE_SQL: &str = r#"SELECT
      m.quoted_sender_id,
      m.quoted_preview,
      COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
-     m.mentions_json
+     m.mentions_json,
+         m.delivery_status
    FROM messages m
    LEFT JOIN contacts ct
      ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id

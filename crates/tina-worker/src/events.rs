@@ -57,6 +57,13 @@ pub enum WorkerEvent {
     },
 
     Error { account_id: Option<String>, error: String },
+    Notice { account_id: Option<String>, message: String },
+    /// Receipt-driven delivery status update.
+    ReceiptUpdate {
+        account_id: String,
+        message_ids: Vec<String>,
+        status: String,
+    },
 
     /// Progresso ao vivo de um download de mídia.
     MediaDownloadProgress {

@@ -60,6 +60,7 @@ impl ChatTab {
             ));
         }
         self.auto_queue_downloads(&rows, sender);
+        self.maybe_mark_read(&rows, sender);
     }
 
     /// Apply the active DownloadMethod to a fresh batch of rows.
@@ -67,6 +68,51 @@ impl ChatTab {
     /// row that's still in `media_status = "none"` and lacks a local
     /// path; `Manual` skips. Per-id dedup via `MediaInventory` so
     /// reopening a tab doesn't re-queue the same fetches.
+    /// Send Read receipts for the from_other rows in `rows` when the
+    /// user is currently parked at the bottom of the thread (i.e. the
+    /// rows are visible). Groups by sender JID — whatsmeow's MarkRead
+    /// expects all ids in one call to share a sender. Newsletters
+    /// don't generate inbound message receipts so we skip them.
+    pub(super) fn maybe_mark_read(
+        &mut self,
+        rows: &[tina_db::MessageRow],
+        sender: &relm4::ComponentSender<Self>,
+    ) {
+        if !self.bottomed.get() {
+            return;
+        }
+        if matches!(self.kind.as_str(), "newsletter" | "status" | "broadcast") {
+            return;
+        }
+        let mut by_sender: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in rows {
+            if r.is_from_me {
+                continue;
+            }
+            // For DMs, the sender JID is just the chat JID; for
+            // groups we need the per-row participant.
+            let sender_jid = r
+                .sender_jid
+                .clone()
+                .unwrap_or_else(|| self.chat_id.clone());
+            by_sender
+                .entry(sender_jid)
+                .or_default()
+                .push(r.message_id.clone());
+        }
+        for (sender_jid, message_ids) in by_sender {
+            if message_ids.is_empty() {
+                continue;
+            }
+            let _ = sender.output(super::super::messages::ChatTabOutput::RequestMarkRead {
+                chat_id: self.chat_id.clone(),
+                sender_jid,
+                message_ids,
+            });
+        }
+    }
+
     pub(super) fn auto_queue_downloads(
         &mut self,
         rows: &[MessageRow],
@@ -235,6 +281,7 @@ impl ChatTab {
             );
         }
         self.auto_queue_downloads(&new_rows, sender);
+        self.maybe_mark_read(&new_rows, sender);
         // The connect_changed handler will autoscroll if `bottomed` —
         // meaning we only follow new messages when the user was already
         // at (or near) the bottom. If they scrolled up to read history,
@@ -257,7 +304,7 @@ impl ChatTab {
         // entire factory. History sync emits MessagesAppended for every
         // open tab; we'd otherwise pay the walk for every tab with no
         // optimistic echoes outstanding.
-        if self.pending_echoes.is_empty() {
+        if self.pending_echoes.is_empty() && self.pending_media_echoes.is_empty() {
             return (Vec::new(), HashSet::new());
         }
 
@@ -268,7 +315,38 @@ impl ChatTab {
             .enumerate()
             .map(|(i, f)| (f.item.id.clone(), (i, f.item.is_collapsed)))
             .collect();
-        let m = match_pending_echoes(rows, &mut self.pending_echoes, &local_idx_state);
+        let mut m = match_pending_echoes(rows, &mut self.pending_echoes, &local_idx_state);
+
+        // Media path: match by `media_sha256`. Drains the matched
+        // entry, appends to the same `replacements` vec so the
+        // remove/insert tail-first ordering still works.
+        if !self.pending_media_echoes.is_empty() {
+            for r in rows {
+                if !r.is_from_me {
+                    continue;
+                }
+                let Some(sha) = r.media_sha256.clone() else {
+                    continue;
+                };
+                let Some(queue) = self.pending_media_echoes.get_mut(&sha) else {
+                    continue;
+                };
+                let Some(local_id) = queue.pop_front() else {
+                    continue;
+                };
+                if queue.is_empty() {
+                    self.pending_media_echoes.remove(&sha);
+                }
+                if let Some((idx, was_collapsed)) = local_idx_state.get(&local_id).copied() {
+                    m.replacements.push((idx, r.clone(), was_collapsed));
+                    m.confirmed_server_ids.insert(r.message_id.clone());
+                    m.confirmed_local_ids.push(local_id);
+                }
+            }
+            // Re-sort tail-first for the safe remove/insert pattern.
+            m.replacements
+                .sort_by_key(|(idx, _, _)| std::cmp::Reverse(*idx));
+        }
 
         let mut avatar_fetches: Vec<String> = Vec::new();
         let chat_ctx = self.chat_context();
@@ -392,6 +470,8 @@ impl ChatTab {
             media_path: None,
             media_status: "none".to_string(),
             media_filename: None,
+            media_sha256: None,
+            delivery_status: "pending".to_string(),
             thumbnail: None,
             quoted_message_id: None,
             quoted_sender_id: None,

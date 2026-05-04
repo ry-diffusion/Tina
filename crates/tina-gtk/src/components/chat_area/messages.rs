@@ -73,6 +73,16 @@ pub enum ChatAreaInput {
         chat_id: String,
         text: String,
     },
+    /// Forwarded from a ChatTab — user confirmed a media-attach
+    /// preview.
+    SendMediaFromTab {
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
+    },
     /// Forwarded from a ChatTab.
     RequestMediaDownload(String),
     /// Forwarded from a ChatTab.
@@ -82,6 +92,25 @@ pub enum ChatAreaInput {
     },
     /// Forwarded from a ChatTab — sender-avatar fetch.
     RequestFetchAvatar(WaIdentity),
+    /// Forwarded from a ChatTab — sticker picker requested its
+    /// catalog.
+    RequestStickers { chat_id: String },
+    /// Forwarded from a ChatTab — read receipts for incoming rows.
+    RequestMarkRead {
+        chat_id: String,
+        sender_jid: String,
+        message_ids: Vec<String>,
+    },
+    /// Worker pushed sticker catalog. Routed to the matching tab.
+    StickersLoaded {
+        chat_id: String,
+        items: Vec<(String, String)>,
+    },
+    /// Receipt update — fanned out to every open tab.
+    ReceiptUpdate {
+        message_ids: Vec<String>,
+        status: String,
+    },
     /// Identity arrived (or changed). Stored for new tabs + forwarded
     /// to existing ones so from_me rows pick up the user avatar.
     SetUserJid(Option<WaIdentity>),
@@ -97,6 +126,14 @@ pub enum ChatAreaOutput {
         chat_id: String,
         text: String,
     },
+    SendMedia {
+        chat_id: String,
+        kind: tina_core::MediaKind,
+        path: String,
+        caption: Option<String>,
+        mimetype: Option<String>,
+        filename: Option<String>,
+    },
     /// A chat was closed in the UI — parent must tell the worker so it
     /// stops emitting `MessagesAppended` for it.
     CloseChat(String),
@@ -106,6 +143,16 @@ pub enum ChatAreaOutput {
         before_ts: i64,
     },
     RequestFetchAvatar(WaIdentity),
+    /// Forwarded sticker-picker request.
+    RequestStickers { chat_id: String },
+    /// Forwarded mark-read request — child of `ChatAreaOutput`. The
+    /// `ChatAreaInput` carries the same variant for the controller-
+    /// to-area hop.
+    RequestMarkRead {
+        chat_id: String,
+        sender_jid: String,
+        message_ids: Vec<String>,
+    },
     /// The set of chat_ids currently open in tabs (across both panes).
     /// Emitted whenever a tab opens or closes so the sidebar can
     /// highlight + sort-to-top the active chats.

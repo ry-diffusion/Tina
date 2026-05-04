@@ -86,6 +86,12 @@ pub fn handle_event(event: WorkerEvent) {
         WorkerEvent::Error { account_id, error } => {
             println!("\nError ({}): {}", account_id.unwrap_or_default(), error);
         }
+        WorkerEvent::Notice { account_id, message } => {
+            println!("\nNotice ({}): {}", account_id.unwrap_or_default(), message);
+        }
+        WorkerEvent::ReceiptUpdate { message_ids, status, .. } => {
+            println!("\nReceipt: {} → {}", status, message_ids.join(","));
+        }
         WorkerEvent::MediaDownloadProgress {
             account_id,
             message_id,
