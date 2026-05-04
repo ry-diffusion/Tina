@@ -6,6 +6,33 @@ pub fn glib_markup_escape(s: &str) -> String {
     gtk::glib::markup_escape_text(s).to_string()
 }
 
+/// Replace every `@<digits>` substring in an already Pango-escaped
+/// string with a styled span, for each entry in `mentions` (a list of
+/// JIDs). The user portion of each JID is the digit prefix; we match
+/// it literally so URLs that happen to embed `@` survive untouched.
+/// Background tinted to mirror dissent's mention chip.
+pub fn apply_mentions_pango(input: &str, mentions: &[String]) -> String {
+    if mentions.is_empty() {
+        return input.to_string();
+    }
+    let mut out = input.to_string();
+    for jid in mentions {
+        let user = jid.split('@').next().unwrap_or("");
+        if user.is_empty() || !user.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let needle = format!("@{user}");
+        if !out.contains(&needle) {
+            continue;
+        }
+        let span = format!(
+            "<span background=\"#6f78db4d\" foreground=\"#a3bffa\">@{user}</span>"
+        );
+        out = out.replace(&needle, &span);
+    }
+    out
+}
+
 /// Convert the WhatsApp text-styling markers to Pango markup so the
 /// content label can render them. Supports:
 ///   * `*bold*`, `_italic_`, `~strike~`,

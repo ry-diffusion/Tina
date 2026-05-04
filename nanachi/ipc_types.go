@@ -85,6 +85,16 @@ type MessageData struct {
 	// (FileSHA256). Permite que múltiplas mensagens reaproveitem o mesmo
 	// download em cache.
 	MediaSHA256 *string `json:"media_sha256,omitempty"`
+	// Reply / quoted-message — extracted from
+	// `proto.contextInfo.quotedMessage`. The Rust side stores these
+	// alongside the message so the chat bubble can render the
+	// dissent-style quote header without a separate lookup.
+	QuotedMessageID *string `json:"quoted_message_id,omitempty"`
+	QuotedSenderID  *string `json:"quoted_sender_id,omitempty"`
+	QuotedPreview   *string `json:"quoted_preview,omitempty"`
+	// Mentions — JIDs called out by `@<digits>` in the message text,
+	// from `proto.contextInfo.mentionedJID`.
+	MentionedJIDs []string `json:"mentioned_jids,omitempty"`
 }
 
 // stdoutMu protege stdout de escritas concorrentes (cada goroutine de

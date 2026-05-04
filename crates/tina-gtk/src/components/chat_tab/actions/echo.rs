@@ -96,6 +96,11 @@ mod tests {
             media_path: None,
             media_status: "none".into(),
             media_thumbnail: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            quoted_sender_name: None,
+            mentions_json: None,
         }
     }
 

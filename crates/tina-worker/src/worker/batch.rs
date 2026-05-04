@@ -21,8 +21,8 @@ pub(super) async fn process_contacts(
     let inputs: Vec<tina_db::ContactBatchInput<'_>> = contacts
         .iter()
         .map(|c| tina_db::ContactBatchInput {
-            jid: &c.jid,
-            lid: c.lid.as_deref(),
+            jid: c.jid.raw(),
+            lid: c.lid.as_ref().map(|x| x.raw()),
             phone_number: c.phone_number.as_deref(),
             push_name: c.notify.as_deref(),
             contact_name: c.name.as_deref(),
@@ -61,7 +61,12 @@ pub(super) async fn process_groups(
     let mut participant_id_storage: Vec<Vec<String>> = Vec::with_capacity(groups.len());
     for g in &groups {
         participants_json.push(serde_json::to_string(&g.participants).ok());
-        participant_id_storage.push(g.participants.iter().map(|p| p.id.clone()).collect());
+        participant_id_storage.push(
+            g.participants
+                .iter()
+                .map(|p| p.id.raw().to_string())
+                .collect(),
+        );
     }
     // Refs depois que os Strings já estão armazenados.
     let participant_refs: Vec<Vec<&str>> = participant_id_storage
@@ -73,9 +78,9 @@ pub(super) async fn process_groups(
         .iter()
         .enumerate()
         .map(|(i, g)| tina_db::GroupBatchInput {
-            jid: &g.jid,
+            jid: g.jid.raw(),
             subject: g.subject.as_deref(),
-            owner: g.owner.as_deref(),
+            owner: g.owner.as_ref().map(|x| x.raw()),
             description: g.description.as_deref(),
             participants_json: participants_json[i].as_deref(),
             participant_jids: participant_refs[i].as_slice(),

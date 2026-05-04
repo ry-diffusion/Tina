@@ -34,6 +34,7 @@ impl ChatTab {
             ChatTabInput::RequestMediaDownload(id) => {
                 self.handle_request_media_download(id, &sender)
             }
+            ChatTabInput::JumpToMessage(id) => self.handle_jump_to_message(id),
         }
     }
 }

@@ -6,7 +6,7 @@
 /// - v4: avatar_path em chats e contacts (cache local de profile pics).
 /// - v5: last_message_type + last_message_duration_secs em chats (preview).
 /// - v6: media_thumbnail BLOB em messages (inline preview JPEG/PNG).
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Comandos para *recriar* o schema do zero (não suporta migração in-place
 /// — quando `user_version` diverge, dropamos tudo e criamos de novo).
@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS messages (
     -- Inline preview JPEG/PNG bytes para image/video/sticker/document.
     -- ~5-50 KB cada; renderizado como placeholder antes do download.
     media_thumbnail BLOB,
+    -- Reply / quoted-message. WhatsApp encodes the citation in
+    -- `proto.contextInfo.quotedMessage`; nanachi extracts the
+    -- referenced message_id, sender, and a short preview so the
+    -- bubble can render the dissent-style quote header without a
+    -- separate JOIN at render time.
+    quoted_message_id TEXT,
+    quoted_sender_id TEXT,
+    quoted_preview TEXT,
+    -- Mentions: JSON array of JIDs mentioned in this message
+    -- (`proto.contextInfo.mentionedJID`). Renderer replaces each
+    -- `@<digits>` substring with the resolved contact name.
+    mentions_json TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(account_id, message_id),
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
@@ -159,6 +171,13 @@ ALTER TABLE chats ADD COLUMN last_message_duration_secs INTEGER;
 
 pub const MIGRATION_V5_TO_V6: &str = r#"
 ALTER TABLE messages ADD COLUMN media_thumbnail BLOB;
+"#;
+
+pub const MIGRATION_V6_TO_V7: &str = r#"
+ALTER TABLE messages ADD COLUMN quoted_message_id TEXT;
+ALTER TABLE messages ADD COLUMN quoted_sender_id TEXT;
+ALTER TABLE messages ADD COLUMN quoted_preview TEXT;
+ALTER TABLE messages ADD COLUMN mentions_json TEXT;
 "#;
 
 /// Migrações in-place pra evitar dropar o banco do usuário. Cada função roda

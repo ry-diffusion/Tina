@@ -1,13 +1,15 @@
 // Init / Input / Output for the `ChatArea` component.
 
+use tina_core::WaIdentity;
 use tina_db::MessageRow;
 
-use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory, MessageInventory};
 
 pub struct ChatAreaInit {
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
     pub chats: ChatInventory,
+    pub messages: MessageInventory,
 }
 
 #[derive(Debug)]
@@ -41,7 +43,7 @@ pub enum ChatAreaInput {
         message_id: String,
     },
     AvatarReady {
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
     /// A pane's selected tab changed; route StickToBottom + update headerbar.
@@ -79,10 +81,10 @@ pub enum ChatAreaInput {
         before_ts: i64,
     },
     /// Forwarded from a ChatTab — sender-avatar fetch.
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
     /// Identity arrived (or changed). Stored for new tabs + forwarded
     /// to existing ones so from_me rows pick up the user avatar.
-    SetUserJid(Option<String>),
+    SetUserJid(Option<WaIdentity>),
 }
 
 #[derive(Debug)]
@@ -103,7 +105,7 @@ pub enum ChatAreaOutput {
         chat_id: String,
         before_ts: i64,
     },
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
     /// The set of chat_ids currently open in tabs (across both panes).
     /// Emitted whenever a tab opens or closes so the sidebar can
     /// highlight + sort-to-top the active chats.

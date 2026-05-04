@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use tina_core::IpcEvent;
+use tina_core::{IpcEvent, WaIdentity};
 use tina_db::TinaDb;
 
 use crate::error::Result;
@@ -144,8 +144,9 @@ pub(super) async fn handle_realtime_event(
             path,
         } => {
             // Persist before forwarding so the UI's next list_chat_rows
-            // already returns the path.
-            if let Err(e) = db.set_avatar_path(&account_id, &jid, &path).await {
+            // already returns the path. DB still keys on the raw JID
+            // string; the typed `WaIdentity` round-trips through it.
+            if let Err(e) = db.set_avatar_path(&account_id, jid.raw(), &path).await {
                 tracing::error!("set_avatar_path: {e}");
             }
             let _ = event_tx
@@ -202,10 +203,11 @@ async fn handle_connected(
     event_tx: &mpsc::Sender<WorkerEvent>,
     account_id: String,
     phone_number: Option<String>,
-    jid: Option<String>,
+    jid: Option<WaIdentity>,
     push_name: Option<String>,
 ) -> Result<()> {
-    db.save_account_identity(&account_id, phone_number.as_deref(), jid.as_deref())
+    let jid_raw = jid.as_ref().map(|x| x.raw());
+    db.save_account_identity(&account_id, phone_number.as_deref(), jid_raw)
         .await?;
     let _ = event_tx
         .send(WorkerEvent::Connected {
@@ -229,21 +231,16 @@ async fn handle_chats_pin_update(
     }
     let mut affected: Vec<String> = Vec::with_capacity(items.len());
     for item in &items {
-        if let Err(e) = db
-            .set_chat_pinned(&account_id, &item.chat_jid, item.pinned)
-            .await
-        {
+        let raw = item.chat_jid.raw();
+        if let Err(e) = db.set_chat_pinned(&account_id, raw, item.pinned).await {
             // Likely a missing chat row — the pin info arrived before
             // the conversation was upserted. Log and skip; the row
             // will be created later and we'll re-emit on the next
             // HistorySync chunk if the conversation comes back.
-            tracing::debug!(
-                chat = %item.chat_jid,
-                "set_chat_pinned skipped: {e}",
-            );
+            tracing::debug!(chat = %raw, "set_chat_pinned skipped: {e}");
             continue;
         }
-        affected.push(item.chat_jid.clone());
+        affected.push(raw.to_string());
     }
     if affected.is_empty() {
         return;

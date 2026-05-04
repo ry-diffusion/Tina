@@ -121,6 +121,9 @@ impl SimpleComponent for ChatTab {
                 crate::components::message_bubble::MessageBubbleOut::DownloadRequested(id) => {
                     ChatTabInput::RequestMediaDownload(id)
                 }
+                crate::components::message_bubble::MessageBubbleOut::JumpToMessage(id) => {
+                    ChatTabInput::JumpToMessage(id)
+                }
             });
 
         // Seed with initial history. The collapse cursor is purely
@@ -148,7 +151,7 @@ impl SimpleComponent for ChatTab {
                     collapsed,
                     &init.avatars,
                     &init.media,
-                    init.user_jid.as_deref(),
+                    init.user_jid.as_ref().map(|x| x.raw()),
                     &init_chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
@@ -158,7 +161,9 @@ impl SimpleComponent for ChatTab {
         // Drain after the guard drops — Sender::send is cheap but we
         // don't want it to interleave with factory pushes.
         for jid in avatar_fetches {
-            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
+                tina_core::WaIdentity::parse(&jid),
+            ));
         }
 
         let mut seen: HashSet<String> = HashSet::with_capacity(init.initial.len());

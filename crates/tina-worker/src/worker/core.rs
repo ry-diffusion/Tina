@@ -135,7 +135,7 @@ impl TinaWorker {
         nanachi
             .send_command(IpcCommand::SendMessage {
                 account_id: account_id.to_string(),
-                to: to.to_string(),
+                to: tina_core::WaIdentity::parse(to),
                 content: content.to_string(),
             })
             .await?;
@@ -150,7 +150,7 @@ impl TinaWorker {
         nanachi
             .send_command(IpcCommand::FetchAvatar {
                 account_id: account_id.to_string(),
-                jid: jid.to_string(),
+                jid: tina_core::WaIdentity::parse(jid),
             })
             .await?;
         Ok(())
@@ -163,7 +163,7 @@ impl TinaWorker {
         nanachi
             .send_command(IpcCommand::RefreshChat {
                 account_id: account_id.to_string(),
-                chat_jid: chat_jid.to_string(),
+                chat_jid: tina_core::WaIdentity::parse(chat_jid),
             })
             .await?;
         Ok(())

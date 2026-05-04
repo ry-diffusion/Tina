@@ -47,4 +47,33 @@ pub const MESSAGE_ROW_CSS: &str = r#"
 .message-picture {
     border-radius: 6px;
 }
+.message-reply-button {
+    padding: 0;
+    margin-bottom: 2px;
+    margin-top: 1px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    min-height: 0;
+}
+.message-reply-button:hover .message-reply-box {
+    background-color: alpha(@theme_fg_color, 0.06);
+}
+.message-reply-box {
+    border-left: 2px solid alpha(@theme_fg_color, 0.4);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+.message-reply-author {
+    font-weight: 600;
+    color: @accent_color;
+}
+.message-reply-preview {
+    color: alpha(@theme_fg_color, 0.7);
+}
+.message-jump-highlight {
+    background-color: alpha(@accent_color, 0.18);
+    transition: background-color 600ms ease-out;
+}
 "#;

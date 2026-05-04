@@ -1,6 +1,7 @@
 // Commands the UI can send to the worker thread, plus the
 // `ServiceHandle` used by the rest of the app to send them.
 
+use tina_core::WaIdentity;
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -21,7 +22,7 @@ pub enum Cmd {
     /// push them back as `AppMsg::ShowStoriesViewer` so the
     /// dispatcher can open the carousel.
     OpenStatusAuthor {
-        sender_jid: String,
+        sender_jid: WaIdentity,
         name: String,
     },
     /// Open (or re-load) a chat: fetches metadata + last 200 messages,
@@ -41,10 +42,10 @@ pub enum Cmd {
     DownloadMedia { message_id: String },
     /// Fetch a profile picture for the given JID (chat_id, contact_id,
     /// etc — anything that resolves through the worker's aliases).
-    FetchAvatar { jid: String },
+    FetchAvatar { jid: WaIdentity },
     /// Re-pull a chat's display name + avatar (newsletters / groups).
     /// Triggered by `ChatInventory` when it sees a render miss.
-    RefreshChat { chat_jid: String },
+    RefreshChat { chat_jid: WaIdentity },
     /// Lazy-load older messages (page back). The UI passes the timestamp
     /// of its currently-oldest row; the worker returns the next batch
     /// strictly older than that.

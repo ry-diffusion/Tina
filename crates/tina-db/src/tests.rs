@@ -493,6 +493,10 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             is_from_me: false,
             raw_json: None,
             media: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            mentions_json: None,
         },
         MessageBatchInput {
             message_id: "m2",
@@ -504,6 +508,10 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             is_from_me: false,
             raw_json: None,
             media: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            mentions_json: None,
         },
         MessageBatchInput {
             message_id: "m3",
@@ -515,6 +523,10 @@ async fn run_message_batch_dedupes_resolves_and_aggregates_last_message() {
             is_from_me: false,
             raw_json: None,
             media: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            mentions_json: None,
         },
     ];
     let res = db.run_message_batch("acc1", None, &messages).await.unwrap();
@@ -544,6 +556,10 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             is_from_me: false,
             raw_json: None,
             media: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            mentions_json: None,
         },
         MessageBatchInput {
             message_id: "m-other",
@@ -555,6 +571,10 @@ async fn run_message_batch_emits_active_chat_message_ids() {
             is_from_me: true,
             raw_json: None,
             media: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_preview: None,
+            mentions_json: None,
         },
     ];
     let res = db
@@ -578,6 +598,10 @@ async fn run_message_batch_skips_duplicates_via_insert_or_ignore() {
         is_from_me: false,
         raw_json: None,
         media: None,
+        quoted_message_id: None,
+        quoted_sender_id: None,
+        quoted_preview: None,
+        mentions_json: None,
     };
     let r1 = db.run_message_batch("acc1", None, &[msg]).await.unwrap();
     assert_eq!(r1.affected_chat_ids.len(), 1);

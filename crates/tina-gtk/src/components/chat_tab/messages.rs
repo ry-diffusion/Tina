@@ -1,5 +1,6 @@
 // Public Input / Output / Init / constants for the `ChatTab` component.
 
+use tina_core::WaIdentity;
 use tina_db::MessageRow;
 
 use crate::inventory::{AvatarInventory, MediaInventory};
@@ -25,6 +26,10 @@ pub enum ChatTabInput {
     },
     MediaFailed(String),
     RequestMediaDownload(String),
+    /// Reply quote-header was clicked — scroll the thread to the
+    /// cited message, briefly highlighting it. No-op when the
+    /// target isn't currently in the factory.
+    JumpToMessage(String),
     /// VAdjustment crossed the load-more threshold. Internal trigger.
     NearTop,
     /// User scrolled back to the bottom — opportunity to prune the top
@@ -42,10 +47,10 @@ pub enum ChatTabInput {
     StickToBottom,
     /// Worker resolved a profile picture — apply it to every message
     /// row whose sender JID matches.
-    AvatarReady { jid: String, path: String },
+    AvatarReady { jid: WaIdentity, path: String },
     /// Identity arrived (or changed) — back-fill `sender_jid` on
     /// existing from_me rows and apply the cached avatar to them.
-    SetUserJid(Option<String>),
+    SetUserJid(Option<WaIdentity>),
 }
 
 #[derive(Debug)]
@@ -56,7 +61,7 @@ pub enum ChatTabOutput {
     RequestLoadOlder { chat_id: String, before_ts: i64 },
     /// Ask the worker to fetch a sender's profile picture. Deduped at
     /// the tab level so we only round-trip per JID once.
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
 }
 
 pub struct ChatTabInit {
@@ -69,5 +74,5 @@ pub struct ChatTabInit {
     /// Signed-in user's JID, used to override `sender_jid` for `from_me`
     /// rows (which the DB stores with `sender_contact_id = NULL`, so the
     /// JOIN can't resolve a JID for them).
-    pub user_jid: Option<String>,
+    pub user_jid: Option<WaIdentity>,
 }

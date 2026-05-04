@@ -1,3 +1,4 @@
+use tina_core::WaIdentity;
 use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 #[derive(Debug, Clone)]
@@ -9,7 +10,7 @@ pub enum WorkerEvent {
     Connected {
         account_id: String,
         phone_number: Option<String>,
-        jid: Option<String>,
+        jid: Option<WaIdentity>,
         push_name: Option<String>,
     },
     Disconnected { account_id: String, reason: String },
@@ -82,12 +83,12 @@ pub enum WorkerEvent {
     /// Profile picture finished downloading (or was found in cache).
     AvatarReady {
         account_id: String,
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
     AvatarFailed {
         account_id: String,
-        jid: String,
+        jid: WaIdentity,
         error: String,
     },
 }

@@ -310,22 +310,16 @@ impl ChatInventory {
     }
 
     /// Apply a snapshot from `ChatsUpserted` so subsequent renders
-    /// hit the cache without firing a refresh.
+    /// hit the cache without firing a refresh. Names that look like
+    /// raw JIDs collapse to `display_name: None` so the next miss
+    /// check correctly flags the row as still-unresolved — without
+    /// that, a chat whose row echoes its own JID back would happily
+    /// cache the JID as its "name" and never refresh.
     pub fn ingest_row(&self, chat_id: &str, kind: &str, name: &str, avatar: Option<&str>) {
-        let resolved_name = if name.is_empty() {
+        let resolved_name = if crate::wa_id::WaIdentity::looks_like_unresolved_name(name) {
             None
         } else {
-            // Treat raw JIDs as "no name yet" — the cache should
-            // hold real display names only, otherwise miss-detection
-            // never fires for a chat whose row already echoes its
-            // own JID back.
-            if matches!(crate::wa_id::WaIdentity::parse(name), crate::wa_id::WaIdentity::Unknown(_)) {
-                Some(name.to_string())
-            } else if name == chat_id {
-                None
-            } else {
-                Some(name.to_string())
-            }
+            Some(name.to_string())
         };
         let meta = ChatMeta {
             kind: kind.to_string(),
@@ -373,5 +367,86 @@ impl ChatInventory {
         if let Some(cb) = self.on_miss.borrow().as_ref() {
             cb(chat_id.to_string());
         }
+    }
+}
+
+// ============================================================================
+// MessageInventory: message_id → metadata for replies / quoted messages
+// ============================================================================
+
+/// Slim copy of a message used by the bubble's reply-quote header
+/// and (eventually) by mention/forward affordances. Built lazily —
+/// every chat tab feeds its `bind` rows in here so replies can
+/// resolve the cited message synchronously without a DB roundtrip.
+#[allow(dead_code)] // fields read by the future reply-quote renderer
+#[derive(Clone, Debug)]
+pub struct MessageMeta {
+    pub message_id: String,
+    /// Resolved sender name (post-contact-resolution) when the row
+    /// is from another participant; `None` for the user's own messages.
+    pub sender_name: Option<String>,
+    pub message_type: String,
+    /// Short text preview suitable for a one-line quote header.
+    /// Caller decides what to put here — typically the first 80
+    /// chars of `content` or a `📷 Foto`-style fallback for media.
+    pub preview: String,
+    pub timestamp_unix: i64,
+}
+
+#[derive(Default)]
+struct MessageInventoryInner {
+    /// Bounded so a long-running session doesn't grow forever.
+    /// Reply lookups are recent-skewed (the user usually replies
+    /// to something they just saw), so an LRU on the latest few
+    /// thousand messages covers the realistic working set.
+    metas: HashMap<String, MessageMeta>,
+    order: VecDeque<String>,
+}
+
+const MESSAGE_INVENTORY_CAP: usize = 4_096;
+
+/// Companion to `ChatInventory`, but indexed by message_id. The
+/// reply UI we'll layer on top of this asks for the cited message's
+/// sender + preview at render time; without a cache we'd round-trip
+/// the worker for every quoted bubble in the thread.
+#[derive(Clone, Default)]
+pub struct MessageInventory {
+    inner: Rc<RefCell<MessageInventoryInner>>,
+}
+
+impl MessageInventory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Cache (or update) one message. Cheap enough to call from
+    /// every bubble-bind path; the LRU bookkeeping keeps the map
+    /// bounded.
+    #[allow(dead_code)] // first consumer lands with reply rendering
+    pub fn put(&self, meta: MessageMeta) {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.metas.contains_key(&meta.message_id) {
+            inner.order.push_back(meta.message_id.clone());
+            // LRU evict from the front when over capacity. Cheap
+            // because the front is the oldest insertion, not the
+            // oldest access — replies skew recent so the order ≈
+            // access pattern in practice.
+            while inner.order.len() > MESSAGE_INVENTORY_CAP {
+                if let Some(victim) = inner.order.pop_front() {
+                    inner.metas.remove(&victim);
+                } else {
+                    break;
+                }
+            }
+        }
+        inner.metas.insert(meta.message_id.clone(), meta);
+    }
+
+    /// Look up a cached message. Returns `None` for evicted /
+    /// never-cached IDs; the reply renderer falls back to a stub
+    /// "Original message" header in that case.
+    #[allow(dead_code)] // first consumer lands with reply rendering
+    pub fn get(&self, message_id: &str) -> Option<MessageMeta> {
+        self.inner.borrow().metas.get(message_id).cloned()
     }
 }

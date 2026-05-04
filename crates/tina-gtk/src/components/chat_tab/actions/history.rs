@@ -47,7 +47,7 @@ impl ChatTab {
                     collapsed,
                     &self.avatars,
                     &self.media,
-                    self.user_jid.as_deref(),
+                    self.user_jid.as_ref().map(|x| x.raw()),
                     &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
@@ -55,7 +55,9 @@ impl ChatTab {
             }
         }
         for jid in avatar_fetches {
-            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
+                tina_core::WaIdentity::parse(&jid),
+            ));
         }
     }
 
@@ -73,15 +75,47 @@ impl ChatTab {
         let (avatar_fetches_ack, confirmed_server_ids) =
             self.confirm_pending_echoes(&rows);
 
-        let new_rows: Vec<_> = rows
+        let mut new_rows: Vec<_> = rows
             .into_iter()
             .filter(|r| !confirmed_server_ids.contains(&r.message_id))
             .filter(|r| self.seen_message_ids.insert(r.message_id.clone()))
             .collect();
+
+        // Cap the batch when the user is parked at the bottom (sticky
+        // autoscroll). History-sync flushes can deliver thousands of
+        // rows in a single MessagesAppended; rendering them all just
+        // to prune on the next NearBottom freezes the UI for seconds.
+        // The tail is what the autoscroll lands on anyway, so keep
+        // only that and discard the older portion of this batch — the
+        // user can page back via near-top to retrieve them from disk.
+        const APPEND_BATCH_CAP: usize = 200;
+        if self.bottomed.get() && new_rows.len() > APPEND_BATCH_CAP {
+            let drop = new_rows.len() - APPEND_BATCH_CAP;
+            let dropped: Vec<_> = new_rows.drain(..drop).collect();
+            for r in &dropped {
+                // Re-allow these IDs so a future older-page fetch can
+                // surface them — they live in the DB, just not in the
+                // factory.
+                self.seen_message_ids.remove(&r.message_id);
+            }
+            tracing::warn!(
+                chat = %self.chat_id,
+                dropped = drop,
+                kept = new_rows.len(),
+                "ChatTab::Append: capped during autoscroll-bottomed sync"
+            );
+            // We're dropping rows older than the newest in this
+            // batch; the gap means older history is once again
+            // legitimately available to fetch.
+            self.reached_top = false;
+        }
+
         let mut avatar_fetches = avatar_fetches_ack;
         if new_rows.is_empty() {
             for jid in avatar_fetches {
-                let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+                let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
+                    tina_core::WaIdentity::parse(&jid),
+                ));
             }
             return;
         }
@@ -102,7 +136,7 @@ impl ChatTab {
                     collapsed,
                     &self.avatars,
                     &self.media,
-                    self.user_jid.as_deref(),
+                    self.user_jid.as_ref().map(|x| x.raw()),
                     &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
@@ -110,7 +144,48 @@ impl ChatTab {
             }
         }
         for jid in avatar_fetches {
-            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+            let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
+                tina_core::WaIdentity::parse(&jid),
+            ));
+        }
+
+        // Cumulative cap: even with each batch capped, repeated
+        // appends during a long sync can stack up. Trim from the
+        // front when bottomed and over the soft cap so the factory
+        // never holds more than ~200 widgets during sync.
+        const FACTORY_SOFT_CAP: usize = 250;
+        const FACTORY_TARGET: usize = 200;
+        if self.bottomed.get() && self.messages.len() > FACTORY_SOFT_CAP {
+            let to_drop = self.messages.len() - FACTORY_TARGET;
+            let mut dropped_ids: Vec<String> = Vec::with_capacity(to_drop);
+            {
+                let guard = self.messages.guard();
+                for fac in guard.iter().take(to_drop) {
+                    dropped_ids.push(fac.item.id.clone());
+                }
+            }
+            {
+                let mut guard = self.messages.guard();
+                for _ in 0..to_drop {
+                    guard.pop_front();
+                }
+            }
+            for id in &dropped_ids {
+                self.seen_message_ids.remove(id);
+            }
+            self.oldest_ts = self
+                .messages
+                .guard()
+                .iter()
+                .next()
+                .map(|f| f.item.timestamp_unix);
+            self.reached_top = false;
+            tracing::info!(
+                chat = %self.chat_id,
+                dropped = to_drop,
+                remaining = self.messages.len(),
+                "ChatTab::Append: pruned cumulative overflow"
+            );
         }
         // The connect_changed handler will autoscroll if `bottomed` —
         // meaning we only follow new messages when the user was already
@@ -155,7 +230,7 @@ impl ChatTab {
                 was_collapsed,
                 &self.avatars,
                 &self.media,
-                self.user_jid.as_deref(),
+                self.user_jid.as_ref().map(|x| x.raw()),
                 &chat_ctx,
                 &mut |jid| avatar_fetches.push(jid),
             );
@@ -239,13 +314,16 @@ impl ChatTab {
         };
         let local_avatar = self
             .user_jid
-            .as_deref()
-            .and_then(|j| self.avatars.get(j));
+            .as_ref()
+            .and_then(|j| self.avatars.get(j.raw()));
         MessageItem {
             id: local_id,
             from_me: true,
             sender_name: String::new(),
-            sender_jid: self.user_jid.clone(),
+            // MessageItem still keys on raw JID strings (the DB
+            // schema does too); converting that down to typed
+            // identifiers is a separate refactor.
+            sender_jid: self.user_jid.as_ref().map(|x| x.raw().to_string()),
             sender_avatar_path: local_avatar,
             chat_kind: self.kind.clone(),
             chat_display_name: if self.name.is_empty() {
@@ -267,6 +345,11 @@ impl ChatTab {
             media_status: "none".to_string(),
             media_filename: None,
             thumbnail: None,
+            quoted_message_id: None,
+            quoted_sender_id: None,
+            quoted_sender_name: None,
+            quoted_preview: None,
+            mentions: Vec::new(),
         }
     }
 }

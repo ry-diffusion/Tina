@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 use crate::error::{DbError, Result};
 use crate::schema::{
-    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, MIGRATION_V5_TO_V6, SCHEMA,
-    SCHEMA_DROP, SCHEMA_VERSION,
+    MIGRATION_V2_TO_V3, MIGRATION_V3_TO_V4, MIGRATION_V4_TO_V5, MIGRATION_V5_TO_V6,
+    MIGRATION_V6_TO_V7, SCHEMA, SCHEMA_DROP, SCHEMA_VERSION,
 };
 
 pub struct TinaDb {
@@ -115,29 +115,38 @@ async fn migrate(pool: &Pool<Sqlite>) -> Result<()> {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
         }
         2 => {
-            tracing::info!("Migrating tina.db from v2 → v6");
+            tracing::info!("Migrating tina.db from v2 → v7");
             sqlx::raw_sql(MIGRATION_V2_TO_V3).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(pool).await?;
+            sqlx::raw_sql(MIGRATION_V6_TO_V7).execute(pool).await?;
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
         }
         3 => {
-            tracing::info!("Migrating tina.db from v3 → v6");
+            tracing::info!("Migrating tina.db from v3 → v7");
             sqlx::raw_sql(MIGRATION_V3_TO_V4).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(pool).await?;
+            sqlx::raw_sql(MIGRATION_V6_TO_V7).execute(pool).await?;
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
         }
         4 => {
-            tracing::info!("Migrating tina.db from v4 → v6");
+            tracing::info!("Migrating tina.db from v4 → v7");
             sqlx::raw_sql(MIGRATION_V4_TO_V5).execute(pool).await?;
             sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(pool).await?;
+            sqlx::raw_sql(MIGRATION_V6_TO_V7).execute(pool).await?;
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
         }
         5 => {
-            tracing::info!("Migrating tina.db from v5 → v6 (media_thumbnail)");
+            tracing::info!("Migrating tina.db from v5 → v7");
             sqlx::raw_sql(MIGRATION_V5_TO_V6).execute(pool).await?;
+            sqlx::raw_sql(MIGRATION_V6_TO_V7).execute(pool).await?;
+            sqlx::raw_sql(SCHEMA).execute(pool).await?;
+        }
+        6 => {
+            tracing::info!("Migrating tina.db from v6 → v7 (quoted_* + mentions_json)");
+            sqlx::raw_sql(MIGRATION_V6_TO_V7).execute(pool).await?;
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
         }
         other => {

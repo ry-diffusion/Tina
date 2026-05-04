@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use tina_core::WaIdentity;
 use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 pub struct AppInit {
@@ -43,7 +44,7 @@ pub enum AppMsg {
     Connected {
         account_id: String,
         phone_number: Option<String>,
-        jid: Option<String>,
+        jid: Option<WaIdentity>,
         push_name: Option<String>,
     },
     Disconnected(String),
@@ -101,10 +102,10 @@ pub enum AppMsg {
         before_ts: i64,
     },
     AvatarReady {
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
 
     // From the UI:
     OpenChatNew(String),
@@ -119,9 +120,9 @@ pub enum AppMsg {
     RequestLoadStatuses,
     /// Triggered by `ChatInventory` when it sees a chat without a
     /// resolved display name. Routed to `Cmd::RefreshChat`.
-    RequestRefreshChat(String),
+    RequestRefreshChat(WaIdentity),
     OpenStatusAuthor {
-        sender_jid: String,
+        sender_jid: WaIdentity,
         name: String,
     },
     /// Worker pushed back the timeline of one author's status posts;

@@ -54,14 +54,18 @@ impl ChatArea {
     ) {
         self.chat_meta
             .insert(chat_id.clone(), (name.clone(), kind.clone()));
-        // Feed the inventory + auto-refresh on miss. Channel chats
-        // open with `name == chat_id` until `GetNewsletterInfo`
-        // resolves; the inventory dedupes the request so opening
-        // the same channel twice in a session only round-trips once.
+        // Feed the inventory + auto-refresh on miss. The same
+        // `WaIdentity` predicates the sidebar uses; channels open
+        // with `name == chat_id` until `GetNewsletterInfo` resolves,
+        // and the inventory dedupes the request so opening the same
+        // channel twice in a session only round-trips once.
         self.chats
             .ingest_row(&chat_id, &kind, &name, self.avatars.get(&chat_id).as_deref());
-        if matches!(kind.as_str(), "newsletter" | "group") && (name.is_empty() || name == chat_id) {
-            self.chats.request_refresh(&chat_id);
+        let id = crate::wa_id::WaIdentity::parse(&chat_id);
+        if id.needs_metadata_refresh()
+            && crate::wa_id::WaIdentity::looks_like_unresolved_name(&name)
+        {
+            self.chats.request_refresh(id.raw());
         }
         if let Some((controller, page, _)) = self.open_tabs.get(&chat_id) {
             let _ = controller.sender().send(ChatTabInput::SetMeta {
@@ -78,7 +82,9 @@ impl ChatArea {
         self.refresh_pane_header(1);
         self.broadcast_active_tabs(sender);
         if self.avatars.get(&chat_id).is_none() && self.avatars.needs_fetch(&chat_id) {
-            let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(chat_id));
+            let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(
+                tina_core::WaIdentity::parse(&chat_id),
+            ));
         }
     }
 

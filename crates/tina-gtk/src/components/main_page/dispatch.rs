@@ -143,7 +143,7 @@ impl MainPage {
     fn handle_set_identity(
         &mut self,
         phone: Option<String>,
-        jid: Option<String>,
+        jid: Option<tina_core::WaIdentity>,
         push_name: Option<String>,
     ) {
         let _ = self.sidebar.sender().send(SidebarInput::SetIdentity {

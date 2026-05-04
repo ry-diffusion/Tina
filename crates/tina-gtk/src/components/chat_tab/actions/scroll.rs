@@ -67,6 +67,54 @@ impl ChatTab {
         );
     }
 
+    /// User clicked a reply quote-header. Locate the cited row in
+    /// the factory window, scroll the viewport so it sits in the
+    /// upper third, and add a transient highlight class so the
+    /// target is easy to spot. No-op when the message has been
+    /// pruned out of the loaded window — paging back to it is a
+    /// follow-up.
+    pub(in crate::components::chat_tab) fn handle_jump_to_message(
+        &mut self,
+        target_id: String,
+    ) {
+        let pos = self
+            .messages
+            .guard()
+            .iter()
+            .position(|f| f.item.id == target_id);
+        let Some(pos) = pos else {
+            tracing::info!(
+                target_id,
+                "JumpToMessage: target outside loaded window"
+            );
+            return;
+        };
+        let Some(scroll) = self.scroll.clone() else { return };
+        let listbox: gtk::ListBox = self.messages.widget().clone();
+        // Defer to idle so any in-flight relayout has settled before
+        // we read the row bounds — otherwise the rect comes back as
+        // (0,0,0,0) on the very first jump after a fresh Reset.
+        glib::idle_add_local_once(move || {
+            let Some(row) = listbox.row_at_index(pos as i32) else { return };
+            let Some(bounds) = row.compute_bounds(&listbox) else { return };
+            let row_y = bounds.y() as f64;
+            let page = scroll.vadjustment().page_size();
+            // Land the row in the upper third — keeps surrounding
+            // context (the messages around the citation) visible
+            // instead of pinning it at the very top.
+            let target = (row_y - page * 0.33).max(0.0);
+            scroll.vadjustment().set_value(target);
+            row.add_css_class("message-jump-highlight");
+            let row_clone = row.clone();
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(1500),
+                move || {
+                    row_clone.remove_css_class("message-jump-highlight");
+                },
+            );
+        });
+    }
+
     pub(in crate::components::chat_tab) fn handle_near_top(
         &mut self,
         sender: &ComponentSender<Self>,
@@ -141,7 +189,7 @@ impl ChatTab {
                     *collapsed,
                     &self.avatars,
                     &self.media,
-                    self.user_jid.as_deref(),
+                    self.user_jid.as_ref().map(|x| x.raw()),
                     &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
@@ -149,7 +197,9 @@ impl ChatTab {
             }
             drop(guard);
             for jid in avatar_fetches {
-                let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
+                let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
+                    tina_core::WaIdentity::parse(&jid),
+                ));
             }
         }
 

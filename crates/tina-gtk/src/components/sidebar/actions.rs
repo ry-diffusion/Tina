@@ -19,22 +19,24 @@ impl Sidebar {
     pub(super) fn handle_set_identity(
         &mut self,
         phone: Option<String>,
-        jid: Option<String>,
+        jid: Option<tina_core::WaIdentity>,
         push_name: Option<String>,
         sender: &ComponentSender<Self>,
     ) {
         self.user_jid = jid.clone();
-        if let Some(j) = jid.as_deref()
-            && !j.is_empty() {
-                if let Some(p) = self.avatars.get(j) {
+        if let Some(j) = jid.as_ref() {
+            let raw = j.raw();
+            if !raw.is_empty() {
+                if let Some(p) = self.avatars.get(raw) {
                     let _ = self.profile.sender().send(ProfileMenuInput::SetAvatar(p));
-                } else if self.avatars.needs_fetch(j) {
-                    let _ = sender.output(SidebarOutput::RequestFetchAvatar(j.to_string()));
+                } else if self.avatars.needs_fetch(raw) {
+                    let _ = sender.output(SidebarOutput::RequestFetchAvatar(j.clone()));
                 }
             }
+        }
         let _ = self.profile.sender().send(ProfileMenuInput::SetIdentity {
             phone,
-            jid,
+            jid: jid.as_ref().map(|j| j.raw().to_string()),
             push_name,
         });
     }
@@ -50,7 +52,9 @@ impl Sidebar {
                     r.avatar_path = Some(p);
                 }
             if r.avatar_path.is_none() && self.avatars.needs_fetch(&r.chat_id) {
-                let _ = sender.output(SidebarOutput::RequestFetchAvatar(r.chat_id.clone()));
+                let _ = sender.output(SidebarOutput::RequestFetchAvatar(
+                    tina_core::WaIdentity::parse(&r.chat_id),
+                ));
             }
         }
         // Snapshot whether the user is parked at the top BEFORE
@@ -135,7 +139,7 @@ impl Sidebar {
             "status author activated",
         );
         let _ = sender.output(SidebarOutput::OpenStatusAuthor {
-            sender_jid: item.sender_jid.clone(),
+            sender_jid: tina_core::WaIdentity::parse(&item.sender_jid),
             name: item.name.clone(),
         });
     }
@@ -180,16 +184,17 @@ impl Sidebar {
         self.repair_indeterminate = indeterminate;
     }
 
-    pub(super) fn handle_avatar_ready(&mut self, jid: String, path: String) {
-        self.avatars.put(jid.clone(), path.clone());
-        if let Some(pos) = self.find_chat_position(&jid) {
+    pub(super) fn handle_avatar_ready(&mut self, jid: tina_core::WaIdentity, path: String) {
+        let raw = jid.raw().to_string();
+        self.avatars.put(raw.clone(), path.clone());
+        if let Some(pos) = self.find_chat_position(&raw) {
             let prev = self.list.get(pos).map(|i| i.borrow().clone());
             if let Some(mut prev) = prev {
                 prev.avatar_path = Some(path.clone());
                 self.replace_at(pos, prev);
             }
         }
-        if self.user_jid.as_deref() == Some(jid.as_str()) {
+        if self.user_jid.as_ref().map(|x| x.raw()) == Some(raw.as_str()) {
             let _ = self.profile.sender().send(ProfileMenuInput::SetAvatar(path));
         }
     }

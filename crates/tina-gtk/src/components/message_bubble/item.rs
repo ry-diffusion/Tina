@@ -48,6 +48,18 @@ pub struct MessageItem {
     /// triggered the full download yet — much nicer than the generic
     /// icon. Decoded into a `gdk::Texture` lazily by the view.
     pub thumbnail: Option<Vec<u8>>,
+    /// Reply / quoted-message metadata. `quoted_message_id` being
+    /// `Some` is the type-level signal that the reply header should
+    /// be rendered.
+    pub quoted_message_id: Option<String>,
+    pub quoted_sender_id: Option<String>,
+    pub quoted_sender_name: Option<String>,
+    pub quoted_preview: Option<String>,
+    /// JIDs mentioned in the message text, decoded from the
+    /// `mentions_json` column. Each entry is a JID — the renderer
+    /// pulls the user portion (digits) and substitutes `@<digits>`
+    /// in the content with a styled span.
+    pub mentions: Vec<String>,
 }
 
 impl MessageItem {
@@ -82,7 +94,47 @@ impl MessageItem {
             media_status: row.media_status.clone(),
             media_filename: row.media_filename.clone(),
             thumbnail: row.media_thumbnail.clone(),
+            quoted_message_id: row.quoted_message_id.clone(),
+            quoted_sender_id: row.quoted_sender_id.clone(),
+            quoted_sender_name: row.quoted_sender_name.clone(),
+            quoted_preview: row.quoted_preview.clone(),
+            mentions: row
+                .mentions_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default(),
         }
+    }
+
+    pub(super) fn has_reply(&self) -> bool {
+        self.quoted_message_id
+            .as_deref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Display name for the citation header. Prefers the contact
+    /// name resolved via JOIN; falls back to the JID short form, then
+    /// to "Unknown" when the proto didn't carry a participant.
+    pub(super) fn quoted_sender_label(&self) -> String {
+        if let Some(name) = self.quoted_sender_name.as_deref()
+            && !name.is_empty()
+        {
+            return crate::format::format_jid_or_phone(name);
+        }
+        match self.quoted_sender_id.as_deref() {
+            Some(s) if !s.is_empty() => {
+                tina_core::WaIdentity::parse(s).display_short().to_string()
+            }
+            _ => "Unknown".to_string(),
+        }
+    }
+
+    pub(super) fn quoted_preview_text(&self) -> &str {
+        self.quoted_preview
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Replied message")
     }
 
     pub(super) fn thumbnail_paintable(&self) -> Option<gtk::gdk::Paintable> {

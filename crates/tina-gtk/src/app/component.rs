@@ -152,6 +152,7 @@ impl SimpleComponent for AppModel {
         let avatars = crate::inventory::AvatarInventory::new();
         let media = crate::inventory::MediaInventory::new();
         let chats = crate::inventory::ChatInventory::new();
+        let messages = crate::inventory::MessageInventory::new();
         // Wire the inventory's miss callback to bubble up as
         // `RequestRefreshChat`. Closes the loop: any render that asks
         // for a missing chat name → `Cmd::RefreshChat` → nanachi
@@ -160,7 +161,9 @@ impl SimpleComponent for AppModel {
         {
             let app_sender = sender.input_sender().clone();
             chats.set_miss_handler(move |chat_id| {
-                let _ = app_sender.send(AppMsg::RequestRefreshChat(chat_id));
+                let _ = app_sender.send(AppMsg::RequestRefreshChat(
+                    tina_core::WaIdentity::parse(&chat_id),
+                ));
             });
         }
 
@@ -170,6 +173,7 @@ impl SimpleComponent for AppModel {
                 avatars,
                 media,
                 chats,
+                messages,
             })
             .forward(sender.input_sender(), |o| match o {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),

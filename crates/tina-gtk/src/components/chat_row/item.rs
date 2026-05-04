@@ -58,22 +58,15 @@ impl ChatRowItem {
 /// hasn't landed yet we still see the raw JID — route through
 /// `WaIdentity::display` which formats by server type.
 fn resolve_display_name(row: &ChatRow) -> String {
-    use crate::wa_id::WaIdentity;
-    let name = row.name.trim();
-    if !name.is_empty() && !is_raw_jid(name) {
-        return name.to_string();
+    use crate::wa_id::{self, WaIdentity};
+    if !WaIdentity::looks_like_unresolved_name(&row.name) {
+        return row.name.trim().to_string();
     }
     // Either the name is empty or it's a raw JID echoed back from
-    // the chat_id fallback. Fall through to WaIdentity's display.
-    WaIdentity::parse(&row.chat_id).display()
-}
-
-/// Recognise the raw `<user>@<server>` form so we don't print it as
-/// the chat name. Anything that parses to a non-`Unknown` identity
-/// counts.
-fn is_raw_jid(s: &str) -> bool {
-    use crate::wa_id::WaIdentity;
-    !matches!(WaIdentity::parse(s), WaIdentity::Unknown(_))
+    // the chat_id fallback. Fall through to the phone-aware display
+    // helper (formats `+55 61 …` for phones, `Channel #abc` for
+    // newsletters, etc.).
+    wa_id::display(&WaIdentity::parse(&row.chat_id))
 }
 
 fn build_preview(row: &ChatRow) -> String {

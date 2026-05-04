@@ -1,5 +1,6 @@
 // Init / Input / Output messages for the `Sidebar` component.
 
+use tina_core::WaIdentity;
 use tina_db::{ChatRow, StatusAuthorRow};
 
 use crate::app::ConnectionStatus;
@@ -49,7 +50,7 @@ pub struct SidebarInit {
 pub enum SidebarInput {
     SetIdentity {
         phone: Option<String>,
-        jid: Option<String>,
+        jid: Option<WaIdentity>,
         push_name: Option<String>,
     },
     ChatsUpserted(Vec<ChatRow>),
@@ -75,7 +76,7 @@ pub enum SidebarInput {
         indeterminate: bool,
     },
     AvatarReady {
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
     /// ListView's `activate` signal fired with the row position (in the
@@ -112,10 +113,10 @@ pub enum SidebarOutput {
     /// User activated a status author — open the stories viewer for
     /// that contact's posts.
     OpenStatusAuthor {
-        sender_jid: String,
+        sender_jid: WaIdentity,
         name: String,
     },
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
     SetChatPinned {
         chat_id: String,
         pinned: bool,

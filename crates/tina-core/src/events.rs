@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::WaIdentity;
+
 /// Go's `encoding/json` represents `[]byte` as a base64 string. Apply
 /// the same transform from this side so the round-trip is symmetric.
 mod thumbnail_base64 {
@@ -32,7 +34,11 @@ pub enum IpcCommand {
     StartAccount { account_id: String },
     StopAccount { account_id: String },
     Logout { account_id: String },
-    SendMessage { account_id: String, to: String, content: String },
+    SendMessage {
+        account_id: String,
+        to: WaIdentity,
+        content: String,
+    },
     /// Re-pesca contatos/grupos/newsletters do whatsmeow e re-emite eventos
     /// de upsert. Usado pra reconstruir a tabela do tina a partir do que o
     /// whatsmeow.db já sabe — sem precisar de re-pareamento.
@@ -52,7 +58,7 @@ pub enum IpcCommand {
     /// picture de um JID. Resultado vira AvatarUpdated/Failed.
     FetchAvatar {
         account_id: String,
-        jid: String,
+        jid: WaIdentity,
     },
     /// Re-fetch metadata for a single chat (newsletter / group). The
     /// nanachi handler dispatches based on the JID server: routes
@@ -61,7 +67,7 @@ pub enum IpcCommand {
     /// missing display names + avatars on demand.
     RefreshChat {
         account_id: String,
-        chat_jid: String,
+        chat_jid: WaIdentity,
     },
     Shutdown,
 }
@@ -75,7 +81,7 @@ pub enum IpcEvent {
     Connected {
         account_id: String,
         phone_number: Option<String>,
-        jid: Option<String>,
+        jid: Option<WaIdentity>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         push_name: Option<String>,
     },
@@ -145,12 +151,12 @@ pub enum IpcEvent {
 
     AvatarUpdated {
         account_id: String,
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
     AvatarFailed {
         account_id: String,
-        jid: String,
+        jid: WaIdentity,
         error: String,
     },
 
@@ -159,14 +165,14 @@ pub enum IpcEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatPinItem {
-    pub chat_jid: String,
+    pub chat_jid: WaIdentity,
     pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactData {
-    pub jid: String,
-    pub lid: Option<String>,
+    pub jid: WaIdentity,
+    pub lid: Option<WaIdentity>,
     pub phone_number: Option<String>,
     pub name: Option<String>,
     pub notify: Option<String>,
@@ -177,16 +183,16 @@ pub struct ContactData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupData {
-    pub jid: String,
+    pub jid: WaIdentity,
     pub subject: Option<String>,
-    pub owner: Option<String>,
+    pub owner: Option<WaIdentity>,
     pub description: Option<String>,
     pub participants: Vec<ParticipantData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantData {
-    pub id: String,
+    pub id: WaIdentity,
     pub admin: Option<String>,
     pub phone_number: Option<String>,
 }
@@ -194,8 +200,8 @@ pub struct ParticipantData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageData {
     pub message_id: String,
-    pub chat_jid: String,
-    pub sender_jid: String,
+    pub chat_jid: WaIdentity,
+    pub sender_jid: WaIdentity,
     pub content: Option<String>,
     pub message_type: String,
     pub timestamp: i64,
@@ -230,4 +236,25 @@ pub struct MessageData {
     /// downloads (mesmo arquivo enviado em vários chats vira 1 file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_sha256: Option<String>,
+    /// `proto.contextInfo.quotedMessage.key.id` — id of the message
+    /// this one replies to. Resolved client-side via the local
+    /// `MessageInventory` cache (or the DB) so we can render the
+    /// dissent-style quote header without an extra round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_message_id: Option<String>,
+    /// `proto.contextInfo.quotedMessage.key.participant` — the
+    /// sender of the cited message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_sender_id: Option<WaIdentity>,
+    /// Plain-text preview of the cited message (or a placeholder
+    /// like "[Image]") so the bubble has something to render even
+    /// when the original isn't in our local message store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_preview: Option<String>,
+    /// `proto.contextInfo.mentionedJID[]` — JIDs called out by `@`
+    /// in the message text. Renderer uses these to swap each
+    /// `@<digits>` substring for the resolved contact's display
+    /// name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentioned_jids: Vec<WaIdentity>,
 }

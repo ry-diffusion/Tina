@@ -68,12 +68,13 @@ impl ChatArea {
 
     pub(in crate::components::chat_area) fn handle_avatar_ready(
         &mut self,
-        jid: String,
+        jid: tina_core::WaIdentity,
         path: String,
     ) {
-        self.avatars.put(jid.clone(), path.clone());
+        let raw = jid.raw().to_string();
+        self.avatars.put(raw.clone(), path.clone());
         for pane in &mut self.panes {
-            if pane.current_chat_id.as_deref() == Some(jid.as_str()) {
+            if pane.current_chat_id.as_deref() == Some(raw.as_str()) {
                 pane.current_chat_avatar = Some(path.clone());
             }
         }
@@ -89,7 +90,7 @@ impl ChatArea {
 
     pub(in crate::components::chat_area) fn handle_set_user_jid(
         &mut self,
-        jid: Option<String>,
+        jid: Option<tina_core::WaIdentity>,
     ) {
         self.user_jid = jid.clone();
         for (controller, _, _) in self.open_tabs.values() {
@@ -127,7 +128,7 @@ impl ChatArea {
 
     pub(in crate::components::chat_area) fn forward_fetch_avatar(
         &mut self,
-        jid: String,
+        jid: tina_core::WaIdentity,
         sender: &ComponentSender<Self>,
     ) {
         let _ = sender.output(ChatAreaOutput::RequestFetchAvatar(jid));

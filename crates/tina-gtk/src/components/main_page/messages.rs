@@ -1,11 +1,12 @@
 // Init / Input / Output for the in-app page.
 
+use tina_core::WaIdentity;
 use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
 
 use crate::app::ConnectionStatus;
 use crate::components::chat_area::ChatAreaOutput;
 use crate::components::sidebar::SidebarOutput;
-use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory, MessageInventory};
 use crate::service::ServiceHandle;
 
 pub struct MainInit {
@@ -13,6 +14,7 @@ pub struct MainInit {
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
     pub chats: ChatInventory,
+    pub messages: MessageInventory,
 }
 
 #[derive(Debug)]
@@ -20,7 +22,7 @@ pub enum MainInput {
     SetIdentity {
         account_id: String,
         phone: Option<String>,
-        jid: Option<String>,
+        jid: Option<WaIdentity>,
         push_name: Option<String>,
     },
     ChatsUpserted(Vec<ChatRow>),
@@ -59,7 +61,7 @@ pub enum MainInput {
         reached_top: bool,
     },
     AvatarReady {
-        jid: String,
+        jid: WaIdentity,
         path: String,
     },
     /// Forwarded from children.
@@ -76,11 +78,11 @@ pub enum MainOutput {
     RequestLogout,
     RequestLoadStatuses,
     OpenStatusAuthor {
-        sender_jid: String,
+        sender_jid: WaIdentity,
         name: String,
     },
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
-    RequestFetchAvatar(String),
+    RequestFetchAvatar(WaIdentity),
     SetChatPinned { chat_id: String, pinned: bool },
 }

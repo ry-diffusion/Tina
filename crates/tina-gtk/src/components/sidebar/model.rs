@@ -60,7 +60,7 @@ pub struct Sidebar {
     /// "RECENT", …) — used so the subtitle can spell out the stage
     /// instead of an opaque percentage.
     pub(super) history_sync_type: String,
-    pub(super) user_jid: Option<String>,
+    pub(super) user_jid: Option<tina_core::WaIdentity>,
     pub(super) avatars: AvatarInventory,
     pub(super) chats: ChatInventory,
 }
@@ -167,22 +167,21 @@ impl Sidebar {
             // Feed every upserted row into the chat inventory so
             // any later widget (chat tab header, message bubble in
             // a newsletter, status row resolver) can pick up the
-            // resolved name + avatar synchronously.
+            // resolved name + avatar synchronously. The two
+            // predicates that decide whether to fire a refresh
+            // both live on `WaIdentity` — same source of truth as
+            // the chat-row display name resolver.
             self.chats.ingest_row(
                 &row.chat_id,
                 &row.kind,
                 &row.name,
                 row.avatar_path.as_deref(),
             );
-            // Auto-fetch trigger: rows whose name is still the raw
-            // chat_id (no `display_name` yet) come from the
-            // chat_row_select_clause's `COALESCE(... c.chat_id)`
-            // fallback. Channels follow this path until
-            // `GetNewsletterInfo` resolves.
-            if matches!(row.kind.as_str(), "newsletter" | "group")
-                && (row.name.is_empty() || row.name == row.chat_id)
+            let id = crate::wa_id::WaIdentity::parse(&row.chat_id);
+            if id.needs_metadata_refresh()
+                && crate::wa_id::WaIdentity::looks_like_unresolved_name(&row.name)
             {
-                self.chats.request_refresh(&row.chat_id);
+                self.chats.request_refresh(id.raw());
             }
             let mut item = ChatRowItem::from_row(row, self.avatars.clone());
             if let Some(pos) = self.find_chat_position(&item.chat_id) {

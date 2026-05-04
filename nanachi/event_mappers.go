@@ -178,6 +178,7 @@ func mapMessage(evt *events.Message) *MessageData {
 		md.Thumbnail = thumb
 	}
 	applyMedia(&md, extractMedia(evt.Message))
+	applyQuoteInfo(&md, extractContextInfo(evt.Message))
 	return &md
 }
 
@@ -216,5 +217,6 @@ func mapWebMessageInfo(chat types.JID, wmi *waWeb.WebMessageInfo) *MessageData {
 		md.Thumbnail = thumb
 	}
 	applyMedia(&md, extractMedia(wmi.GetMessage()))
+	applyQuoteInfo(&md, extractContextInfo(wmi.GetMessage()))
 	return &md
 }

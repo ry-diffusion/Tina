@@ -204,14 +204,15 @@ async fn bulk_insert_messages(
     const MSG_INSERT_CHUNK: usize = 200;
     let now = now_ts();
     for chunk in pending.chunks(MSG_INSERT_CHUNK) {
-        let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        let row_tpl = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
         let mut sql = String::from(
             "INSERT OR IGNORE INTO messages (\
                 account_id, message_id, chat_id, sender_contact_id, content, \
                 message_type, timestamp, is_from_me, raw_json, created_at, \
                 media_mimetype, media_filename, media_duration_secs, \
                 media_width, media_height, media_size_bytes, media_sha256, \
-                media_thumbnail\
+                media_thumbnail, \
+                quoted_message_id, quoted_sender_id, quoted_preview, mentions_json\
              ) VALUES ",
         );
         sql.push_str(&repeat_csv(row_tpl, chunk.len()));
@@ -237,7 +238,11 @@ async fn bulk_insert_messages(
                 .bind(media.and_then(|x| x.height))
                 .bind(media.and_then(|x| x.size_bytes))
                 .bind(media.and_then(|x| x.sha256))
-                .bind(media.and_then(|x| x.thumbnail));
+                .bind(media.and_then(|x| x.thumbnail))
+                .bind(m.quoted_message_id)
+                .bind(m.quoted_sender_id)
+                .bind(m.quoted_preview)
+                .bind(m.mentions_json);
         }
         q.execute(&mut **tx).await?;
     }

@@ -286,12 +286,17 @@ impl AppModel {
         &mut self,
         account_id: String,
         phone_number: Option<String>,
-        jid: Option<String>,
+        jid: Option<tina_core::WaIdentity>,
         push_name: Option<String>,
     ) {
         self.phone = phone_number.clone();
         self.connection = ConnectionStatus::Connected;
-        let base_j = jid.as_deref().map(crate::format::base_jid);
+        // Phone-rooted JIDs sometimes carry a device suffix
+        // (`5561…:91@s.whatsapp.net`); the contacts pipeline + avatar
+        // store key on the suffix-less form, so strip via base_jid.
+        let base_j = jid.as_ref().map(|x| {
+            tina_core::WaIdentity::parse(&crate::format::base_jid(x.raw()))
+        });
         let _ = self
             .main
             .sender()

@@ -143,13 +143,14 @@ async fn open_status_author(
     worker: &Arc<TinaWorker>,
     app: &Sender<AppMsg>,
     state: &SharedState,
-    sender_jid: String,
+    sender_jid: tina_core::WaIdentity,
     name: String,
 ) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
-    info!(%sender_jid, %name, "[stories] fetching posts for author");
+    let raw = sender_jid.raw().to_string();
+    info!(jid = %raw, %name, "[stories] fetching posts for author");
     match worker
         .get_message_rows(&account_id, "status@broadcast", 200, 0)
         .await
@@ -159,8 +160,8 @@ async fn open_status_author(
             let posts: Vec<_> = rows
                 .into_iter()
                 .filter(|r| {
-                    r.sender_jid.as_deref() == Some(sender_jid.as_str())
-                        || r.sender_contact_id.as_deref() == Some(sender_jid.as_str())
+                    r.sender_jid.as_deref() == Some(raw.as_str())
+                        || r.sender_contact_id.as_deref() == Some(raw.as_str())
                 })
                 .collect();
             info!(
@@ -287,20 +288,28 @@ async fn load_older(
     }
 }
 
-async fn fetch_avatar(worker: &Arc<TinaWorker>, state: &SharedState, jid: String) {
+async fn fetch_avatar(
+    worker: &Arc<TinaWorker>,
+    state: &SharedState,
+    jid: tina_core::WaIdentity,
+) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
-    if let Err(e) = worker.fetch_avatar(&account_id, &jid).await {
+    if let Err(e) = worker.fetch_avatar(&account_id, jid.raw()).await {
         error!("fetch_avatar: {e}");
     }
 }
 
-async fn refresh_chat(worker: &Arc<TinaWorker>, state: &SharedState, chat_jid: String) {
+async fn refresh_chat(
+    worker: &Arc<TinaWorker>,
+    state: &SharedState,
+    chat_jid: tina_core::WaIdentity,
+) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
-    if let Err(e) = worker.refresh_chat(&account_id, &chat_jid).await {
+    if let Err(e) = worker.refresh_chat(&account_id, chat_jid.raw()).await {
         error!("refresh_chat: {e}");
     }
 }

@@ -20,7 +20,7 @@ pub struct ChatTab {
     pub(super) composer_buffer: gtk::EntryBuffer,
     pub(super) avatars: AvatarInventory,
     pub(super) media: MediaInventory,
-    pub(super) user_jid: Option<String>,
+    pub(super) user_jid: Option<tina_core::WaIdentity>,
     pub(super) scroll: Option<gtk::ScrolledWindow>,
     pub(super) seen_message_ids: HashSet<String>,
     pub(super) last_send: Option<(String, std::time::Instant)>,

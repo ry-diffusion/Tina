@@ -161,10 +161,19 @@ fn message_rows_by_ids_select() -> &'static str {
          m.media_sha256,
          m.media_path,
          m.media_status,
-         m.media_thumbnail
+         m.media_thumbnail,
+         m.quoted_message_id,
+         m.quoted_sender_id,
+         m.quoted_preview,
+         COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
+         m.mentions_json
        FROM messages m
        LEFT JOIN contacts ct
          ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
+       LEFT JOIN contact_aliases qca
+         ON qca.account_id = m.account_id AND qca.alias_jid = m.quoted_sender_id
+       LEFT JOIN contacts qct
+         ON qct.account_id = m.account_id AND qct.contact_id = qca.contact_id
     "#
 }
 
@@ -188,10 +197,19 @@ const MESSAGE_ROWS_BY_CHAT_SQL: &str = r#"SELECT
      m.media_sha256,
      m.media_path,
      m.media_status,
-     m.media_thumbnail
+     m.media_thumbnail,
+     m.quoted_message_id,
+     m.quoted_sender_id,
+     m.quoted_preview,
+     COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
+     m.mentions_json
    FROM messages m
    LEFT JOIN contacts ct
      ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
+   LEFT JOIN contact_aliases qca
+     ON qca.account_id = m.account_id AND qca.alias_jid = m.quoted_sender_id
+   LEFT JOIN contacts qct
+     ON qct.account_id = m.account_id AND qct.contact_id = qca.contact_id
    WHERE m.account_id = ? AND m.chat_id = ?
    ORDER BY m.timestamp DESC
    LIMIT ? OFFSET ?"#;
@@ -216,10 +234,19 @@ const MESSAGE_ROWS_BEFORE_SQL: &str = r#"SELECT
      m.media_sha256,
      m.media_path,
      m.media_status,
-     m.media_thumbnail
+     m.media_thumbnail,
+     m.quoted_message_id,
+     m.quoted_sender_id,
+     m.quoted_preview,
+     COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
+     m.mentions_json
    FROM messages m
    LEFT JOIN contacts ct
      ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
+   LEFT JOIN contact_aliases qca
+     ON qca.account_id = m.account_id AND qca.alias_jid = m.quoted_sender_id
+   LEFT JOIN contacts qct
+     ON qct.account_id = m.account_id AND qct.contact_id = qca.contact_id
    WHERE m.account_id = ? AND m.chat_id = ? AND m.timestamp < ?
    ORDER BY m.timestamp DESC
    LIMIT ?"#;

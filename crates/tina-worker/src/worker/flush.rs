@@ -53,9 +53,24 @@ async fn flush_messages(
     for (account_id, msgs) in messages {
         let open_for_account = open_snapshot.get(&account_id);
 
-        let inputs: Vec<tina_db::MessageBatchInput<'_>> = msgs
+        // Pre-render the per-row JSON for mentioned JIDs so the
+        // borrowed string lives long enough for the batch input.
+        let mentions_storage: Vec<Option<String>> = msgs
             .iter()
             .map(|m| {
+                if m.mentioned_jids.is_empty() {
+                    None
+                } else {
+                    let raws: Vec<&str> = m.mentioned_jids.iter().map(|j| j.raw()).collect();
+                    serde_json::to_string(&raws).ok()
+                }
+            })
+            .collect();
+
+        let inputs: Vec<tina_db::MessageBatchInput<'_>> = msgs
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
                 let has_media = m.media_mimetype.is_some()
                     || m.media_filename.is_some()
                     || m.media_duration_secs.is_some()
@@ -76,11 +91,11 @@ async fn flush_messages(
                 });
                 tina_db::MessageBatchInput {
                     message_id: &m.message_id,
-                    chat_jid: &m.chat_jid,
-                    sender_jid: if m.sender_jid.is_empty() {
+                    chat_jid: m.chat_jid.raw(),
+                    sender_jid: if m.sender_jid.is_empty_unknown() {
                         None
                     } else {
-                        Some(m.sender_jid.as_str())
+                        Some(m.sender_jid.raw())
                     },
                     content: m.content.as_deref(),
                     message_type: &m.message_type,
@@ -88,6 +103,10 @@ async fn flush_messages(
                     is_from_me: m.is_from_me,
                     raw_json: m.raw_json.as_deref(),
                     media,
+                    quoted_message_id: m.quoted_message_id.as_deref(),
+                    quoted_sender_id: m.quoted_sender_id.as_ref().map(|x| x.raw()),
+                    quoted_preview: m.quoted_preview.as_deref(),
+                    mentions_json: mentions_storage[i].as_deref(),
                 }
             })
             .collect();

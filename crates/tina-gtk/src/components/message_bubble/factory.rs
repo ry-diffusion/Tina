@@ -36,6 +36,11 @@ const STICKER_SIZE: i32 = 128;
 #[derive(Debug)]
 pub enum MessageBubbleOut {
     DownloadRequested(String),
+    /// Reply quote-header was clicked. Carries the cited
+    /// `message_id` so the chat tab can scroll to (and briefly
+    /// highlight) it. If the cited message is outside the loaded
+    /// window the tab pages older history until it appears.
+    JumpToMessage(String),
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +140,50 @@ impl FactoryComponent for MessageBubble {
                         set_ellipsize: gtk::pango::EllipsizeMode::End,
                         set_single_line_mode: true,
                         add_css_class: "message-cozy-header",
+                    },
+
+                    // Reply / quoted-message header — the dissent-style
+                    // mini-blockquote that sits between the sender line
+                    // and the content. Visible only when this row was
+                    // built from a message that quoted another. Wrapped
+                    // in a flat Button so click → JumpToMessage scrolls
+                    // the thread to the cited row.
+                    gtk::Button {
+                        set_visible: self.item.has_reply(),
+                        set_halign: gtk::Align::Start,
+                        add_css_class: "flat",
+                        add_css_class: "message-reply-button",
+                        connect_clicked[
+                            sender,
+                            target = self.item.quoted_message_id.clone().unwrap_or_default()
+                        ] => move |_| {
+                            if !target.is_empty() {
+                                let _ = sender.output(
+                                    MessageBubbleOut::JumpToMessage(target.clone())
+                                );
+                            }
+                        },
+
+                        #[wrap(Some)]
+                        set_child = &gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 6,
+                            add_css_class: "message-reply-box",
+
+                            gtk::Label {
+                                set_label: &self.item.quoted_sender_label(),
+                                set_xalign: 0.0,
+                                add_css_class: "message-reply-author",
+                            },
+                            gtk::Label {
+                                set_label: self.item.quoted_preview_text(),
+                                set_xalign: 0.0,
+                                set_hexpand: true,
+                                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                set_single_line_mode: true,
+                                add_css_class: "message-reply-preview",
+                            },
+                        },
                     },
 
                     // Image / sticker / video placeholder (not yet
@@ -426,8 +475,11 @@ impl FactoryComponent for MessageBubble {
                     gtk::Label {
                         set_visible: !self.item.is_media() || self.item.caption().is_some(),
                         set_use_markup: true,
-                        set_markup: &super::format::wa_markdown_to_pango(
-                            self.item.caption().unwrap_or(&self.item.content),
+                        set_markup: &super::format::apply_mentions_pango(
+                            &super::format::wa_markdown_to_pango(
+                                self.item.caption().unwrap_or(&self.item.content),
+                            ),
+                            &self.item.mentions,
                         ),
                         set_xalign: 0.0,
                         set_wrap: true,

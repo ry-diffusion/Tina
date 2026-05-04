@@ -170,6 +170,17 @@ pub struct MessageBatchInput<'a> {
     /// `Some(_)` para image/audio/video/sticker/document; `None` para
     /// texto puro.
     pub media: Option<MediaMeta<'a>>,
+    /// Reply / quote target — populated when the proto carried a
+    /// `contextInfo.quotedMessage`. The renderer reads these into
+    /// the dissent-style quote header.
+    pub quoted_message_id: Option<&'a str>,
+    pub quoted_sender_id: Option<&'a str>,
+    pub quoted_preview: Option<&'a str>,
+    /// JSON-encoded `[String]` of mentioned JIDs from
+    /// `contextInfo.mentionedJID[]`. JSON keeps the column simple
+    /// and avoids a second join table for what's almost always a
+    /// short list.
+    pub mentions_json: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +248,19 @@ pub struct MessageRow {
     pub media_path: Option<String>,
     pub media_status: String,
     pub media_thumbnail: Option<Vec<u8>>,
+    /// Reply / quoted-message metadata. `None` for messages that
+    /// aren't replying to anything; populated from the message's
+    /// `proto.contextInfo.quotedMessage` at ingest time.
+    pub quoted_message_id: Option<String>,
+    pub quoted_sender_id: Option<String>,
+    pub quoted_preview: Option<String>,
+    /// Display name of the quoted sender, resolved via JOIN through
+    /// `contact_aliases` → `contacts`. `None` when the cited author
+    /// isn't in our local contacts table (rare — usually we've seen
+    /// at least one message from them).
+    pub quoted_sender_name: Option<String>,
+    /// JSON-encoded `[String]` of mentioned JIDs.
+    pub mentions_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
