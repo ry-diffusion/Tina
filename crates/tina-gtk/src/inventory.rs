@@ -199,6 +199,16 @@ pub struct MediaState {
 #[derive(Default)]
 struct MediaInner {
     states: HashMap<String, MediaState>,
+    /// Active download policy. Set by the App on PreferencesLoaded /
+    /// SetDownloadMethod and read by every chat tab when it gets a
+    /// fresh batch of rows. Defaults to OnDemand because that's what
+    /// the Settings dialog defaults to.
+    download_method: crate::components::settings::DownloadMethod,
+    /// Recently auto-queued downloads. Prevents duplicate
+    /// RequestMediaDownload emissions when the same row is loaded
+    /// twice (e.g. tab close + reopen). Bounded by a hard cap so a
+    /// long-lived session doesn't grow this forever.
+    auto_queued: HashSet<String>,
 }
 
 /// Tracks media download state across tab open/close. The DB persists
@@ -218,6 +228,35 @@ impl MediaInventory {
 
     pub fn get(&self, message_id: &str) -> Option<MediaState> {
         self.inner.borrow().states.get(message_id).cloned()
+    }
+
+    pub fn download_method(&self) -> crate::components::settings::DownloadMethod {
+        self.inner.borrow().download_method
+    }
+
+    /// Update the active download policy. Idempotent — safe to call
+    /// from both PreferencesLoaded and SetDownloadMethod paths.
+    pub fn set_download_method(&self, m: crate::components::settings::DownloadMethod) {
+        self.inner.borrow_mut().download_method = m;
+    }
+
+    /// Returns `true` the first time a message id is offered for
+    /// auto-download; subsequent calls return `false`. Bounded so a
+    /// long session can't grow the set forever.
+    pub fn try_mark_auto_queued(&self, message_id: &str) -> bool {
+        const CAP: usize = 4_096;
+        let mut inner = self.inner.borrow_mut();
+        if inner.auto_queued.contains(message_id) {
+            return false;
+        }
+        if inner.auto_queued.len() >= CAP {
+            // Drop the whole set rather than trying to track LRU; the
+            // worst case is a duplicate request to the worker which
+            // dedups via media_status="downloading".
+            inner.auto_queued.clear();
+        }
+        inner.auto_queued.insert(message_id.to_string());
+        true
     }
 
     /// Mark a message as actively downloading. Called when the user

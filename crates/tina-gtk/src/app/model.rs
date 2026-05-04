@@ -36,6 +36,10 @@ pub struct AppModel {
     /// demand from the profile menu and dismissed by the user. We
     /// keep its widget around so the next open is instant.
     pub(super) settings: Controller<Settings>,
+    /// Live download policy. Cloned out into MainInit so every chat
+    /// tab reads the same value; the App keeps a clone here so it can
+    /// update it from PreferencesLoaded / SetDownloadMethod.
+    pub(super) media: crate::inventory::MediaInventory,
     pub(super) toast_overlay: adw::ToastOverlay,
 }
 

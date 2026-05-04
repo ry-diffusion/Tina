@@ -17,15 +17,19 @@ use relm4::prelude::*;
 /// Persisted under `settings.download_method`. Default is `OnDemand`,
 /// matching the current behaviour: media is downloaded only when the
 /// user clicks the placeholder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloadMethod {
-    /// Click-to-download (current default).
+    /// Auto-download visible media as soon as the message is loaded
+    /// into an open chat tab. The default — closest match to "fetch
+    /// when the user sees it" without paying for closed-tab traffic.
+    #[default]
     OnDemand,
     /// No automatic downloads at all — user must trigger every fetch
-    /// from the message context menu. Useful on metered networks.
+    /// by clicking the placeholder. Useful on metered networks.
     Manual,
-    /// Auto-download every incoming media payload as it arrives. Costs
-    /// bandwidth but means images render immediately.
+    /// Auto-download every incoming media payload as it arrives,
+    /// regardless of whether the chat is open. Costs bandwidth but
+    /// means images render immediately on switch-in.
     Eager,
 }
 
@@ -144,7 +148,8 @@ impl SimpleComponent for Settings {
                     #[name(method_row)]
                     adw::ComboRow {
                         set_title: "Download method",
-                        set_subtitle: "On-demand: fetched when you tap the placeholder.",
+                        set_subtitle: "On-demand: fetched as soon as the message is visible. \
+                                       Manual: only when you tap the placeholder.",
 
                         set_model: Some(&gtk::StringList::new(&[
                             "On-demand",

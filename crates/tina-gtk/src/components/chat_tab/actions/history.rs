@@ -59,6 +59,53 @@ impl ChatTab {
                 tina_core::WaIdentity::parse(&jid),
             ));
         }
+        self.auto_queue_downloads(&rows, sender);
+    }
+
+    /// Apply the active DownloadMethod to a fresh batch of rows.
+    /// `OnDemand` / `Eager` fire a download for every visual-media
+    /// row that's still in `media_status = "none"` and lacks a local
+    /// path; `Manual` skips. Per-id dedup via `MediaInventory` so
+    /// reopening a tab doesn't re-queue the same fetches.
+    pub(super) fn auto_queue_downloads(
+        &mut self,
+        rows: &[MessageRow],
+        sender: &ComponentSender<Self>,
+    ) {
+        use crate::components::settings::DownloadMethod;
+        if matches!(self.media.download_method(), DownloadMethod::Manual) {
+            return;
+        }
+        let mut ids: Vec<String> = Vec::new();
+        for row in rows {
+            if row.media_status != "none" {
+                continue;
+            }
+            if row
+                .media_path
+                .as_deref()
+                .map(|p| !p.is_empty())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if !matches!(
+                row.message_type.as_str(),
+                "image" | "video" | "audio" | "sticker" | "document"
+            ) {
+                continue;
+            }
+            if !self.media.try_mark_auto_queued(&row.message_id) {
+                continue;
+            }
+            ids.push(row.message_id.clone());
+        }
+        for id in ids {
+            // Reuse the click-path handler so the bubble flips to
+            // its spinner state via the same code that powers a
+            // manual click.
+            self.handle_request_media_download(id, sender);
+        }
     }
 
     pub(in crate::components::chat_tab) fn handle_append(
@@ -187,6 +234,7 @@ impl ChatTab {
                 "ChatTab::Append: pruned cumulative overflow"
             );
         }
+        self.auto_queue_downloads(&new_rows, sender);
         // The connect_changed handler will autoscroll if `bottomed` —
         // meaning we only follow new messages when the user was already
         // at (or near) the bottom. If they scrolled up to read history,

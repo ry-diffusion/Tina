@@ -58,6 +58,14 @@ pub enum MessageBubbleInput {
     /// match these rows.
     SetSenderJid(String),
     Confirmed,
+    /// User clicked play on a downloaded audio/video. Flips
+    /// `media_expanded` so the next view tick swaps the play
+    /// placeholder for the actual `gtk::Video` / `gtk::MediaControls` —
+    /// THE point at which we construct a `gtk::MediaFile` and pay for a
+    /// GStreamer pipeline. Doing this eagerly per row blew the
+    /// per-process fd limit ("Too many open files") on chats with many
+    /// voice notes.
+    ExpandMedia,
 }
 
 pub struct MessageBubble {
@@ -69,6 +77,18 @@ pub struct MessageBubble {
     /// flipped to Some(_) by `UpdateMedia`) is rendered correctly via
     /// `#[watch]` but its click handler still sees the captured None.
     media_path_cell: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    /// Live media status for the placeholder GestureClick. The click
+    /// handler is captured at construction time; it reads through
+    /// this cell so a stale value (e.g. "none" → "downloading") is
+    /// observed at click time, not init time.
+    media_status_cell: std::rc::Rc<std::cell::RefCell<String>>,
+    /// `false` until the user clicks play on a downloaded audio/video
+    /// row. Gates the `set_media_stream`/`set_filename` bindings that
+    /// would otherwise instantiate a `gtk::MediaFile` (and a backing
+    /// GStreamer pipeline, with its GWakeup pipe fd) for every row in
+    /// the factory — which is how a media-heavy chat hits the
+    /// "Too many open files" wall during a fast scroll.
+    media_expanded: bool,
 }
 
 #[relm4::factory(pub)]
@@ -197,6 +217,33 @@ impl FactoryComponent for MessageBubble {
                         #[watch]
                         set_visible: self.item.is_visual_media() && !self.item.has_local_file(),
                         set_halign: gtk::Align::Start,
+                        #[watch]
+                        set_cursor_from_name: Some(
+                            if self.item.media_status == "downloading" {
+                                "default"
+                            } else {
+                                "pointer"
+                            },
+                        ),
+                        // Tap-to-download on the entire placeholder
+                        // surface. The overlay button still works for
+                        // an explicit affordance, but matching the
+                        // "tap the placeholder" copy means any click
+                        // on the blurred thumbnail also fires.
+                        add_controller = gtk::GestureClick {
+                            connect_released[
+                                sender,
+                                id = self.item.id.clone(),
+                                status_cell = self.media_status_cell.clone()
+                            ] => move |_, _, _, _| {
+                                if status_cell.borrow().as_str() == "downloading" {
+                                    return;
+                                }
+                                let _ = sender.output(
+                                    MessageBubbleOut::DownloadRequested(id.clone())
+                                );
+                            },
+                        },
                         #[wrap(Some)]
                         set_child = &gtk::Picture {
                             set_size_request: (
@@ -323,15 +370,73 @@ impl FactoryComponent for MessageBubble {
                         },
                     },
 
-                    // Video downloaded. Wrapped in an Overlay so we can
-                    // pin an "expand" button in the corner — clicking
-                    // the video itself toggles play/pause via the
-                    // built-in MediaControls, so a separate affordance
-                    // is needed for the lightbox.
+                    // Video downloaded but not yet expanded — show the
+                    // proto thumbnail with a play overlay. Clicking
+                    // anywhere flips `media_expanded`, which on the
+                    // next tick swaps in the real `gtk::Video` below.
+                    // Doing this lazily is what keeps a chat with many
+                    // videos under the per-process fd limit (every
+                    // gtk::MediaFile spawns a GStreamer pipeline + a
+                    // GWakeup pipe).
                     gtk::Overlay {
                         #[watch]
                         set_visible: self.item.has_local_file()
-                            && self.item.message_type == "video",
+                            && self.item.message_type == "video"
+                            && !self.media_expanded,
+                        set_halign: gtk::Align::Start,
+                        set_cursor_from_name: Some("pointer"),
+                        add_controller = gtk::GestureClick {
+                            connect_released[sender] => move |_, _, _, _| {
+                                sender.input(MessageBubbleInput::ExpandMedia);
+                            },
+                        },
+
+                        #[wrap(Some)]
+                        set_child = &gtk::Picture {
+                            #[watch]
+                            set_paintable: self.item.thumbnail_paintable().as_ref(),
+                            set_can_shrink: true,
+                            set_size_request: (-1, VIDEO_HEIGHT),
+                            add_css_class: "message-picture",
+                        },
+
+                        add_overlay = &gtk::Image {
+                            #[watch]
+                            set_visible: self.item.thumbnail.is_none()
+                                || self.item
+                                    .thumbnail
+                                    .as_ref()
+                                    .map(|b| b.is_empty())
+                                    .unwrap_or(true),
+                            set_icon_name: Some("video-x-generic-symbolic"),
+                            set_pixel_size: 48,
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "dim-label",
+                        },
+
+                        add_overlay = &gtk::Button {
+                            set_icon_name: "media-playback-start-symbolic",
+                            set_halign: gtk::Align::Center,
+                            set_valign: gtk::Align::Center,
+                            add_css_class: "circular",
+                            add_css_class: "osd",
+                            set_tooltip_text: Some("Play"),
+                            connect_clicked[sender] => move |_| {
+                                sender.input(MessageBubbleInput::ExpandMedia);
+                            },
+                        },
+                    },
+
+                    // Video downloaded AND expanded — actual player
+                    // wrapped in an Overlay so we can pin a fullscreen
+                    // button in the corner (the video itself owns
+                    // play/pause via its built-in controls).
+                    gtk::Overlay {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && self.item.message_type == "video"
+                            && self.media_expanded,
                         set_halign: gtk::Align::Start,
 
                         #[wrap(Some)]
@@ -339,7 +444,8 @@ impl FactoryComponent for MessageBubble {
                             #[watch]
                             set_filename: self.item.media_path
                                 .as_deref()
-                                .filter(|_| self.item.message_type == "video"),
+                                .filter(|_| self.item.message_type == "video")
+                                .filter(|_| self.media_expanded),
                             set_size_request: (-1, VIDEO_HEIGHT),
                         },
 
@@ -364,15 +470,66 @@ impl FactoryComponent for MessageBubble {
                         },
                     },
 
-                    // Audio (downloaded).
+                    // Audio downloaded but not yet expanded — compact
+                    // play row. Same pipeline-deferral story as video:
+                    // a chat full of voice notes used to construct one
+                    // gtk::MediaFile per row at view time and exhaust
+                    // the fd budget before the user even hit play.
+                    gtk::Box {
+                        #[watch]
+                        set_visible: self.item.has_local_file()
+                            && self.item.message_type == "audio"
+                            && !self.media_expanded,
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 10,
+                        set_margin_top: 4,
+                        set_margin_bottom: 4,
+
+                        gtk::Button {
+                            set_icon_name: "media-playback-start-symbolic",
+                            add_css_class: "circular",
+                            set_tooltip_text: Some("Play"),
+                            set_valign: gtk::Align::Center,
+                            connect_clicked[sender] => move |_| {
+                                sender.input(MessageBubbleInput::ExpandMedia);
+                            },
+                        },
+
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 2,
+                            set_valign: gtk::Align::Center,
+                            set_hexpand: true,
+
+                            gtk::Label {
+                                set_label: self.item.media_kind_label(),
+                                set_xalign: 0.0,
+                                add_css_class: "heading",
+                            },
+                            gtk::Label {
+                                set_visible: !self.item.media_summary.is_empty(),
+                                set_label: &self.item.media_summary,
+                                set_xalign: 0.0,
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                            },
+                        },
+                    },
+
+                    // Audio downloaded AND expanded — full controls
+                    // bar. Constructing the MediaFile here is what
+                    // pays for the GStreamer pipeline; gating it on
+                    // `media_expanded` is the actual fix.
                     gtk::MediaControls {
                         #[watch]
                         set_visible: self.item.has_local_file()
-                            && self.item.message_type == "audio",
+                            && self.item.message_type == "audio"
+                            && self.media_expanded,
                         #[watch]
                         set_media_stream: self.item.media_path
                             .as_deref()
                             .filter(|_| self.item.message_type == "audio")
+                            .filter(|_| self.media_expanded)
                             .map(|p| gtk::MediaFile::for_filename(p).upcast::<gtk::MediaStream>())
                             .as_ref(),
                     },
@@ -495,9 +652,13 @@ impl FactoryComponent for MessageBubble {
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         let media_path_cell =
             std::rc::Rc::new(std::cell::RefCell::new(init.media_path.clone()));
+        let media_status_cell =
+            std::rc::Rc::new(std::cell::RefCell::new(init.media_status.clone()));
         Self {
             item: init,
             media_path_cell,
+            media_status_cell,
+            media_expanded: false,
         }
     }
 
@@ -509,6 +670,7 @@ impl FactoryComponent for MessageBubble {
                 mimetype,
             } => {
                 *self.media_path_cell.borrow_mut() = path.clone();
+                *self.media_status_cell.borrow_mut() = status.clone();
                 self.item.media_path = path;
                 self.item.media_status = status;
                 if self.item.media_mimetype.is_none() {
@@ -522,6 +684,9 @@ impl FactoryComponent for MessageBubble {
                 self.item.sender_jid = Some(jid);
             }
             MessageBubbleInput::Confirmed => {}
+            MessageBubbleInput::ExpandMedia => {
+                self.media_expanded = true;
+            }
         }
     }
 }

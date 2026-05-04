@@ -8,7 +8,7 @@ use relm4::ComponentSender;
 use tina_db::MessageRow;
 
 use super::super::build::{build_item, collapse_against};
-use super::super::messages::ChatTabOutput;
+use super::super::messages::{ChatTabInput, ChatTabOutput};
 use super::super::model::ChatTab;
 use super::super::scroll::force_to_bottom;
 
@@ -64,6 +64,60 @@ impl ChatTab {
             dropped = to_drop,
             remaining = self.messages.len(),
             "ChatTab: pruned top after near-bottom"
+        );
+    }
+
+    /// Symmetric counterpart to `handle_near_bottom`: posted by
+    /// `handle_prepend_older` after a fast scroll-up has pushed the
+    /// factory past the soft cap. Drops the newest rows so paging back
+    /// through history doesn't grow the GTK widget tree without bound
+    /// (a group chat with media stacks dozens of pages × 50 rows × the
+    /// per-bubble widgets into hundreds of MB very quickly).
+    ///
+    /// The user's viewport is in the upper portion of the factory at
+    /// the moment this fires (NearTop only triggers below ~2*page), so
+    /// dropping from the back doesn't shift their view — only `upper`
+    /// shrinks; `value` stays put.
+    ///
+    /// Recovering the trimmed tail requires reopening the chat (the
+    /// existing `OpenChat` path repaints from the latest 50). Live
+    /// pushes via `MessagesAppended` still land — `seen_message_ids`
+    /// gets the dropped IDs cleared so a re-emit of the same row isn't
+    /// dedup'd away.
+    pub(in crate::components::chat_tab) fn handle_trim_bottom(&mut self) {
+        const MAX_KEEP: usize = 150;
+        const TARGET: usize = 100;
+        if self.bottomed.get() {
+            return;
+        }
+        let count = self.messages.len();
+        if count <= MAX_KEEP {
+            return;
+        }
+        let to_drop = count - TARGET;
+        let mut dropped_ids: Vec<String> = Vec::with_capacity(to_drop);
+        {
+            let guard = self.messages.guard();
+            let len = guard.len();
+            let start = len - to_drop;
+            for fac in guard.iter().skip(start) {
+                dropped_ids.push(fac.item.id.clone());
+            }
+        }
+        {
+            let mut guard = self.messages.guard();
+            for _ in 0..to_drop {
+                guard.pop_back();
+            }
+        }
+        for id in &dropped_ids {
+            self.seen_message_ids.remove(id);
+        }
+        tracing::info!(
+            chat = %self.chat_id,
+            dropped = to_drop,
+            remaining = self.messages.len(),
+            "ChatTab: pruned bottom after prepend"
         );
     }
 
@@ -213,5 +267,24 @@ impl ChatTab {
                 bottomed_flag.set(prev_bottomed);
             });
         }
+
+        // Soft-cap mirror of NearBottom. Without this, every NearTop
+        // → PrependOlder cycle adds 50 rows and never gives any back —
+        // the factory grows past whatever the user has patience to
+        // scroll through, and group chats run the process out of RAM.
+        // The pop is deferred to a follow-up idle so the value-restore
+        // above lands first; otherwise the upper-shrink from the trim
+        // would fold into the (new_upper - old_upper) delta and drag
+        // the user's view up by the trimmed pixels.
+        if self.messages.len() > 150 {
+            let input = sender.input_sender().clone();
+            glib::idle_add_local_once(move || {
+                let _ = input.send(ChatTabInput::TrimBottom);
+            });
+        }
+
+        // Older history just scrolled into view — same on-demand
+        // policy as Reset/Append.
+        self.auto_queue_downloads(&messages, sender);
     }
 }

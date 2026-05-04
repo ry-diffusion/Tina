@@ -35,6 +35,12 @@ pub enum ChatTabInput {
     /// User scrolled back to the bottom — opportunity to prune the top
     /// of the factory if it grew past the soft cap.
     NearBottom,
+    /// Deferred trim of the newest rows after a `PrependOlder` settled.
+    /// Symmetric counterpart to NearBottom's top-prune: fast scroll-up
+    /// stacks 50-row pages on top forever, so we lop off the back when
+    /// the factory blows past the cap. Posted from `handle_prepend_older`
+    /// via an idle callback so the scroll-position restore runs first.
+    TrimBottom,
     /// Older page came back from the worker. `reached_top = true` means
     /// the worker returned fewer rows than requested → we've loaded the
     /// entire history; stop trying.

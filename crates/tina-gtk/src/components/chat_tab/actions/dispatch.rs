@@ -26,6 +26,7 @@ impl ChatTab {
             ChatTabInput::MediaFailed(id) => self.handle_media_failed(id),
             ChatTabInput::StickToBottom => self.handle_stick_to_bottom(),
             ChatTabInput::NearBottom => self.handle_near_bottom(),
+            ChatTabInput::TrimBottom => self.handle_trim_bottom(),
             ChatTabInput::NearTop => self.handle_near_top(&sender),
             ChatTabInput::PrependOlder {
                 messages,

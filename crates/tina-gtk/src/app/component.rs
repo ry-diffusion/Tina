@@ -171,7 +171,7 @@ impl SimpleComponent for AppModel {
             .launch(crate::components::main_page::MainInit {
                 service: service.handle.clone(),
                 avatars,
-                media,
+                media: media.clone(),
                 chats,
                 messages,
             })
@@ -225,6 +225,7 @@ impl SimpleComponent for AppModel {
             login,
             main,
             settings,
+            media,
             toast_overlay: adw::ToastOverlay::new(),
         };
 

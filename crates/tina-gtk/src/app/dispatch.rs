@@ -122,7 +122,14 @@ impl AppModel {
             AppMsg::SendText { chat_id, text } => {
                 self.service.handle.send(Cmd::SendText { chat_id, text });
             }
-            AppMsg::RequestRepair => self.service.handle.send(Cmd::Repair),
+            AppMsg::RequestRepair => {
+                // Close the Preferences dialog when the action fires —
+                // the user kicked off a long-running command from
+                // inside the dialog, the in-headerbar progress strip
+                // is what they should be watching now.
+                self.settings.widget().close();
+                self.service.handle.send(Cmd::Repair);
+            }
             AppMsg::RequestPreferences => self.handle_open_preferences(),
             AppMsg::RequestLoadStatuses => self.service.handle.send(Cmd::LoadStatuses),
             AppMsg::RequestRefreshChat(chat_jid) => {
@@ -138,9 +145,11 @@ impl AppModel {
             }
             AppMsg::RequestLogout => self.service.handle.send(Cmd::Logout),
             AppMsg::SetDownloadMethod(m) => {
+                self.media.set_download_method(m);
                 self.service.handle.send(Cmd::SetDownloadMethod(m));
             }
             AppMsg::PreferencesLoaded { method, pid } => {
+                self.media.set_download_method(method);
                 use crate::components::settings::SettingsInput;
                 let _ = self
                     .settings
@@ -151,8 +160,14 @@ impl AppModel {
                     .sender()
                     .send(SettingsInput::SetNanachiPid(pid));
             }
-            AppMsg::ClearMediaCache => self.service.handle.send(Cmd::ClearMediaCache),
-            AppMsg::ClearAvatarCache => self.service.handle.send(Cmd::ClearAvatarCache),
+            AppMsg::ClearMediaCache => {
+                self.settings.widget().close();
+                self.service.handle.send(Cmd::ClearMediaCache);
+            }
+            AppMsg::ClearAvatarCache => {
+                self.settings.widget().close();
+                self.service.handle.send(Cmd::ClearAvatarCache);
+            }
             AppMsg::SetChatPinned { chat_id, pinned } => {
                 self.service.handle.send(Cmd::SetChatPinned { chat_id, pinned });
             }
