@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,45 @@ type Client struct {
 	wa        *whatsmeow.Client
 
 	historyCount atomic.Int64
+	// historySyncSeen flips to true on the first onHistorySync chunk
+	// (regardless of progress). The OfflineSyncCompleted /
+	// AppStateSyncComplete fallbacks check this before emitting their
+	// own HistorySyncComplete — if a real HistorySync stream is
+	// running, those events would prematurely close the syncing scene
+	// while the device is still streaming INITIAL_BOOTSTRAP chunks.
+	historySyncSeen atomic.Bool
+	// fallbackScheduled guards `scheduleFallbackHistoryComplete` so
+	// repeated AppStateSyncComplete events don't queue overlapping
+	// timers (whatsmeow fires it once per app-state name on every
+	// sync — 5+ times during the initial boot).
+	fallbackScheduled atomic.Bool
+}
+
+// scheduleFallbackHistoryComplete arms a one-shot timer that emits
+// HistorySyncComplete after `fallbackHistoryCompleteDelay` if no
+// HistorySync chunk has arrived in the meantime. Called from
+// OfflineSyncCompleted and AppStateSyncComplete; idempotent across
+// multiple calls.
+func (c *Client) scheduleFallbackHistoryComplete() {
+	if !c.fallbackScheduled.CompareAndSwap(false, true) {
+		return
+	}
+	accountID := c.accountID
+	go func() {
+		time.Sleep(fallbackHistoryCompleteDelay)
+		if c.historySyncSeen.Load() {
+			fmt.Fprintf(os.Stderr,
+				"[sync] fallback skipped for %s — HistorySync took over\n",
+				accountID,
+			)
+			return
+		}
+		fmt.Fprintf(os.Stderr,
+			"[sync] fallback HistorySyncComplete for %s (no chunks within %s)\n",
+			accountID, fallbackHistoryCompleteDelay,
+		)
+		emitHistorySyncComplete(accountID, int(c.historyCount.Load()))
+	}()
 }
 
 func newClient(mgr *Manager, accountID string, device *store.Device) *Client {

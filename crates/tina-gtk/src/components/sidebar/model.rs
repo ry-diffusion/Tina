@@ -38,13 +38,26 @@ pub struct Sidebar {
     /// freshly launched UI shows that state before the first
     /// `Connected`/`Disconnected` event lands.
     pub(super) connection: ConnectionStatus,
+    /// 0..100 from the latest `WorkerEvent::HistorySyncProgress`.
+    /// `None` once the sync stream finishes (or when no sync is
+    /// active). Drives the headerbar subtitle when whatsmeow is
+    /// streaming a HistorySync while the user is already in-app —
+    /// e.g. on auto-reconnect after a network drop.
+    pub(super) history_sync_progress: Option<u32>,
+    /// Last `HistorySync.SyncType` enum string ("INITIAL_BOOTSTRAP",
+    /// "RECENT", …) — used so the subtitle can spell out the stage
+    /// instead of an opaque percentage.
+    pub(super) history_sync_type: String,
     pub(super) user_jid: Option<String>,
     pub(super) avatars: AvatarInventory,
 }
 
 impl Sidebar {
     /// Subtitle for the headerbar `WindowTitle`. Empty when we're
-    /// online and idle so the title sits alone.
+    /// online and idle so the title sits alone. Priority order:
+    /// connection state > repair > history sync — connection trumps
+    /// everything because if we're not online there's no point
+    /// reporting download progress on a dead pipe.
     pub(super) fn status_subtitle(&self) -> String {
         match self.connection {
             ConnectionStatus::Offline => return "Offline".to_string(),
@@ -60,32 +73,56 @@ impl Sidebar {
                 .round() as i64;
             return format!("Syncing ({pct}%)");
         }
+        if let Some(progress) = self.history_sync_progress {
+            // Tag the percentage with the sync type when whatsmeow
+            // gave us one. INITIAL_BOOTSTRAP stays generic ("Syncing")
+            // because it's the most common path and the verbose label
+            // adds noise.
+            let label = match self.history_sync_type.as_str() {
+                "RECENT" => "Catching up",
+                "FULL" => "Pulling history",
+                "ON_DEMAND" => "Pulling history",
+                _ => "Syncing",
+            };
+            return if progress == 0 {
+                format!("{label}…")
+            } else {
+                format!("{label} ({progress}%)")
+            };
+        }
         String::new()
     }
 
     /// Whether the indeterminate top progress bar should pulse (no
-    /// known fraction). True for connecting + indeterminate repair.
+    /// known fraction). True for connecting, indeterminate repair, or
+    /// a HistorySync stream still at 0%.
     pub(super) fn status_bar_pulsing(&self) -> bool {
         matches!(self.connection, ConnectionStatus::Connecting)
             || (self.repairing && (self.repair_indeterminate || self.repair_total <= 0))
+            || self.history_sync_progress == Some(0)
     }
 
     /// Whether the thin top progress bar should be shown. Visible
-    /// while we're actively reaching the network (connecting) or
-    /// reconciling — not for `Offline`, which the subtitle alone
-    /// communicates.
+    /// while we're actively reaching the network (connecting),
+    /// reconciling, or pulling a HistorySync stream — not for
+    /// `Offline`, which the subtitle alone communicates.
     pub(super) fn status_bar_visible(&self) -> bool {
-        self.repairing || matches!(self.connection, ConnectionStatus::Connecting)
+        self.repairing
+            || matches!(self.connection, ConnectionStatus::Connecting)
+            || self.history_sync_progress.is_some()
     }
 
     /// Determinate fraction for the top progress bar; falls back to
     /// pulsing when we don't have a known total.
     pub(super) fn status_bar_fraction(&self) -> Option<f64> {
         if self.repairing && !self.repair_indeterminate && self.repair_total > 0 {
-            Some((self.repair_current as f64) / (self.repair_total as f64))
-        } else {
-            None
+            return Some((self.repair_current as f64) / (self.repair_total as f64));
         }
+        if let Some(p) = self.history_sync_progress
+            && p > 0 {
+                return Some((p as f64 / 100.0).clamp(0.0, 1.0));
+            }
+        None
     }
 
     /// Linear search through the base store for a chat by id. The list

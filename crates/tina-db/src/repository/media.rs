@@ -26,6 +26,34 @@ impl TinaDb {
         Ok(row.and_then(|(j,)| j))
     }
 
+    /// Drop every cached `media_path` (and reset `media_status` to
+    /// pending so the UI re-renders the placeholder). Called by the
+    /// settings dialog's "Clear media cache" action right after the
+    /// files themselves have been deleted on disk.
+    pub async fn clear_all_media_paths(&self) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE messages SET media_path = NULL, media_status = NULL \
+             WHERE media_path IS NOT NULL OR media_status IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Drop every cached `avatar_path` on chats and contacts. UI
+    /// re-fetches on next render.
+    pub async fn clear_all_avatar_paths(&self) -> Result<u64> {
+        let mut total = 0;
+        for sql in [
+            "UPDATE chats    SET avatar_path = NULL WHERE avatar_path IS NOT NULL",
+            "UPDATE contacts SET avatar_path = NULL WHERE avatar_path IS NOT NULL",
+        ] {
+            let res = sqlx::query(sql).execute(&self.pool).await?;
+            total += res.rows_affected();
+        }
+        Ok(total)
+    }
+
     pub async fn set_media_status(
         &self,
         account_id: &str,

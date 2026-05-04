@@ -89,6 +89,9 @@ pub(super) async fn handle_realtime_event(
                 })
                 .await;
         }
+        IpcEvent::ChatsPinUpdate { account_id, items } => {
+            handle_chats_pin_update(db, event_tx, account_id, items).await;
+        }
         IpcEvent::Error { account_id, error } => {
             let _ = event_tx
                 .send(WorkerEvent::Error { account_id, error })
@@ -213,6 +216,50 @@ async fn handle_connected(
         })
         .await;
     Ok(())
+}
+
+async fn handle_chats_pin_update(
+    db: &TinaDb,
+    event_tx: &mpsc::Sender<WorkerEvent>,
+    account_id: String,
+    items: Vec<tina_core::ChatPinItem>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let mut affected: Vec<String> = Vec::with_capacity(items.len());
+    for item in &items {
+        if let Err(e) = db
+            .set_chat_pinned(&account_id, &item.chat_jid, item.pinned)
+            .await
+        {
+            // Likely a missing chat row — the pin info arrived before
+            // the conversation was upserted. Log and skip; the row
+            // will be created later and we'll re-emit on the next
+            // HistorySync chunk if the conversation comes back.
+            tracing::debug!(
+                chat = %item.chat_jid,
+                "set_chat_pinned skipped: {e}",
+            );
+            continue;
+        }
+        affected.push(item.chat_jid.clone());
+    }
+    if affected.is_empty() {
+        return;
+    }
+    // Re-fetch the affected rows + push a `ChatsUpserted` so the
+    // sidebar's row state (pin icon, sort position) updates without
+    // a separate refresh.
+    match db.get_chat_rows(&account_id, &affected).await {
+        Ok(rows) if !rows.is_empty() => {
+            let _ = event_tx
+                .send(WorkerEvent::ChatsUpserted { account_id, rows })
+                .await;
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!("get_chat_rows after pin update: {e}"),
+    }
 }
 
 async fn handle_media_downloaded(

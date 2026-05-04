@@ -101,6 +101,10 @@ pub(super) async fn handle(
             set_chat_pinned(worker, app, state, chat_id, pinned).await
         }
         Cmd::Logout => logout(worker, state).await,
+        Cmd::LoadPreferences => load_preferences(worker, app).await,
+        Cmd::SetDownloadMethod(m) => set_download_method(worker, m).await,
+        Cmd::ClearMediaCache => clear_media_cache(worker, app).await,
+        Cmd::ClearAvatarCache => clear_avatar_cache(worker, app).await,
         Cmd::Shutdown => return false,
     }
     true
@@ -283,4 +287,96 @@ async fn logout(worker: &Arc<TinaWorker>, state: &SharedState) {
             error!("logout: {e}");
         }
     }
+}
+
+async fn load_preferences(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>) {
+    use crate::components::settings::DownloadMethod;
+    let method = worker
+        .get_setting(DownloadMethod::KEY)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| DownloadMethod::from_str(&s))
+        .unwrap_or(DownloadMethod::OnDemand);
+    let pid = worker.nanachi_pid().await;
+    let _ = app.send(AppMsg::PreferencesLoaded { method, pid });
+}
+
+async fn set_download_method(
+    worker: &Arc<TinaWorker>,
+    m: crate::components::settings::DownloadMethod,
+) {
+    if let Err(e) = worker.put_setting(
+        crate::components::settings::DownloadMethod::KEY,
+        m.as_str(),
+    )
+    .await {
+        error!("put_setting download_method: {e}");
+    }
+}
+
+/// Walk a directory tree and remove every regular file. We keep the
+/// top-level directory itself so the Go side doesn't need to recreate
+/// it on the next download.
+fn rm_files_in(path: &std::path::Path) -> std::io::Result<u64> {
+    let mut count = 0u64;
+    let entries = match std::fs::read_dir(path) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if entry.file_type()?.is_dir() {
+            count += rm_files_in(&p)?;
+            // Try to drop the now-empty shard dir (`media/aa/`); the
+            // failure is non-fatal — Go will recreate it on demand.
+            let _ = std::fs::remove_dir(&p);
+        } else if std::fs::remove_file(&p).is_ok() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn data_dir() -> std::path::PathBuf {
+    if let Some(dirs) = directories::ProjectDirs::from("com.br", "zesmoi", "tina") {
+        dirs.data_dir().to_path_buf()
+    } else if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home).join(".local/share/tina")
+    } else {
+        std::path::PathBuf::from(".")
+    }
+}
+
+async fn clear_media_cache(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>) {
+    let path = data_dir().join("media");
+    let n = match rm_files_in(&path) {
+        Ok(n) => n,
+        Err(e) => {
+            error!("clear_media_cache rm: {e}");
+            let _ = app.send(AppMsg::Toast(format!("Failed to clear media: {e}")));
+            return;
+        }
+    };
+    if let Err(e) = worker.clear_all_media_paths().await {
+        error!("clear_all_media_paths: {e}");
+    }
+    let _ = app.send(AppMsg::Toast(format!("Cleared {n} media file(s)")));
+}
+
+async fn clear_avatar_cache(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>) {
+    let path = data_dir().join("avatars");
+    let n = match rm_files_in(&path) {
+        Ok(n) => n,
+        Err(e) => {
+            error!("clear_avatar_cache rm: {e}");
+            let _ = app.send(AppMsg::Toast(format!("Failed to clear avatars: {e}")));
+            return;
+        }
+    };
+    if let Err(e) = worker.clear_all_avatar_paths().await {
+        error!("clear_all_avatar_paths: {e}");
+    }
+    let _ = app.send(AppMsg::Toast(format!("Cleared {n} avatar file(s)")));
 }

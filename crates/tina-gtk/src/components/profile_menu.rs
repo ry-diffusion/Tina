@@ -17,16 +17,18 @@ pub enum ProfileMenuInput {
     },
     /// Avatar arrived for the signed-in user.
     SetAvatar(String),
-    Repair,
+    Preferences,
     Logout,
-    /// Whether a repair/reconcile is currently in flight — disables the
-    /// "Repair" button so the user can't double-trigger it.
+    /// Reserved: the popover used to disable the Repair button while a
+    /// reconcile was in flight. Repair now lives in the preferences
+    /// dialog, so this is a no-op kept for callers that still send it.
+    #[allow(dead_code)]
     SetRepairing(bool),
 }
 
 #[derive(Debug)]
 pub enum ProfileMenuOutput {
-    Repair,
+    Preferences,
     Logout,
 }
 
@@ -78,52 +80,97 @@ impl SimpleComponent for ProfileMenu {
                     set_margin_end: 12,
                     set_width_request: 240,
 
+                    // Identity row: avatar on the left, name + phone
+                    // stacked on the right. Reads as a single line of
+                    // info instead of three centred blocks — closer
+                    // to GNOME Online Accounts / Text Editor's
+                    // identity affordances. Phone is selectable but
+                    // `can_focus: false` keeps the popover from
+                    // auto-selecting it on present.
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 12,
-                        set_halign: gtk::Align::Center,
+                        set_halign: gtk::Align::Fill,
 
                         adw::Avatar {
-                            set_size: 56,
+                            set_size: 48,
                             set_show_initials: true,
                             #[watch]
                             set_text: Some(model.display_name()),
                             #[watch]
                             set_custom_image: model.avatar_paintable().as_ref(),
+                            set_valign: gtk::Align::Center,
                         },
-                    },
 
-                    gtk::Label {
-                        #[watch]
-                        set_label: model.name.as_deref().unwrap_or("Tina"),
-                        set_halign: gtk::Align::Center,
-                        add_css_class: "title-2",
-                    },
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 2,
+                            set_valign: gtk::Align::Center,
+                            set_hexpand: true,
 
-                    gtk::Label {
-                        #[watch]
-                        set_label: model.phone.as_deref().unwrap_or("Not connected"),
-                        set_halign: gtk::Align::Center,
-                        set_selectable: true,
-                        add_css_class: "dim-label",
-                        add_css_class: "caption",
+                            gtk::Label {
+                                #[watch]
+                                set_label: model.name.as_deref().unwrap_or("Tina"),
+                                set_halign: gtk::Align::Start,
+                                set_xalign: 0.0,
+                                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                add_css_class: "heading",
+                            },
+
+                            gtk::Label {
+                                #[watch]
+                                set_label: model.phone.as_deref().unwrap_or("Not connected"),
+                                set_halign: gtk::Align::Start,
+                                set_xalign: 0.0,
+                                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                set_selectable: true,
+                                set_can_focus: false,
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                            },
+                        },
                     },
 
                     gtk::Separator {},
 
+                    // Menu rows styled like AdwPreferencesDialog /
+                    // GNOME Text Editor's menu — flat button with the
+                    // action on the start and the keyboard accel
+                    // dim-labelled on the end. Accel labels mirror the
+                    // ShortcutController bindings installed on the
+                    // application window in `app/component.rs`.
                     gtk::Button {
-                        set_label: "Repair (reconcile)",
                         add_css_class: "flat",
-                        #[watch]
-                        set_sensitive: !model.repairing,
-                        connect_clicked => ProfileMenuInput::Repair,
+                        connect_clicked => ProfileMenuInput::Preferences,
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 24,
+                            gtk::Label {
+                                set_label: "Preferences",
+                                set_xalign: 0.0,
+                                set_hexpand: true,
+                            },
+                            gtk::Label {
+                                set_label: "Ctrl+,",
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                            },
+                        },
                     },
 
                     gtk::Button {
-                        set_label: "Log out",
                         add_css_class: "flat",
                         add_css_class: "destructive-action",
                         connect_clicked => ProfileMenuInput::Logout,
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 24,
+                            gtk::Label {
+                                set_label: "Log out",
+                                set_xalign: 0.0,
+                                set_hexpand: true,
+                            },
+                        },
                     },
                 },
             },
@@ -160,8 +207,8 @@ impl SimpleComponent for ProfileMenu {
             }
             ProfileMenuInput::SetAvatar(path) => self.avatar = Some(path),
             ProfileMenuInput::SetRepairing(r) => self.repairing = r,
-            ProfileMenuInput::Repair => {
-                let _ = sender.output(ProfileMenuOutput::Repair);
+            ProfileMenuInput::Preferences => {
+                let _ = sender.output(ProfileMenuOutput::Preferences);
             }
             ProfileMenuInput::Logout => {
                 let _ = sender.output(ProfileMenuOutput::Logout);

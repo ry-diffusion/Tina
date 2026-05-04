@@ -2515,6 +2515,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "color-eyre",
+ "directories",
  "gdk4",
  "gio",
  "glib",

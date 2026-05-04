@@ -102,4 +102,10 @@ impl ProcessHandle {
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         self.child.try_wait().map_err(IpcError::Io)
     }
+
+    /// PID of the spawned subprocess. Returns `None` if the child has
+    /// already exited (Tokio nulls out the handle on reap).
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
 }

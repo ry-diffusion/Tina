@@ -35,6 +35,8 @@ pub enum MainInput {
     },
     SetRepairing(bool),
     SetConnection(ConnectionStatus),
+    HistorySyncProgress { sync_type: String, progress: u32 },
+    HistorySyncEnded,
     RepairProgress {
         stage: String,
         current: i64,
@@ -68,7 +70,7 @@ pub enum MainOutput {
     OpenChatNew(String),
     CloseChat(String),
     SendText { chat_id: String, text: String },
-    RequestRepair,
+    RequestPreferences,
     RequestLogout,
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },

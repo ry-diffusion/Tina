@@ -2,6 +2,7 @@
 // to the main page child, and routing UI intents back to the service
 // worker.
 
+use adw::prelude::*;
 use relm4::prelude::*;
 use tracing::info;
 
@@ -65,6 +66,15 @@ impl AppModel {
                     "[sync] HistorySyncDone — Cmd::LoadChats",
                 );
                 self.handle_history_sync_done();
+                // Clear the sidebar's headerbar progress affordance —
+                // `MainInput` is a no-op while we're still in
+                // `Scene::Syncing` (MainPage isn't mounted yet) but
+                // costs nothing, and matters for re-syncs that
+                // happen mid-session (auto-reconnect after a drop).
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::HistorySyncEnded);
             }
             AppMsg::HistorySyncProgress {
                 sync_type,
@@ -76,8 +86,17 @@ impl AppModel {
                     scene = ?self.scene,
                     "[sync] HistorySyncProgress",
                 );
-                self.sync_type = sync_type;
+                self.sync_type = sync_type.clone();
                 self.sync_progress = progress.min(100);
+                // Forward to the sidebar so the headerbar subtitle +
+                // top progress bar reflect the active stream while
+                // the user is in-app. During `Scene::Syncing` the
+                // sidebar isn't visible but the message lands
+                // harmlessly.
+                let _ = self.main.sender().send(MainInput::HistorySyncProgress {
+                    sync_type,
+                    progress,
+                });
             }
             AppMsg::RepairStarted => self.handle_repair_started(),
             AppMsg::RepairProgress {
@@ -98,7 +117,24 @@ impl AppModel {
                 self.service.handle.send(Cmd::SendText { chat_id, text });
             }
             AppMsg::RequestRepair => self.service.handle.send(Cmd::Repair),
+            AppMsg::RequestPreferences => self.handle_open_preferences(),
             AppMsg::RequestLogout => self.service.handle.send(Cmd::Logout),
+            AppMsg::SetDownloadMethod(m) => {
+                self.service.handle.send(Cmd::SetDownloadMethod(m));
+            }
+            AppMsg::PreferencesLoaded { method, pid } => {
+                use crate::components::settings::SettingsInput;
+                let _ = self
+                    .settings
+                    .sender()
+                    .send(SettingsInput::SetDownloadMethod(method));
+                let _ = self
+                    .settings
+                    .sender()
+                    .send(SettingsInput::SetNanachiPid(pid));
+            }
+            AppMsg::ClearMediaCache => self.service.handle.send(Cmd::ClearMediaCache),
+            AppMsg::ClearAvatarCache => self.service.handle.send(Cmd::ClearAvatarCache),
             AppMsg::SetChatPinned { chat_id, pinned } => {
                 self.service.handle.send(Cmd::SetChatPinned { chat_id, pinned });
             }
@@ -144,11 +180,16 @@ impl AppModel {
                 });
             }
             AppMsg::MediaDownloadFailed { message_id, error } => {
-                self.toast(format!("Download failed: {error}"));
+                // Tell the chat area first so the bubble flips out of
+                // its "downloading" state regardless of how the user
+                // dismisses the dialog (close / retry / Esc).
                 let _ = self
                     .main
                     .sender()
-                    .send(MainInput::MediaFailed { message_id });
+                    .send(MainInput::MediaFailed {
+                        message_id: message_id.clone(),
+                    });
+                self.show_download_failed_dialog(message_id, error);
             }
         }
     }
@@ -156,6 +197,63 @@ impl AppModel {
     fn handle_qr(&mut self, qr: String) {
         self.scene = Scene::QrLogin;
         let _ = self.login.sender().send(LoginInput::SetQr(qr));
+    }
+
+    /// Modal alert when a media download fails. Replaces the old toast
+    /// path because download failures are explicit user actions —
+    /// surfacing them as a transient toast meant the user could miss
+    /// the error by the time they noticed the spinner had stopped.
+    /// Offers a Retry response that re-issues the same `Cmd::DownloadMedia`.
+    fn show_download_failed_dialog(&self, message_id: String, error: String) {
+        let dialog = adw::AlertDialog::builder()
+            .heading("Download failed")
+            .body(&error)
+            .build();
+        dialog.add_response("close", "Close");
+        dialog.add_response("retry", "Retry");
+        dialog.set_response_appearance("retry", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("retry"));
+        dialog.set_close_response("close");
+
+        // Capture only what the response handler needs — the worker
+        // handle is `Clone` so this doesn't pin the AppModel.
+        let handle = self.service.handle.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "retry" {
+                handle.send(Cmd::DownloadMedia {
+                    message_id: message_id.clone(),
+                });
+            }
+        });
+
+        let parent: Option<gtk::Window> = self
+            .toast_overlay
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        dialog.present(parent.as_ref());
+    }
+
+    fn handle_open_preferences(&self) {
+        // Recompute disk-usage / RSS rows right before the dialog
+        // becomes visible. They'd be stale otherwise — values were
+        // last sampled the previous time the dialog was open.
+        let _ = self
+            .settings
+            .sender()
+            .send(crate::components::settings::SettingsInput::Refresh);
+        // Worker round-trip for the persisted method + nanachi pid;
+        // result lands as `AppMsg::PreferencesLoaded`.
+        self.service.handle.send(Cmd::LoadPreferences);
+        // Parent: walk up from the toast overlay (which is wrapped
+        // inside the AdwApplicationWindow). `Widget::root()` returns
+        // the topmost ancestor; if it's a Window we attach the
+        // dialog to it for the modal/center-on-parent behaviour
+        // AdwDialog implements internally.
+        let parent: Option<gtk::Window> = self
+            .toast_overlay
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        self.settings.widget().present(parent.as_ref());
     }
 
     fn handle_connected(

@@ -12,6 +12,7 @@ use relm4::prelude::*;
 
 use crate::components::login::LoginPage;
 use crate::components::main_page::{MainOutput, MainPage};
+use crate::components::settings::{Settings, SettingsInit, SettingsOutput};
 use crate::service::{Cmd, ServiceWorker};
 
 use super::messages::{AppInit, AppMsg, Scene};
@@ -33,17 +34,12 @@ impl SimpleComponent for AppModel {
             adw::ToastOverlay {
                 #[wrap(Some)]
                 set_child = &gtk::Stack {
+                    // The relm4 view! macro applies properties in
+                    // declaration order. `set_visible_child_name` runs
+                    // before `add_named`, so naming a page that hasn't
+                    // been added yet logged a Gtk-WARNING on every
+                    // boot. Children declared first → property below.
                     set_transition_type: gtk::StackTransitionType::Crossfade,
-
-                    #[watch]
-                    set_visible_child_name: match model.scene {
-                        Scene::Init => "init",
-                        Scene::QrLogin => "qr",
-                        Scene::Syncing => "sync",
-                        Scene::InApp => "main",
-                        Scene::Repairing => "repair",
-                        Scene::Error => "err",
-                    },
 
                     add_named[Some("init")] = &init_page(),
                     add_named[Some("qr")] = model.login.widget(),
@@ -129,6 +125,16 @@ impl SimpleComponent for AppModel {
                     },
 
                     add_named[Some("err")] = &error_page(model.error.clone().unwrap_or_default()),
+
+                    #[watch]
+                    set_visible_child_name: match model.scene {
+                        Scene::Init => "init",
+                        Scene::QrLogin => "qr",
+                        Scene::Syncing => "sync",
+                        Scene::InApp => "main",
+                        Scene::Repairing => "repair",
+                        Scene::Error => "err",
+                    },
                 },
             },
         }
@@ -136,7 +142,7 @@ impl SimpleComponent for AppModel {
 
     fn init(
         init: Self::Init,
-        _root: Self::Root,
+        root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let service = ServiceWorker::spawn(init.nanachi_dir, sender.input_sender().clone());
@@ -156,7 +162,7 @@ impl SimpleComponent for AppModel {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),
                 MainOutput::CloseChat(id) => AppMsg::CloseChat(id),
                 MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
-                MainOutput::RequestRepair => AppMsg::RequestRepair,
+                MainOutput::RequestPreferences => AppMsg::RequestPreferences,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,
                 MainOutput::RequestMediaDownload(id) => AppMsg::RequestMediaDownload(id),
                 MainOutput::RequestLoadOlder { chat_id, before_ts } => {
@@ -167,6 +173,20 @@ impl SimpleComponent for AppModel {
                     AppMsg::SetChatPinned { chat_id, pinned }
                 }
             });
+
+        // Held over the app's lifetime; presented on demand from the
+        // profile menu. Outputs bubble up through `AppMsg`.
+        let settings = Settings::builder()
+            .launch(SettingsInit {
+                data_dir: tina_data_dir(),
+            })
+            .forward(sender.input_sender(), |o| match o {
+                SettingsOutput::SetDownloadMethod(m) => AppMsg::SetDownloadMethod(m),
+                SettingsOutput::Repair => AppMsg::RequestRepair,
+                SettingsOutput::ClearMedia => AppMsg::ClearMediaCache,
+                SettingsOutput::ClearAvatars => AppMsg::ClearAvatarCache,
+            });
+
         let model = AppModel {
             scene: Scene::Init,
             pre_repair_scene: None,
@@ -183,6 +203,7 @@ impl SimpleComponent for AppModel {
             service,
             login,
             main,
+            settings,
             toast_overlay: adw::ToastOverlay::new(),
         };
 
@@ -204,6 +225,18 @@ impl SimpleComponent for AppModel {
                     bar.pulse();
                 }
                 glib::ControlFlow::Continue
+            });
+        }
+
+        // App-wide keyboard shortcuts. `Ctrl+,` is the GNOME-canonical
+        // accelerator for Preferences (Files, Text Editor, Builder
+        // all use it). The accel label rendered next to the
+        // "Preferences" row in the profile popover mirrors this
+        // binding — change one, change the other.
+        {
+            let s = sender.input_sender().clone();
+            install_shortcut(&root, "<Control>comma", move || {
+                let _ = s.send(AppMsg::RequestPreferences);
             });
         }
 
@@ -234,4 +267,41 @@ impl SimpleComponent for AppModel {
 #[allow(dead_code)]
 fn _force_glib_link() -> glib::ExitCode {
     glib::ExitCode::SUCCESS
+}
+
+/// Bind a single keyboard accelerator at the application-window
+/// scope so it fires regardless of focused widget. The closure runs
+/// on the GTK thread; relay onto the relm4 input sender if you need
+/// the model thread.
+fn install_shortcut<F>(root: &adw::ApplicationWindow, accel: &str, on_activate: F)
+where
+    F: Fn() + 'static,
+{
+    let Some(trigger) = gtk::ShortcutTrigger::parse_string(accel) else {
+        tracing::warn!("invalid accelerator string: {accel}");
+        return;
+    };
+    let action = gtk::CallbackAction::new(move |_, _| {
+        on_activate();
+        glib::Propagation::Stop
+    });
+    let shortcut = gtk::Shortcut::new(Some(trigger), Some(action));
+    let controller = gtk::ShortcutController::new();
+    controller.set_scope(gtk::ShortcutScope::Global);
+    controller.add_shortcut(shortcut);
+    root.add_controller(controller);
+}
+
+/// Resolve the per-user data dir matching `tina-db`'s `ProjectDirs`.
+/// Falls back to `~/.local/share/tina` so the settings dialog still
+/// has a sensible disk-usage target if the lookup fails.
+fn tina_data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    if let Some(dirs) = directories::ProjectDirs::from("com.br", "zesmoi", "tina") {
+        return dirs.data_dir().to_path_buf();
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".local").join("share").join("tina");
+    }
+    PathBuf::from(".")
 }

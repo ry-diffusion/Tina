@@ -3,10 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+// fallbackHistoryCompleteDelay is how long we wait after
+// OfflineSyncCompleted / AppStateSyncComplete before emitting a
+// fallback HistorySyncComplete. The first HistorySync chunk on this
+// account historically lands ~4 s after Connected, so 10 s leaves
+// generous headroom while still recovering devices that genuinely
+// never receive a chunk (the original comment's "stuck on Syncing"
+// case).
+const fallbackHistoryCompleteDelay = 10 * time.Second
 
 // handleEvent é registrado em Client.wa.AddEventHandler.
 func (c *Client) handleEvent(rawEvt any) {
@@ -43,10 +53,15 @@ func (c *Client) handleEvent(rawEvt any) {
 			"[sync] OfflineSyncCompleted for %s (cumulative messages=%d)\n",
 			c.accountID, c.historyCount.Load(),
 		)
-		// Sinal canônico do whatsmeow de que a sincronização inicial
-		// (mensagens offline + app state) acabou. Sem isso, a UI fica
-		// travada na tela "Syncing Messages" esperando HistorySync.
-		emitHistorySyncComplete(c.accountID, int(c.historyCount.Load()))
+		// Fallback for fresh-pair devices that genuinely never get
+		// any HistorySync chunk. We can't emit Complete inline — the
+		// real chunk stream typically lands several seconds AFTER
+		// OfflineSyncCompleted, and emitting now closes the syncing
+		// page before the first chunk arrives. Defer the check; if
+		// `historySyncSeen` flipped during the wait, the chunk
+		// stream's own progress=100 path will close the page and
+		// this fallback no-ops.
+		c.scheduleFallbackHistoryComplete()
 		// Reconcile automático: nesse ponto o whatsmeow já populou seu
 		// próprio store de contatos com push names do app-state. Re-emitimos
 		// pro tina pra preencher os nomes que escaparam dos eventos.
@@ -56,8 +71,8 @@ func (c *Client) handleEvent(rawEvt any) {
 		fmt.Fprintf(os.Stderr,
 			"[sync] AppStateSyncComplete for %s\n", c.accountID,
 		)
-		// Backup: alguns dispositivos só emitem AppStateSyncComplete.
-		emitHistorySyncComplete(c.accountID, int(c.historyCount.Load()))
+		// Same delayed-fallback strategy as OfflineSyncCompleted.
+		c.scheduleFallbackHistoryComplete()
 		go c.reconcile()
 
 	case *events.Contact:

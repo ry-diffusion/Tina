@@ -5,4 +5,5 @@ pub mod login;
 pub mod main_page;
 pub mod message_bubble;
 pub mod profile_menu;
+pub mod settings;
 pub mod sidebar;

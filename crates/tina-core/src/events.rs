@@ -79,6 +79,15 @@ pub enum IpcEvent {
 
     HistorySyncComplete { account_id: String, messages_count: usize },
 
+    /// Pin state from `whatsmeow_chat_settings` (read out of the
+    /// HistorySync conversation rows). `pinned = true` for any
+    /// conversation with a non-zero pin timestamp; the UI uses this
+    /// to mirror the WhatsApp-side pin order on first sync.
+    ChatsPinUpdate {
+        account_id: String,
+        items: Vec<ChatPinItem>,
+    },
+
     /// Per-chunk progress reported by whatsmeow during the initial
     /// `events.HistorySync` stream. `progress` is a 0..100 percent
     /// already calculated by the proto; `sync_type` is the enum name
@@ -137,6 +146,12 @@ pub enum IpcEvent {
     },
 
     CommandResult { command_id: String, success: bool, data: Option<serde_json::Value>, error: Option<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatPinItem {
+    pub chat_jid: String,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

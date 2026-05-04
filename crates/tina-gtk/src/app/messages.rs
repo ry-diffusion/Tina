@@ -113,6 +113,20 @@ pub enum AppMsg {
         text: String,
     },
     RequestRepair,
+    RequestPreferences,
     RequestLogout,
     SetChatPinned { chat_id: String, pinned: bool },
+
+    /// Settings dialog finished applying the user's choice.
+    SetDownloadMethod(crate::components::settings::DownloadMethod),
+    /// Worker pushed the persisted preferences back to us so the
+    /// dialog's combo + memory rows can render real values.
+    PreferencesLoaded {
+        method: crate::components::settings::DownloadMethod,
+        pid: Option<u32>,
+    },
+    /// Settings dialog asked us to drop the on-disk media cache.
+    ClearMediaCache,
+    /// Settings dialog asked us to drop the on-disk avatar cache.
+    ClearAvatarCache,
 }

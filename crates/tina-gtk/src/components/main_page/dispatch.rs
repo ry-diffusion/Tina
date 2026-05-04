@@ -54,6 +54,24 @@ impl MainPage {
             MainInput::SetConnection(c) => {
                 let _ = self.sidebar.sender().send(SidebarInput::SetConnection(c));
             }
+            MainInput::HistorySyncProgress {
+                sync_type,
+                progress,
+            } => {
+                let _ = self
+                    .sidebar
+                    .sender()
+                    .send(SidebarInput::HistorySyncProgress {
+                        sync_type,
+                        progress,
+                    });
+            }
+            MainInput::HistorySyncEnded => {
+                let _ = self
+                    .sidebar
+                    .sender()
+                    .send(SidebarInput::HistorySyncEnded);
+            }
             MainInput::RepairProgress {
                 stage,
                 current,
@@ -150,8 +168,8 @@ impl MainPage {
                     self.split_view.set_show_sidebar(false);
                 }
             }
-            SidebarOutput::RequestRepair => {
-                let _ = sender.output(MainOutput::RequestRepair);
+            SidebarOutput::RequestPreferences => {
+                let _ = sender.output(MainOutput::RequestPreferences);
             }
             SidebarOutput::RequestLogout => {
                 let _ = sender.output(MainOutput::RequestLogout);

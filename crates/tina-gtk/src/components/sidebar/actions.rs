@@ -83,6 +83,16 @@ impl Sidebar {
         self.connection = c;
     }
 
+    pub(super) fn handle_history_sync_progress(&mut self, sync_type: String, progress: u32) {
+        self.history_sync_type = sync_type;
+        self.history_sync_progress = Some(progress.min(100));
+    }
+
+    pub(super) fn handle_history_sync_ended(&mut self) {
+        self.history_sync_progress = None;
+        self.history_sync_type.clear();
+    }
+
     pub(super) fn handle_set_repairing(&mut self, r: bool) {
         self.repairing = r;
         if !r {
@@ -154,8 +164,8 @@ impl Sidebar {
         sender: &ComponentSender<Self>,
     ) {
         match out {
-            ProfileMenuOutput::Repair => {
-                let _ = sender.output(SidebarOutput::RequestRepair);
+            ProfileMenuOutput::Preferences => {
+                let _ = sender.output(SidebarOutput::RequestPreferences);
             }
             ProfileMenuOutput::Logout => {
                 let _ = sender.output(SidebarOutput::RequestLogout);
@@ -174,6 +184,11 @@ impl Sidebar {
             SidebarInput::SearchChanged(text) => self.handle_search_changed(text),
             SidebarInput::SetRepairing(r) => self.handle_set_repairing(r),
             SidebarInput::SetConnection(c) => self.handle_set_connection(c),
+            SidebarInput::HistorySyncProgress {
+                sync_type,
+                progress,
+            } => self.handle_history_sync_progress(sync_type, progress),
+            SidebarInput::HistorySyncEnded => self.handle_history_sync_ended(),
             SidebarInput::RepairProgress {
                 stage,
                 current,

@@ -170,6 +170,13 @@ impl NanachiManager {
         self.outstanding.clone()
     }
 
+    /// PID of the running nanachi subprocess; `None` if not started or
+    /// already exited. Used by the settings dialog to read RSS from
+    /// `/proc/<pid>/status`.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.process.as_ref().and_then(|p| p.pid())
+    }
+
     pub fn is_running(&mut self) -> bool {
         if let Some(ref mut process) = self.process {
             match process.try_wait() {

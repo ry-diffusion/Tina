@@ -4,6 +4,7 @@ use relm4::Controller;
 
 use crate::components::login::LoginPage;
 use crate::components::main_page::MainPage;
+use crate::components::settings::Settings;
 use crate::service::ServiceWorker;
 
 use super::messages::{ConnectionStatus, Scene};
@@ -31,6 +32,10 @@ pub struct AppModel {
     pub(super) service: ServiceWorker,
     pub(super) login: Controller<LoginPage>,
     pub(super) main: Controller<MainPage>,
+    /// Held across the app's lifetime — the dialog is presented on
+    /// demand from the profile menu and dismissed by the user. We
+    /// keep its widget around so the next open is instant.
+    pub(super) settings: Controller<Settings>,
     pub(super) toast_overlay: adw::ToastOverlay,
 }
 

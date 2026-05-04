@@ -111,6 +111,24 @@ func emitHistorySyncProgress(accountID, syncType string, progress uint32) {
 	})
 }
 
+// chatPinItem mirrors `tina_core::ChatPinItem` — emitted in batches
+// from `onHistorySync` so the Rust side can flip `chats.pinned` to
+// match the WhatsApp app-state.
+type chatPinItem struct {
+	ChatJID string `json:"chat_jid"`
+	Pinned  bool   `json:"pinned"`
+}
+
+func emitChatsPinUpdate(accountID string, items []chatPinItem) {
+	if len(items) == 0 {
+		return
+	}
+	emit("ChatsPinUpdate", map[string]any{
+		"account_id": accountID,
+		"items":      items,
+	})
+}
+
 func emitReconcileProgress(accountID, stage string, current, total int, indeterminate bool) {
 	emit("ReconcileProgress", map[string]any{
 		"account_id":    accountID,

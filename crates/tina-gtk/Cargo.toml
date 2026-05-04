@@ -32,6 +32,7 @@ tina-core = { path = "../tina-core" }
 tina-worker = { path = "../tina-worker" }
 tina-db = { path = "../tina-db" }
 phonenumber = "0.3.9"
+directories.workspace = true
 
 [build-dependencies]
 relm4-icons-build = "0.11"

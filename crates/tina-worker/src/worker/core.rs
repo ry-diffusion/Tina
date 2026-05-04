@@ -260,4 +260,29 @@ impl TinaWorker {
         let mut guard = self.open_chats.write().await;
         guard.remove(account_id);
     }
+
+    // ---- Settings (key/value) ----
+
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.db.get_setting(key).await?)
+    }
+
+    pub async fn put_setting(&self, key: &str, value: &str) -> Result<()> {
+        Ok(self.db.put_setting(key, value).await?)
+    }
+
+    pub async fn clear_all_media_paths(&self) -> Result<u64> {
+        Ok(self.db.clear_all_media_paths().await?)
+    }
+
+    pub async fn clear_all_avatar_paths(&self) -> Result<u64> {
+        Ok(self.db.clear_all_avatar_paths().await?)
+    }
+
+    /// Best-effort PID of the running nanachi subprocess, for memory
+    /// readouts in the settings dialog. `None` while nanachi hasn't
+    /// been started yet.
+    pub async fn nanachi_pid(&self) -> Option<u32> {
+        self.nanachi.read().await.child_pid()
+    }
 }

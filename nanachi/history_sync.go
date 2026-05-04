@@ -12,6 +12,10 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 	syncType := evt.Data.GetSyncType().String()
 	progress := evt.Data.GetProgress()
 	conv := evt.Data.GetConversations()
+	// Mark the stream as live so OfflineSyncCompleted /
+	// AppStateSyncComplete don't fire their fallback Complete and
+	// close the syncing scene while we're still mid-bootstrap.
+	c.historySyncSeen.Store(true)
 	// Goes to stderr so the Rust side surfaces it as a log line —
 	// stdout is reserved for the IPC JSON channel. Returning users
 	// don't see the syncing scene (the UI goes straight to InApp),
@@ -26,10 +30,21 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 	// embutidos demore um pouco.
 	emitHistorySyncProgress(c.accountID, syncType, progress)
 	total := 0
+	pins := make([]chatPinItem, 0)
 	for _, conversation := range conv {
 		chatJID, err := types.ParseJID(conversation.GetID())
 		if err != nil {
 			continue
+		}
+		// `Pinned` on a Conversation is the unix-second when the user
+		// pinned it (0 = not pinned). We only care about the boolean
+		// flip; the timestamp would let us preserve pin order but
+		// `chats.pinned` in tina.db is a plain bool today.
+		if conversation.GetPinned() > 0 {
+			pins = append(pins, chatPinItem{
+				ChatJID: conversation.GetID(),
+				Pinned:  true,
+			})
 		}
 		msgs := make([]MessageData, 0, len(conversation.GetMessages()))
 		for _, hm := range conversation.GetMessages() {
@@ -72,6 +87,12 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 		total += len(msgs)
 	}
 	c.historyCount.Add(int64(total))
+	// Pin updates ride out alongside the message stream — the realtime
+	// handler tolerates rows that don't exist yet (logs and skips), so
+	// even if a pin lands before its conversation's first message
+	// flush we just need any later upsert to bring the row in and the
+	// next pin batch to catch it.
+	emitChatsPinUpdate(c.accountID, pins)
 	// Antes este emit acontecia em todo chunk e fazia a UI pular pra
 	// "InApp" no primeiro pacote — anulando a tela de progresso.
 	// Agora só sinaliza completo quando o progress reportado atinge 100.

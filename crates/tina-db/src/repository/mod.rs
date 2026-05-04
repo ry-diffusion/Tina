@@ -34,6 +34,7 @@ mod media;
 mod merge;
 mod messages;
 mod messages_batch;
+mod settings;
 mod util;
 
 pub use db::TinaDb;

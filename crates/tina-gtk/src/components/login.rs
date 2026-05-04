@@ -1,5 +1,8 @@
-// QR-pairing scene. Mirrors the look of GNOME's "phone link" dialogs:
-// AdwStatusPage with the QR centred above a numbered checklist.
+// QR-pairing scene. Two-column layout: heading + numbered checklist on
+// the left, QR card on the right. Splitting the columns keeps the
+// instructions stable when the QR Stack swaps between its loading and
+// QR-ready states (any natural-size flutter on the QR side never
+// pushes the heading around any more).
 
 use adw::prelude::*;
 use gtk::gdk;
@@ -28,94 +31,153 @@ impl SimpleComponent for LoginPage {
             },
             #[wrap(Some)]
             set_content = &adw::Clamp {
-                set_maximum_size: 480,
-                set_margin_top: 12,
+                // Wider clamp than the previous single-column layout
+                // so heading+checklist (left) and QR card (right) fit
+                // side by side without crowding.
+                set_maximum_size: 720,
+                set_margin_top: 24,
                 set_margin_bottom: 24,
-                set_margin_start: 12,
-                set_margin_end: 12,
+                set_margin_start: 24,
+                set_margin_end: 24,
 
                 gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 18,
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 36,
+                    set_halign: gtk::Align::Center,
                     set_valign: gtk::Align::Center,
 
-                    adw::StatusPage {
-                        set_icon_name: Some("phone-symbolic"),
-                        set_title: "Link with your phone",
-                        set_description: Some(
-                            "Scan the QR with WhatsApp on your phone."
-                        ),
-                    },
-
-                    gtk::Frame {
-                        set_halign: gtk::Align::Center,
-                        add_css_class: "card",
-
-                        #[name(qr_picture)]
-                        gtk::Picture {
-                            set_size_request: (256, 256),
-                            set_can_shrink: false,
-                            #[watch]
-                            set_paintable: model.qr_texture.as_ref().map(|t| t.upcast_ref::<gdk::Paintable>()),
-                        },
-                    },
-
-                    #[name(qr_loading)]
+                    // ── LEFT COLUMN: heading + numbered checklist ──
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 8,
-                        set_halign: gtk::Align::Center,
-                        #[watch]
-                        set_visible: model.qr_texture.is_none(),
+                        set_spacing: 18,
+                        set_hexpand: true,
+                        set_valign: gtk::Align::Center,
 
-                        gtk::Spinner {
-                            set_spinning: true,
-                            set_width_request: 24,
-                            set_height_request: 24,
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 8,
+                            set_halign: gtk::Align::Start,
+
+                            gtk::Image {
+                                set_icon_name: Some("phone-symbolic"),
+                                set_pixel_size: 48,
+                                set_halign: gtk::Align::Start,
+                                add_css_class: "dim-label",
+                            },
+                            gtk::Label {
+                                set_label: "Link with your phone",
+                                set_halign: gtk::Align::Start,
+                                add_css_class: "title-2",
+                            },
+                            gtk::Label {
+                                set_label: "Scan the QR with WhatsApp on your phone.",
+                                set_halign: gtk::Align::Start,
+                                set_xalign: 0.0,
+                                set_wrap: true,
+                                add_css_class: "dim-label",
+                            },
                         },
-                        gtk::Label {
-                            set_label: "Waiting for QR code…",
-                            add_css_class: "dim-label",
+
+                        gtk::ListBox {
+                            set_selection_mode: gtk::SelectionMode::None,
+                            add_css_class: "boxed-list",
+
+                            gtk::ListBoxRow {
+                                set_activatable: false,
+                                gtk::Label {
+                                    set_xalign: 0.0,
+                                    set_margin_top: 12,
+                                    set_margin_bottom: 12,
+                                    set_margin_start: 14,
+                                    set_margin_end: 14,
+                                    set_label: "1.  Open WhatsApp on your phone",
+                                },
+                            },
+                            gtk::ListBoxRow {
+                                set_activatable: false,
+                                gtk::Label {
+                                    set_xalign: 0.0,
+                                    set_margin_top: 12,
+                                    set_margin_bottom: 12,
+                                    set_margin_start: 14,
+                                    set_margin_end: 14,
+                                    set_wrap: true,
+                                    set_label: "2.  Tap Menu or Settings and pick Linked Devices",
+                                },
+                            },
+                            gtk::ListBoxRow {
+                                set_activatable: false,
+                                gtk::Label {
+                                    set_xalign: 0.0,
+                                    set_margin_top: 12,
+                                    set_margin_bottom: 12,
+                                    set_margin_start: 14,
+                                    set_margin_end: 14,
+                                    set_wrap: true,
+                                    set_label: "3.  Point your phone at the screen",
+                                },
+                            },
                         },
                     },
 
-                    gtk::ListBox {
-                        set_selection_mode: gtk::SelectionMode::None,
-                        add_css_class: "boxed-list",
+                    // ── RIGHT COLUMN: QR card ──
+                    // Isolating the QR into its own column means any
+                    // natural-size shimmer between the loading and
+                    // QR-ready states stays on this side and never
+                    // shifts the heading or checklist.
+                    gtk::Frame {
+                        set_halign: gtk::Align::End,
+                        set_valign: gtk::Align::Center,
+                        set_hexpand: false,
+                        set_vexpand: false,
+                        set_size_request: (244, 244),
+                        add_css_class: "card",
 
-                        gtk::ListBoxRow {
-                            set_activatable: false,
-                            gtk::Label {
-                                set_xalign: 0.0,
-                                set_margin_top: 12,
-                                set_margin_bottom: 12,
-                                set_margin_start: 14,
-                                set_margin_end: 14,
-                                set_label: "1.  Open WhatsApp on your phone",
+                        #[name(qr_stack)]
+                        gtk::Stack {
+                            // Children must be declared before
+                            // `set_visible_child_name`; otherwise the
+                            // initial watch tries to switch to a page
+                            // that doesn't exist yet → Gtk-WARNING.
+                            set_size_request: (220, 220),
+                            set_hexpand: false,
+                            set_vexpand: false,
+                            set_halign: gtk::Align::Fill,
+                            set_valign: gtk::Align::Fill,
+                            set_transition_type: gtk::StackTransitionType::Crossfade,
+
+                            // Spinner alone, centred in the full 220×220
+                            // page — the "Waiting for QR code…" label
+                            // pulled the spinner above the geometric
+                            // centre because the Box centred the
+                            // [spinner, label] group as a whole.
+                            add_named[Some("loading")] = &gtk::Spinner {
+                                set_size_request: (220, 220),
+                                set_hexpand: false,
+                                set_vexpand: false,
+                                set_halign: gtk::Align::Center,
+                                set_valign: gtk::Align::Center,
+                                set_spinning: true,
                             },
-                        },
-                        gtk::ListBoxRow {
-                            set_activatable: false,
-                            gtk::Label {
-                                set_xalign: 0.0,
-                                set_margin_top: 12,
-                                set_margin_bottom: 12,
-                                set_margin_start: 14,
-                                set_margin_end: 14,
-                                set_wrap: true,
-                                set_label: "2.  Tap Menu or Settings and pick Linked Devices",
+
+                            #[name(qr_picture)]
+                            add_named[Some("qr")] = &gtk::Picture {
+                                set_size_request: (220, 220),
+                                set_hexpand: false,
+                                set_vexpand: false,
+                                set_can_shrink: true,
+                                set_content_fit: gtk::ContentFit::Contain,
+                                set_halign: gtk::Align::Center,
+                                set_valign: gtk::Align::Center,
+                                #[watch]
+                                set_paintable: model.qr_texture.as_ref().map(|t| t.upcast_ref::<gdk::Paintable>()),
                             },
-                        },
-                        gtk::ListBoxRow {
-                            set_activatable: false,
-                            gtk::Label {
-                                set_xalign: 0.0,
-                                set_margin_top: 12,
-                                set_margin_bottom: 12,
-                                set_margin_start: 14,
-                                set_margin_end: 14,
-                                set_wrap: true,
-                                set_label: "3.  Point your phone at the screen",
+
+                            #[watch]
+                            set_visible_child_name: if model.qr_texture.is_some() {
+                                "qr"
+                            } else {
+                                "loading"
                             },
                         },
                     },

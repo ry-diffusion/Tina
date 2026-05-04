@@ -23,6 +23,13 @@ pub enum SidebarInput {
     /// Worker reported a connection-state transition; drives the
     /// `Tina` headerbar subtitle ("", "Connecting…", "Offline").
     SetConnection(ConnectionStatus),
+    /// Live history-sync progress from `WorkerEvent::HistorySyncProgress`.
+    /// Sent on every chunk so the headerbar subtitle reflects the
+    /// active stream when the user is already in-app.
+    HistorySyncProgress { sync_type: String, progress: u32 },
+    /// Sync stream wrapped up (or got pre-empted by `HistorySyncDone`).
+    /// Clears the headerbar progress affordance.
+    HistorySyncEnded,
     RepairProgress {
         stage: String,
         current: i64,
@@ -56,7 +63,7 @@ pub enum SidebarInput {
 pub enum SidebarOutput {
     OpenInCurrent(String),
     OpenInNewTab(String),
-    RequestRepair,
+    RequestPreferences,
     RequestLogout,
     RequestFetchAvatar(String),
     SetChatPinned {

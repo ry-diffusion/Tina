@@ -10,6 +10,8 @@
 use adw::prelude::*;
 use gtk::gio;
 
+use super::image::load_image_paintable;
+
 pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message_type: String) {
     let dialog = adw::Dialog::builder()
         .content_width(1100)
@@ -39,7 +41,20 @@ pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message
             video.upcast()
         }
         _ => {
-            let pic = gtk::Picture::for_filename(&path);
+            // `Picture::for_filename` bottoms out in
+            // `gdk::Texture::from_filename`, whose internal decoders
+            // skip GdkPixbuf for "known" formats and have flaky WebP
+            // detection — so WebP stickers showed as a blank canvas
+            // in the lightbox even though the bubble rendered fine.
+            // Going through `load_image_paintable` forces the
+            // GdkPixbuf path (which honours `webp-pixbuf-loader`),
+            // matching how the inline bubble renders the same file.
+            let pic = gtk::Picture::new();
+            pic.set_paintable(
+                load_image_paintable(Some(path.as_str()))
+                    .as_ref()
+                    .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
+            );
             pic.set_can_shrink(true);
             pic.set_content_fit(gtk::ContentFit::Contain);
             pic.set_hexpand(true);

@@ -159,6 +159,8 @@ impl SimpleComponent for Sidebar {
             repair_total: 0,
             repair_indeterminate: true,
             connection: crate::app::ConnectionStatus::Connecting,
+            history_sync_progress: None,
+            history_sync_type: String::new(),
             user_jid: None,
             avatars: init.avatars,
         };

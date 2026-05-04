@@ -41,6 +41,20 @@ pub enum Cmd {
     SetChatPinned { chat_id: String, pinned: bool },
     /// Logout the active account.
     Logout,
+    /// Read the persisted download method + current nanachi PID and
+    /// push them up as `AppMsg`s for the settings dialog to display.
+    /// Called when the user opens the preferences pane.
+    LoadPreferences,
+    /// Persist the user's download-method preference (settings dialog).
+    /// The worker writes it to the `settings` table; consumers read on
+    /// demand via `worker.get_setting`.
+    SetDownloadMethod(crate::components::settings::DownloadMethod),
+    /// Wipe the on-disk media cache (`~/.local/share/tina/media/`)
+    /// and null out `messages.media_path`. The next access re-fetches.
+    ClearMediaCache,
+    /// Wipe the on-disk avatar cache + null out `chats.avatar_path`,
+    /// `contacts.avatar_path`. Avatars re-fetch on next render.
+    ClearAvatarCache,
     /// Shut down the worker thread.
     Shutdown,
 }
