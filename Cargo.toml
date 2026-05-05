@@ -10,6 +10,10 @@ members = [
 ]
 
 [workspace.dependencies]
+fluent-bundle = "0.15"
+sys-locale = "0.3"
+unic-langid = "0.9"
+rust-embed = "8"
 tokio = { version = "1.48", features = ["full"] }
 slint = "1"
 slint-build = "1"

@@ -6,6 +6,7 @@
 // up to the parent.
 
 use adw::prelude::*;
+use crate::fl;
 use relm4::prelude::*;
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ impl SimpleComponent for ProfileMenu {
         gtk::MenuButton {
             add_css_class: "flat",
             add_css_class: "circular",
-            set_tooltip_text: Some("Profile"),
+            set_tooltip_text: Some(&fl!("profile-tooltip")),
 
             #[wrap(Some)]
             set_child = &adw::Avatar {
@@ -119,7 +120,7 @@ impl SimpleComponent for ProfileMenu {
 
                             gtk::Label {
                                 #[watch]
-                                set_label: model.phone.as_deref().unwrap_or("Not connected"),
+                                set_label: &model.phone_label(),
                                 set_halign: gtk::Align::Start,
                                 set_xalign: 0.0,
                                 set_ellipsize: gtk::pango::EllipsizeMode::End,
@@ -154,7 +155,7 @@ impl SimpleComponent for ProfileMenu {
                             set_orientation: gtk::Orientation::Horizontal,
                             set_spacing: 24,
                             gtk::Label {
-                                set_label: "Preferences",
+                                set_label: &fl!("preferences"),
                                 set_xalign: 0.0,
                                 set_hexpand: true,
                             },
@@ -174,7 +175,7 @@ impl SimpleComponent for ProfileMenu {
                             set_orientation: gtk::Orientation::Horizontal,
                             set_spacing: 24,
                             gtk::Label {
-                                set_label: "Log out",
+                                set_label: &fl!("log-out"),
                                 set_xalign: 0.0,
                                 set_hexpand: true,
                             },
@@ -231,6 +232,12 @@ impl ProfileMenu {
             .as_deref()
             .or(self.phone.as_deref())
             .unwrap_or("Tina")
+    }
+
+    fn phone_label(&self) -> String {
+        self.phone
+            .clone()
+            .unwrap_or_else(|| fl!("profile-not-connected"))
     }
 
     fn avatar_paintable(&self) -> Option<gtk::gdk::Paintable> {

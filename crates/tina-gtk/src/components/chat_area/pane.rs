@@ -2,6 +2,7 @@
 // headerbar (Stack { single | multi }) plus the AdwTabView underneath.
 
 use adw::prelude::*;
+use crate::fl;
 use gtk::glib;
 use relm4::prelude::*;
 
@@ -104,7 +105,7 @@ fn build_toggle_btn(
     let toggle = gtk::ToggleButton::builder()
         .icon_name("sidebar-show-symbolic")
         .active(true)
-        .tooltip_text("Toggle sidebar")
+        .tooltip_text(&fl!("pane-toggle-sidebar"))
         .build();
     let s = sender.output_sender().clone();
     toggle.connect_toggled(move |btn| {
@@ -123,10 +124,10 @@ fn build_split_btn(
     // which way is "other" based on which pane fired the event.
     let split_btn = gtk::Button::builder()
         .icon_name("view-dual-symbolic")
-        .tooltip_text(if idx == 0 {
-            "Move tab to right split"
+        .tooltip_text(&if idx == 0 {
+            fl!("pane-move-right")
         } else {
-            "Move tab to left split"
+            fl!("pane-move-left")
         })
         .build();
     let s = sender.input_sender().clone();

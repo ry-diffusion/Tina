@@ -90,6 +90,11 @@ impl TextureCache {
 struct AvatarInner {
     paths: HashMap<String, String>,
     requested: HashSet<String>,
+    /// JIDs for which the worker returned an explicit failure (hidden
+    /// profile picture, no avatar set). We skip these for the rest of
+    /// the process lifetime so every `ChatsUpserted` batch doesn't
+    /// re-queue the same ~100 contacts that will never have avatars.
+    failed: HashSet<String>,
     url_requested: HashSet<String>,
     textures: Option<TextureCache>,
     /// Paths whose async glycin decode is in flight. Prevents
@@ -141,11 +146,23 @@ impl AvatarInventory {
             return false;
         }
         let mut inner = self.inner.borrow_mut();
-        if inner.paths.contains_key(jid) || inner.requested.contains(jid) {
+        if inner.paths.contains_key(jid)
+            || inner.requested.contains(jid)
+            || inner.failed.contains(jid)
+        {
             return false;
         }
         inner.requested.insert(jid.to_string());
         true
+    }
+
+    /// Record a permanent fetch failure for this session. JIDs with
+    /// hidden or missing avatars are silently skipped by subsequent
+    /// `ChatsUpserted` batches so we don't retry them until the next
+    /// app launch (at which point the user may have changed their picture).
+    pub fn mark_failed(&self, jid: &str) {
+        let mut inner = self.inner.borrow_mut();
+        inner.failed.insert(jid.to_string());
     }
 
     /// True iff the caller should issue a `FetchAvatarFromURL` to the worker.

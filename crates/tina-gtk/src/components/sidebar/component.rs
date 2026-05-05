@@ -5,6 +5,7 @@
 // repair progress bar at the bottom.
 
 use std::cell::{Cell, RefCell};
+use crate::fl;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -32,7 +33,7 @@ impl SimpleComponent for Sidebar {
 
                 #[wrap(Some)]
                 set_title_widget = &adw::WindowTitle {
-                    set_title: "Tina",
+                    set_title: &fl!("app-title"),
                     #[watch]
                     set_subtitle: &model.status_subtitle(),
                 },
@@ -84,7 +85,7 @@ impl SimpleComponent for Sidebar {
 
                     #[name(filter_btn_all)]
                     gtk::ToggleButton {
-                        set_label: "All",
+                        set_label: &fl!("sidebar-filter-all"),
                         set_active: true,
                         connect_toggled[sender] => move |b| {
                             if b.is_active() {
@@ -94,7 +95,7 @@ impl SimpleComponent for Sidebar {
                     },
                     #[name(filter_btn_groups)]
                     gtk::ToggleButton {
-                        set_label: "Groups",
+                        set_label: &fl!("sidebar-filter-groups"),
                         set_group: Some(&filter_btn_all),
                         connect_toggled[sender] => move |b| {
                             if b.is_active() {
@@ -104,7 +105,7 @@ impl SimpleComponent for Sidebar {
                     },
                     #[name(filter_btn_channels)]
                     gtk::ToggleButton {
-                        set_label: "Channels",
+                        set_label: &fl!("sidebar-filter-channels"),
                         set_group: Some(&filter_btn_all),
                         connect_toggled[sender] => move |b| {
                             if b.is_active() {
@@ -114,7 +115,7 @@ impl SimpleComponent for Sidebar {
                     },
                     #[name(filter_btn_status)]
                     gtk::ToggleButton {
-                        set_label: "Status",
+                        set_label: &fl!("sidebar-filter-status"),
                         set_group: Some(&filter_btn_all),
                         connect_toggled[sender] => move |b| {
                             if b.is_active() {
@@ -129,7 +130,7 @@ impl SimpleComponent for Sidebar {
                     set_margin_bottom: 6,
                     set_margin_start: 12,
                     set_margin_end: 12,
-                    set_placeholder_text: Some("Search"),
+                    set_placeholder_text: Some(&fl!("sidebar-search")),
                     connect_search_changed[sender] => move |se| {
                         sender.input(SidebarInput::SearchChanged(se.text().to_string()));
                     },
@@ -161,13 +162,6 @@ impl SimpleComponent for Sidebar {
                     // is empty (no recent posts from contacts). Saves
                     // the user from staring at a blank list.
                     add_named[Some("status")] = &gtk::Stack {
-                        #[watch]
-                        set_visible_child_name: if model.status_list.len() == 0 {
-                            "empty"
-                        } else {
-                            "list"
-                        },
-
                         add_named[Some("list")] = &gtk::ScrolledWindow {
                             set_vexpand: true,
                             set_hscrollbar_policy: gtk::PolicyType::Never,
@@ -181,11 +175,18 @@ impl SimpleComponent for Sidebar {
 
                         add_named[Some("empty")] = &adw::StatusPage {
                             set_icon_name: Some("loop-symbolic"),
-                            set_title: "No status updates",
+                            set_title: &fl!("sidebar-no-status"),
                             set_description: Some(
-                                "Recent status posts from your contacts will show up here."
+                                fl!("sidebar-no-status-description").as_str()
                             ),
                             set_vexpand: true,
+                        },
+
+                        #[watch]
+                        set_visible_child_name: if model.status_list.len() == 0 {
+                            "empty"
+                        } else {
+                            "list"
                         },
                     },
 
@@ -262,6 +263,19 @@ impl SimpleComponent for Sidebar {
         list.selection_model.set_can_unselect(true);
         list.selection_model.set_selected(gtk::INVALID_LIST_POSITION);
 
+        // Spread sort work across GTK frames instead of blocking the
+        // main thread on a full re-sort every time items_changed fires.
+        // The chain is: selection_model → FilterListModel → SortListModel.
+        if let Some(sort_model) = list
+            .selection_model
+            .model()
+            .and_downcast::<gtk::FilterListModel>()
+            .and_then(|fm| fm.model())
+            .and_downcast::<gtk::SortListModel>()
+        {
+            sort_model.set_incremental(true);
+        }
+
         wire_activate(&list.view, sender.input_sender());
         wire_status_activate(&status_list.view, sender.input_sender());
         install_context_menu_sender(sender.input_sender().clone());
@@ -288,6 +302,8 @@ impl SimpleComponent for Sidebar {
             user_jid: None,
             avatars: init.avatars,
             chats: init.chats,
+            pending_avatar_fetches: std::collections::VecDeque::new(),
+            in_flight_avatar_count: 0,
         };
 
         let list_view = &model.list.view;

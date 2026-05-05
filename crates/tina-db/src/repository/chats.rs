@@ -289,10 +289,16 @@ impl TinaDb {
 }
 
 pub(super) fn chat_row_select_clause(filter_by_ids: bool) -> String {
+    // Never surface newsletters that have no resolved display name — they
+    // fall back to the raw JID as `name` which renders as "Channel #XXXXX"
+    // and provides no useful signal to the user. Once a GroupsUpsert lands
+    // with a real name the next get_chat_rows call will return the row.
+    let nameless_newsletter =
+        "NOT (c.kind = 'newsletter' AND (c.display_name IS NULL OR TRIM(c.display_name) = ''))";
     let where_clause = if filter_by_ids {
-        "WHERE c.account_id = ? AND c.chat_id IN (__IDS__)".to_string()
+        format!("WHERE c.account_id = ? AND c.chat_id IN (__IDS__) AND {nameless_newsletter}")
     } else {
-        "WHERE c.account_id = ?".to_string()
+        format!("WHERE c.account_id = ? AND {nameless_newsletter}")
     };
     // Two contact JOINs: one resolves the chat itself (DM name +
     // avatar), the second resolves the *sender* of the chat's last

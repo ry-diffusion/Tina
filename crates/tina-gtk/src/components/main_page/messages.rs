@@ -84,6 +84,7 @@ pub enum MainInput {
         jid: WaIdentity,
         path: String,
     },
+    AvatarFailed(WaIdentity),
     AvatarTextureReady(String),
     /// Worker resolved the `@`-mention picker for `chat_id`. Mirrored
     /// into the inventory + forwarded down to the matching tab.

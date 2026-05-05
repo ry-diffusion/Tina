@@ -216,7 +216,13 @@ impl NanachiManager {
     }
 
     pub fn parse_event(line: &str) -> Option<IpcEvent> {
-        let msg: IpcMessage = serde_json::from_str(line).ok()?;
+        let msg: IpcMessage = match serde_json::from_str(line) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("parse_event failed: {e} — line: {}", &line[..line.len().min(200)]);
+                return None;
+            }
+        };
         match msg.content {
             tina_core::IpcMessageContent::Event(event) => Some(event),
             _ => None,

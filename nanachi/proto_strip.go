@@ -75,6 +75,23 @@ func stripForDownload(m *waE2E.Message) *waE2E.Message {
 			Height:        x.Height,
 			Width:         x.Width,
 		}
+	case m.LottieStickerMessage != nil:
+		inner := m.LottieStickerMessage.GetMessage()
+		if inner == nil || inner.StickerMessage == nil {
+			return nil
+		}
+		x := inner.StickerMessage
+		out.StickerMessage = &waE2E.StickerMessage{
+			URL:           x.URL,
+			DirectPath:    x.DirectPath,
+			MediaKey:      x.MediaKey,
+			FileEncSHA256: x.FileEncSHA256,
+			FileSHA256:    x.FileSHA256,
+			FileLength:    x.FileLength,
+			Mimetype:      x.Mimetype,
+			Height:        x.Height,
+			Width:         x.Width,
+		}
 	case m.DocumentMessage != nil:
 		x := m.DocumentMessage
 		out.DocumentMessage = &waE2E.DocumentMessage{
@@ -108,6 +125,11 @@ func extractThumbnail(m *waE2E.Message) []byte {
 		return m.VideoMessage.GetJPEGThumbnail()
 	case m.StickerMessage != nil:
 		return m.StickerMessage.GetPngThumbnail()
+	case m.LottieStickerMessage != nil:
+		if inner := m.LottieStickerMessage.GetMessage(); inner != nil {
+			return inner.GetStickerMessage().GetPngThumbnail()
+		}
+		return nil
 	case m.DocumentMessage != nil:
 		return m.DocumentMessage.GetJPEGThumbnail()
 	}

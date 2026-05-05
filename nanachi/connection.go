@@ -62,10 +62,8 @@ func (c *Client) fetchAllNewsletters() {
 		emitError(&c.accountID, fmt.Sprintf("get subscribed newsletters: %v", err))
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[newsletter] GetSubscribedNewsletters: %d channels\n", len(newsletters))
 	mapped := make([]GroupData, 0, len(newsletters))
 	for _, n := range newsletters {
-		fmt.Fprintf(os.Stderr, "[newsletter] channel %s name=%q\n", n.ID, n.ThreadMeta.Name.Text)
 		mapped = append(mapped, newsletterToGroup(n))
 	}
 	emitGroups(c.accountID, mapped)
@@ -131,9 +129,11 @@ func (c *Client) refreshNewsletter(jid types.JID) {
 		)
 		return
 	}
-	fmt.Fprintf(os.Stderr,
-		"[newsletter] GetNewsletterInfo(%s): name=%q state=%q\n",
-		jid.String(), info.ThreadMeta.Name.Text, info.State.Type,
-	)
+	// The WA API sometimes returns metadata without populating the ID
+	// field (channels with no public name). Fall back to the requested
+	// JID so the emitted GroupData always has a usable primary key.
+	if info.ID.IsEmpty() {
+		info.ID = jid
+	}
 	emitGroups(c.accountID, []GroupData{newsletterToGroup(info)})
 }

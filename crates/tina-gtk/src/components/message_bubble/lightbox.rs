@@ -8,6 +8,7 @@
 // use the clicked widget itself.
 
 use adw::prelude::*;
+use crate::fl;
 use glib::clone;
 use gtk::gio;
 
@@ -20,10 +21,10 @@ pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message
     let header = adw::HeaderBar::new();
     header.set_show_end_title_buttons(true);
     header.set_title_widget(Some(&adw::WindowTitle::new(
-        match message_type.as_str() {
-            "video" => "Video",
-            "sticker" => "Sticker",
-            _ => "Image",
+        &match message_type.as_str() {
+            "video" => fl!("lightbox-video"),
+            "sticker" => fl!("lightbox-sticker"),
+            _ => fl!("lightbox-image"),
         },
         &short_filename(&path),
     )));
@@ -115,7 +116,7 @@ pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message
 /// video editors / image viewers / external default apps.
 fn pack_open_externally(header: &adw::HeaderBar, path: &str) {
     let btn = gtk::Button::from_icon_name("document-open-symbolic");
-    btn.set_tooltip_text(Some("Open externally"));
+    btn.set_tooltip_text(Some(&fl!("lightbox-open-externally")));
     btn.add_css_class("flat");
     let p = path.to_string();
     btn.connect_clicked(move |_| {
@@ -129,13 +130,13 @@ fn pack_open_externally(header: &adw::HeaderBar, path: &str) {
 /// "Save as…" — copies the cached file into a user-chosen location.
 fn pack_save_as(header: &adw::HeaderBar, path: &str, anchor: &impl IsA<gtk::Widget>) {
     let btn = gtk::Button::from_icon_name("document-save-symbolic");
-    btn.set_tooltip_text(Some("Save as…"));
+    btn.set_tooltip_text(Some(&fl!("lightbox-save-as")));
     btn.add_css_class("flat");
     let p = path.to_string();
     let anchor_weak = anchor.upcast_ref::<gtk::Widget>().downgrade();
     btn.connect_clicked(move |_| {
         let save = gtk::FileDialog::builder()
-            .title("Save media")
+            .title(&fl!("lightbox-save-media"))
             .initial_name(default_save_name(&p))
             .modal(true)
             .build();

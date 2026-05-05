@@ -5,6 +5,7 @@
 // pushes the heading around any more).
 
 use adw::prelude::*;
+use crate::fl;
 use gtk::gdk;
 use relm4::prelude::*;
 
@@ -65,12 +66,12 @@ impl SimpleComponent for LoginPage {
                                 add_css_class: "dim-label",
                             },
                             gtk::Label {
-                                set_label: "Link with your phone",
+                                set_label: &fl!("login-link-phone"),
                                 set_halign: gtk::Align::Start,
                                 add_css_class: "title-2",
                             },
                             gtk::Label {
-                                set_label: "Scan the QR with WhatsApp on your phone.",
+                                set_label: &fl!("login-scan-qr"),
                                 set_halign: gtk::Align::Start,
                                 set_xalign: 0.0,
                                 set_wrap: true,
@@ -90,7 +91,7 @@ impl SimpleComponent for LoginPage {
                                     set_margin_bottom: 12,
                                     set_margin_start: 14,
                                     set_margin_end: 14,
-                                    set_label: "1.  Open WhatsApp on your phone",
+                                    set_label: &fl!("login-step-1"),
                                 },
                             },
                             gtk::ListBoxRow {
@@ -102,7 +103,7 @@ impl SimpleComponent for LoginPage {
                                     set_margin_start: 14,
                                     set_margin_end: 14,
                                     set_wrap: true,
-                                    set_label: "2.  Tap Menu or Settings and pick Linked Devices",
+                                    set_label: &fl!("login-step-2"),
                                 },
                             },
                             gtk::ListBoxRow {
@@ -114,7 +115,7 @@ impl SimpleComponent for LoginPage {
                                     set_margin_start: 14,
                                     set_margin_end: 14,
                                     set_wrap: true,
-                                    set_label: "3.  Point your phone at the screen",
+                                    set_label: &fl!("login-step-3"),
                                 },
                             },
                         },

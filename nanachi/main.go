@@ -12,7 +12,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow/store/sqlstore"
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func dataDir() (string, error) {
@@ -40,7 +39,7 @@ func main() {
 	dbPath := filepath.Join(dir, "whatsmeow.db")
 	dsn := fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL", dbPath)
 
-	logger := waLog.Stdout("whatsmeow", "WARN", false)
+	logger := newStderrLogger("whatsmeow", "WARN")
 	ctx := context.Background()
 	container, err := sqlstore.New(ctx, "sqlite3", dsn, logger)
 	if err != nil {

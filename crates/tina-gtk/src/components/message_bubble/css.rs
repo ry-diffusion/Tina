@@ -89,38 +89,15 @@ pub const MESSAGE_ROW_CSS: &str = r#"
 }
 
 /* Blurhash-style placeholder: the proto thumbnail is tiny (often
- * <150 px on the long axis), and we blow it up to fill the widget's
- * expected media footprint via `ContentFit::Cover`. The result is
- * heavily pixelated; the blur turns it into a soft preview that
- * matches what Discord/WhatsApp show before the full image arrives.
- * `interpolation-filter: linear` smooths the up-scale so the blur
- * has a clean source instead of nearest-neighbour pixelation. */
+ * <150 px on the long axis), blown up via ContentFit::Cover. The
+ * blur softens the pixelation into a preview matching WhatsApp. */
 .message-thumbnail-blur {
     filter: blur(12px);
-    -gtk-interpolation-filter: linear;
 }
 
-/* ── Per-type media sizing ──────────────────────────────────────── */
-/* `gtk::Picture::set_can_shrink(true)` + `set_size_request(N, N)`
- * gives MIN sizing only, so the widget can grow back to its natural
- * (file) resolution when the row is allocated more space — which is
- * what was making stickers render at full size. CSS max-width /
- * max-height caps the widget allocation so 128 px stays 128 px and
- * a 4K photo stays at 360 px tall. */
 .message-sticker {
     min-width: 128px;
-    max-width: 128px;
     min-height: 128px;
-    max-height: 128px;
-}
-.message-image {
-    max-height: 360px;
-    /* Width follows the aspect ratio capped by the row's available
-     * width; we don't constrain max-width because chat-area widths
-     * vary with the splitter. */
-}
-.message-video {
-    max-height: 480px;
 }
 
 /* ── Reply (nested-effect from Fractal) ─────────────────────────── */

@@ -7,6 +7,7 @@
 // + plumbing (the action bodies live in `dispatch.rs`).
 
 use adw::prelude::*;
+use crate::fl;
 use gtk::glib;
 use relm4::prelude::*;
 
@@ -27,7 +28,7 @@ impl SimpleComponent for AppModel {
 
     view! {
         adw::ApplicationWindow {
-            set_title: Some("Tina"),
+            set_title: Some(&fl!("app-title")),
             set_default_size: (1280, 820),
 
             #[name(toast_overlay)]
@@ -50,7 +51,7 @@ impl SimpleComponent for AppModel {
                     // bare spinner.
                     add_named[Some("sync")] = &adw::StatusPage {
                         set_icon_name: Some("loop-symbolic"),
-                        set_title: "Syncing messages",
+                        set_title: &fl!("sync-page-title"),
                         #[watch]
                         set_description: Some(&model.sync_stage_label()),
 
@@ -91,7 +92,7 @@ impl SimpleComponent for AppModel {
                     add_named[Some("repair")] = &adw::StatusPage {
                         set_icon_name: Some("wrench-symbolic"),
                         #[watch]
-                        set_title: model.repair_title(),
+                        set_title: &model.repair_title(),
                         #[watch]
                         set_description: Some(&model.repair_description()),
 
@@ -252,13 +253,14 @@ impl SimpleComponent for AppModel {
         // profile menu. Outputs bubble up through `AppMsg`.
         let settings = Settings::builder()
             .launch(SettingsInit {
-                data_dir: tina_data_dir(),
+                data_dir: init.data_dir.clone(),
             })
             .forward(sender.input_sender(), |o| match o {
                 SettingsOutput::SetDownloadMethod(m) => AppMsg::SetDownloadMethod(m),
                 SettingsOutput::Repair => AppMsg::RequestRepair,
                 SettingsOutput::ClearMedia => AppMsg::ClearMediaCache,
                 SettingsOutput::ClearAvatars => AppMsg::ClearAvatarCache,
+                SettingsOutput::SetLanguage(s) => AppMsg::SetLanguage(s),
             });
 
         let model = AppModel {
@@ -274,6 +276,7 @@ impl SimpleComponent for AppModel {
             sync_type: String::new(),
             connection: crate::app::ConnectionStatus::Connecting,
             phone: None,
+            data_dir: init.data_dir,
             service,
             login,
             main,
@@ -320,7 +323,7 @@ impl SimpleComponent for AppModel {
             .any(|f| f.name().as_deref() == Some("webp"))
         {
             let toast = adw::Toast::builder()
-                .title("Aviso: Suporte a WebP não encontrado! Figurinhas podem não carregar. Instale webp-pixbuf-loader.")
+                .title(&fl!("toast-webp-not-found"))
                 .timeout(10)
                 .build();
             widgets.toast_overlay.add_toast(toast);
@@ -367,16 +370,3 @@ where
     root.add_controller(controller);
 }
 
-/// Resolve the per-user data dir matching `tina-db`'s `ProjectDirs`.
-/// Falls back to `~/.local/share/tina` so the settings dialog still
-/// has a sensible disk-usage target if the lookup fails.
-fn tina_data_dir() -> std::path::PathBuf {
-    use std::path::PathBuf;
-    if let Some(dirs) = directories::ProjectDirs::from("com.br", "zesmoi", "tina") {
-        return dirs.data_dir().to_path_buf();
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".local").join("share").join("tina");
-    }
-    PathBuf::from(".")
-}

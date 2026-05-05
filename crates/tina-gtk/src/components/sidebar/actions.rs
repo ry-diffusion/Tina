@@ -54,18 +54,23 @@ impl Sidebar {
             if r.avatar_path.is_none() {
                 if let Some(url) = &r.avatar_url {
                     if self.avatars.needs_url_fetch(&r.chat_id) {
+                        // URL-based fetches bypass the queue — they go
+                        // to a CDN and are typically fast.
                         let _ = sender.output(SidebarOutput::RequestFetchAvatarFromURL(
                             tina_core::WaIdentity::parse(&r.chat_id),
                             url.clone(),
                         ));
                     }
                 } else if self.avatars.needs_fetch(&r.chat_id) {
-                    let _ = sender.output(SidebarOutput::RequestFetchAvatar(
-                        tina_core::WaIdentity::parse(&r.chat_id),
-                    ));
+                    // JID-based IPC calls are slow (~440ms each). Push
+                    // to the throttle queue; drain_avatar_queue() below
+                    // will emit up to CAP at a time.
+                    self.pending_avatar_fetches
+                        .push_back(tina_core::WaIdentity::parse(&r.chat_id));
                 }
             }
         }
+        self.drain_avatar_queue(sender);
         // Snapshot whether the user is parked at the top BEFORE
         // applying the batch — once items_changed fires the
         // SortListModel can reorder rows and drift the value
@@ -193,7 +198,13 @@ impl Sidebar {
         self.repair_indeterminate = indeterminate;
     }
 
-    pub(super) fn handle_avatar_ready(&mut self, jid: tina_core::WaIdentity, path: String) {
+    pub(super) fn handle_avatar_ready(
+        &mut self,
+        jid: tina_core::WaIdentity,
+        path: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        self.in_flight_avatar_count = self.in_flight_avatar_count.saturating_sub(1);
         let raw = jid.raw().to_string();
         self.avatars.put(raw.clone(), path.clone());
         if let Some(pos) = self.find_chat_position(&raw) {
@@ -206,6 +217,17 @@ impl Sidebar {
         if self.user_jid.as_ref().map(|x| x.raw()) == Some(raw.as_str()) {
             let _ = self.profile.sender().send(ProfileMenuInput::SetAvatar(path));
         }
+        self.drain_avatar_queue(sender);
+    }
+
+    pub(super) fn handle_avatar_failed(
+        &mut self,
+        jid: tina_core::WaIdentity,
+        sender: &ComponentSender<Self>,
+    ) {
+        self.avatars.mark_failed(jid.raw());
+        self.in_flight_avatar_count = self.in_flight_avatar_count.saturating_sub(1);
+        self.drain_avatar_queue(sender);
     }
 
     /// glycin's async decode of a local avatar file landed in the
@@ -306,7 +328,10 @@ impl Sidebar {
                 total,
                 indeterminate,
             } => self.handle_repair_progress(stage, current, total, indeterminate),
-            SidebarInput::AvatarReady { jid, path } => self.handle_avatar_ready(jid, path),
+            SidebarInput::AvatarReady { jid, path } => {
+                self.handle_avatar_ready(jid, path, &sender)
+            }
+            SidebarInput::AvatarFailed(jid) => self.handle_avatar_failed(jid, &sender),
             SidebarInput::AvatarTextureReady(path) => {
                 self.handle_avatar_texture_ready(&path)
             }

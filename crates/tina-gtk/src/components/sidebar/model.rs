@@ -1,6 +1,8 @@
 // State + read/write helpers for the sidebar.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use crate::fl;
 use std::rc::Rc;
 
 use relm4::Controller;
@@ -12,7 +14,7 @@ use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::ProfileMenu;
 use crate::inventory::{AvatarInventory, ChatInventory};
 
-use super::messages::ChatFilter;
+use super::messages::{ChatFilter, SidebarOutput};
 use super::status_row::StatusAuthorItem;
 
 pub struct Sidebar {
@@ -63,6 +65,12 @@ pub struct Sidebar {
     pub(super) user_jid: Option<tina_core::WaIdentity>,
     pub(super) avatars: AvatarInventory,
     pub(super) chats: ChatInventory,
+    /// JIDs waiting to be fetched once an in-flight slot opens up.
+    pub(super) pending_avatar_fetches: VecDeque<tina_core::WaIdentity>,
+    /// How many `RequestFetchAvatar` outputs are currently in flight.
+    /// Decremented on both `AvatarReady` and `AvatarFailed` so the
+    /// queue never stalls after a failure.
+    pub(super) in_flight_avatar_count: usize,
 }
 
 impl Sidebar {
@@ -73,18 +81,18 @@ impl Sidebar {
     /// reporting download progress on a dead pipe.
     pub(super) fn status_subtitle(&self) -> String {
         match self.connection {
-            ConnectionStatus::Offline => return "Offline".to_string(),
-            ConnectionStatus::Connecting => return "Connecting…".to_string(),
+            ConnectionStatus::Offline => return fl!("sidebar-offline"),
+            ConnectionStatus::Connecting => return fl!("sidebar-connecting"),
             ConnectionStatus::Connected => {}
         }
         if self.repairing {
             if self.repair_indeterminate || self.repair_total <= 0 {
-                return "Syncing…".to_string();
+                return fl!("sidebar-syncing") + "…";
             }
             let pct = ((self.repair_current as f64) / (self.repair_total as f64) * 100.0)
                 .clamp(0.0, 100.0)
                 .round() as i64;
-            return format!("Syncing ({pct}%)");
+            return format!("{} ({pct}%)", fl!("sidebar-syncing"));
         }
         if let Some(progress) = self.history_sync_progress {
             // Tag the percentage with the sync type when whatsmeow
@@ -92,10 +100,9 @@ impl Sidebar {
             // because it's the most common path and the verbose label
             // adds noise.
             let label = match self.history_sync_type.as_str() {
-                "RECENT" => "Catching up",
-                "FULL" => "Pulling history",
-                "ON_DEMAND" => "Pulling history",
-                _ => "Syncing",
+                "RECENT" => fl!("sidebar-catching-up"),
+                "FULL" | "ON_DEMAND" => fl!("sidebar-pulling-history"),
+                _ => fl!("sidebar-syncing"),
             };
             return if progress == 0 {
                 format!("{label}…")
@@ -162,15 +169,38 @@ impl Sidebar {
         self.list.insert(pos, item);
     }
 
+    /// Emit up to `CAP - in_flight_avatar_count` queued fetch requests.
+    /// Called after every `ChatsUpserted` batch and after each
+    /// `AvatarReady` / `AvatarFailed` so the pipeline stays full
+    /// without flooding nanachi with hundreds of simultaneous IPC calls.
+    pub(super) fn drain_avatar_queue(
+        &mut self,
+        sender: &relm4::ComponentSender<Self>,
+    ) {
+        const CAP: usize = 6;
+        while self.in_flight_avatar_count < CAP {
+            let Some(jid) = self.pending_avatar_fetches.pop_front() else {
+                break;
+            };
+            self.in_flight_avatar_count += 1;
+            let _ = sender.output(SidebarOutput::RequestFetchAvatar(jid));
+        }
+    }
+
     pub(super) fn apply_chats_upserted(&mut self, rows: Vec<ChatRow>) {
+        // Build a chat_id → position index in one O(n) pass so the loop
+        // below is O(n) instead of O(n²). Without this, every row called
+        // find_chat_position() which iterated the entire list, causing
+        // noticeable freezes when the initial batch of 200+ chats landed.
+        let mut pos_index: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::with_capacity(self.list.len() as usize);
+        for pos in 0..self.list.len() {
+            if let Some(item) = self.list.get(pos) {
+                pos_index.insert(item.borrow().chat_id.clone(), pos);
+            }
+        }
+
         for row in &rows {
-            // Feed every upserted row into the chat inventory so
-            // any later widget (chat tab header, message bubble in
-            // a newsletter, status row resolver) can pick up the
-            // resolved name + avatar synchronously. The two
-            // predicates that decide whether to fire a refresh
-            // both live on `WaIdentity` — same source of truth as
-            // the chat-row display name resolver.
             self.chats.ingest_row(
                 &row.chat_id,
                 &row.kind,
@@ -184,14 +214,20 @@ impl Sidebar {
                 self.chats.request_refresh(id.raw());
             }
             let mut item = ChatRowItem::from_row(row, self.avatars.clone());
-            if let Some(pos) = self.find_chat_position(&item.chat_id) {
+            if let Some(&pos) = pos_index.get(&item.chat_id) {
                 if let Some(prev) = self.list.get(pos) {
-                    // `is_active` is owned by the chat area (via
-                    // `SetActiveChats`); a fresh `from_row` always
-                    // reports `false`, so without this carry-over a
-                    // new message landing for an open chat would
-                    // silently strip its highlight.
-                    item.is_active = prev.borrow().is_active;
+                    let prev = prev.borrow();
+                    // Carry over `is_active` — a fresh from_row() always
+                    // returns false, which would strip the highlight from
+                    // an open chat on every incoming message.
+                    item.is_active = prev.is_active;
+                    // Skip the replace (and its two items_changed signals)
+                    // if nothing that affects sort order or display changed.
+                    // On reconnect, most rows are identical — this cuts the
+                    // number of SortListModel re-evaluations dramatically.
+                    if !item.differs_from(&prev) {
+                        continue;
+                    }
                 }
                 self.replace_at(pos, item);
             } else {

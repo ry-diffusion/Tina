@@ -1,6 +1,7 @@
 // Root model: scene state + child controllers + the toast helper.
 
 use relm4::Controller;
+use crate::fl;
 
 use crate::components::login::LoginPage;
 use crate::components::main_page::MainPage;
@@ -29,6 +30,7 @@ pub struct AppModel {
     /// `Connected` event lands.
     pub(super) connection: ConnectionStatus,
     pub(super) phone: Option<String>,
+    pub(super) data_dir: std::path::PathBuf,
     pub(super) service: ServiceWorker,
     pub(super) login: Controller<LoginPage>,
     pub(super) main: Controller<MainPage>,
@@ -47,15 +49,14 @@ impl AppModel {
     /// Human label for the syncing page.
     pub(super) fn sync_stage_label(&self) -> String {
         match self.sync_type.as_str() {
-            "" => "Pulling your message history…".to_string(),
-            "INITIAL_BOOTSTRAP" => "Pulling your message history…".to_string(),
-            "INITIAL_STATUS_V3" => "Syncing status updates…".to_string(),
-            "RECENT" => "Pulling recent messages…".to_string(),
-            "FULL" => "Pulling your full history…".to_string(),
-            "PUSH_NAME" => "Syncing contacts…".to_string(),
-            "NON_BLOCKING_DATA" => "Syncing extras…".to_string(),
-            "ON_DEMAND" => "Pulling requested history…".to_string(),
-            other => format!("Syncing ({other})…"),
+            "" | "INITIAL_BOOTSTRAP" => fl!("sync-stage-initial"),
+            "INITIAL_STATUS_V3" => fl!("sync-stage-status-v3"),
+            "RECENT" => fl!("sync-stage-recent"),
+            "FULL" => fl!("sync-stage-full"),
+            "PUSH_NAME" => fl!("sync-stage-push-name"),
+            "NON_BLOCKING_DATA" => fl!("sync-stage-non-blocking"),
+            "ON_DEMAND" => fl!("sync-stage-on-demand"),
+            other => fl!("sync-stage-other", "type" = other),
         }
     }
 
@@ -69,17 +70,17 @@ impl AppModel {
 
     /// Repair page heading. Falls back to "Starting…" before the first
     /// `RepairProgress` event arrives so the page never looks empty.
-    pub(super) fn repair_title(&self) -> &str {
+    pub(super) fn repair_title(&self) -> String {
         if self.repair_stage.is_empty() {
-            "Starting…"
+            fl!("repair-title-starting")
         } else {
-            "Repairing…"
+            fl!("repair-title-repairing")
         }
     }
 
     pub(super) fn repair_description(&self) -> String {
         if self.repair_stage.is_empty() {
-            "Reading your data from WhatsApp.".to_string()
+            fl!("repair-description-starting")
         } else {
             self.repair_stage.clone()
         }

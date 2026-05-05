@@ -6,6 +6,7 @@
 // was ever bound to this slot.
 
 use std::cell::RefCell;
+use crate::fl;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -168,7 +169,7 @@ pub fn build_root_and_widgets() -> (gtk::Box, MessageRowWidgets) {
         .build();
     let audio_play_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
-        .tooltip_text("Play")
+        .tooltip_text(&fl!("play"))
         .valign(gtk::Align::Center)
         .build();
     audio_play_btn.add_css_class("circular");
@@ -247,7 +248,7 @@ pub fn build_root_and_widgets() -> (gtk::Box, MessageRowWidgets) {
 
     // ── Document downloaded (open externally) ─────────────────────
     let document_open_button = gtk::Button::builder()
-        .label("Open externally")
+        .label(&fl!("open-externally"))
         .halign(gtk::Align::Start)
         .build();
     right_col.append(&document_open_button);

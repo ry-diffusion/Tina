@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
+
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func emit(eventType string, payload any) {
@@ -246,4 +250,39 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// stderrLogger implements waLog.Logger writing to stderr, keeping
+// whatsmeow's internal log lines off the IPC stdout channel.
+type stderrLogger struct {
+	mod string
+	min int
+}
+
+var levelToInt = map[string]int{
+	"":      -1,
+	"DEBUG": 0,
+	"INFO":  1,
+	"WARN":  2,
+	"ERROR": 3,
+}
+
+func newStderrLogger(module, minLevel string) waLog.Logger {
+	return &stderrLogger{mod: module, min: levelToInt[strings.ToUpper(minLevel)]}
+}
+
+func (s *stderrLogger) outputf(level, msg string, args ...interface{}) {
+	if levelToInt[level] < s.min {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s [%s %s] %s\n",
+		time.Now().Format("15:04:05.000"), s.mod, level, fmt.Sprintf(msg, args...))
+}
+
+func (s *stderrLogger) Errorf(msg string, args ...interface{}) { s.outputf("ERROR", msg, args...) }
+func (s *stderrLogger) Warnf(msg string, args ...interface{})  { s.outputf("WARN", msg, args...) }
+func (s *stderrLogger) Infof(msg string, args ...interface{})  { s.outputf("INFO", msg, args...) }
+func (s *stderrLogger) Debugf(msg string, args ...interface{}) { s.outputf("DEBUG", msg, args...) }
+func (s *stderrLogger) Sub(sub string) waLog.Logger {
+	return &stderrLogger{mod: fmt.Sprintf("%s/%s", s.mod, sub), min: s.min}
 }

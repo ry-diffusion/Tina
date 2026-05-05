@@ -1,6 +1,7 @@
 // Timestamp formatting helpers, ported from the Slint frontend so display
 // matches between the two during the cutover.
 use chrono::{DateTime, Datelike, Local, Utc};
+use crate::fl;
 
 pub fn format_chat_timestamp(timestamp: i64) -> String {
     if timestamp <= 0 {
@@ -45,9 +46,9 @@ pub fn format_day_divider(timestamp: i64) -> String {
     let today = now.date_naive();
     let day = local.date_naive();
     if day == today {
-        "Today".to_string()
+        fl!("day-today")
     } else if day == today.pred_opt().unwrap_or(today) {
-        "Yesterday".to_string()
+        fl!("day-yesterday")
     } else if (today - day).num_days() < 7 && day < today {
         local.format("%A").to_string()
     } else if local.year() == now.year() {

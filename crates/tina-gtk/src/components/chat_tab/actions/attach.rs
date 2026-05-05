@@ -12,6 +12,7 @@
 // RecordingFailed) but shares the SendMedia tail.
 
 use std::io::Read;
+use crate::fl;
 use std::path::Path;
 
 use gtk::gio;
@@ -41,7 +42,7 @@ impl ChatTab {
             return;
         };
         let dialog = gtk::FileDialog::new();
-        dialog.set_title(file_dialog_title(kind));
+        dialog.set_title(&file_dialog_title(kind));
         dialog.set_modal(true);
         if let Some(filter) = file_filter_for(kind) {
             let filters = gio::ListStore::new::<gtk::FileFilter>();
@@ -308,14 +309,14 @@ impl ChatTab {
     }
 }
 
-fn file_dialog_title(kind: tina_core::MediaKind) -> &'static str {
+fn file_dialog_title(kind: tina_core::MediaKind) -> String {
     match kind {
-        tina_core::MediaKind::Image => "Send a photo",
-        tina_core::MediaKind::Video => "Send a video",
-        tina_core::MediaKind::Audio => "Send audio",
-        tina_core::MediaKind::Voice => "Send a voice note",
-        tina_core::MediaKind::Sticker => "Send a sticker",
-        tina_core::MediaKind::Document => "Send a document",
+        tina_core::MediaKind::Image => fl!("file-dialog-send-photo"),
+        tina_core::MediaKind::Video => fl!("file-dialog-send-video"),
+        tina_core::MediaKind::Audio => fl!("file-dialog-send-audio"),
+        tina_core::MediaKind::Voice => fl!("file-dialog-send-voice"),
+        tina_core::MediaKind::Sticker => fl!("file-dialog-send-sticker"),
+        tina_core::MediaKind::Document => fl!("file-dialog-send-document"),
     }
 }
 
@@ -323,32 +324,32 @@ fn file_filter_for(kind: tina_core::MediaKind) -> Option<gtk::FileFilter> {
     let filter = gtk::FileFilter::new();
     match kind {
         tina_core::MediaKind::Image => {
-            filter.set_name(Some("Images"));
+            filter.set_name(Some(&fl!("file-filter-images")));
             filter.add_mime_type("image/jpeg");
             filter.add_mime_type("image/png");
             filter.add_mime_type("image/webp");
             filter.add_mime_type("image/gif");
         }
         tina_core::MediaKind::Video => {
-            filter.set_name(Some("Videos"));
+            filter.set_name(Some(&fl!("file-filter-videos")));
             filter.add_mime_type("video/mp4");
             filter.add_mime_type("video/webm");
             filter.add_mime_type("video/quicktime");
         }
         tina_core::MediaKind::Audio | tina_core::MediaKind::Voice => {
-            filter.set_name(Some("Audio"));
+            filter.set_name(Some(&fl!("file-filter-audio")));
             filter.add_mime_type("audio/ogg");
             filter.add_mime_type("audio/mpeg");
             filter.add_mime_type("audio/mp4");
             filter.add_mime_type("audio/aac");
         }
         tina_core::MediaKind::Sticker => {
-            filter.set_name(Some("Stickers (.webp)"));
+            filter.set_name(Some(&fl!("file-filter-stickers")));
             filter.add_mime_type("image/webp");
             filter.add_pattern("*.webp");
         }
         tina_core::MediaKind::Document => {
-            filter.set_name(Some("All files"));
+            filter.set_name(Some(&fl!("file-filter-all")));
             filter.add_pattern("*");
         }
     }

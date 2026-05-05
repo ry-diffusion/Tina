@@ -3,6 +3,7 @@
 // worker.
 
 use adw::prelude::*;
+use crate::fl;
 use relm4::prelude::*;
 use tracing::info;
 
@@ -35,7 +36,7 @@ impl AppModel {
                     .main
                     .sender()
                     .send(MainInput::SetConnection(ConnectionStatus::Connecting));
-                self.toast(format!("Disconnected: {reason}"));
+                self.toast(fl!("toast-disconnected", "reason" = reason));
             }
             AppMsg::LoggedOut => self.handle_logged_out(),
             AppMsg::ChatsUpserted(rows) => {
@@ -222,6 +223,15 @@ impl AppModel {
                 self.settings.widget().close();
                 self.service.handle.send(Cmd::ClearAvatarCache);
             }
+            AppMsg::SetLanguage(locale) => {
+                let path = self.data_dir.join("language");
+                let _ = if locale.is_empty() {
+                    std::fs::remove_file(&path)
+                } else {
+                    std::fs::write(&path, &locale)
+                };
+                self.toast(fl!("toast-language-changed"));
+            }
             AppMsg::SetChatPinned { chat_id, pinned } => {
                 self.service.handle.send(Cmd::SetChatPinned { chat_id, pinned });
             }
@@ -250,6 +260,9 @@ impl AppModel {
             }
             AppMsg::AvatarReady { jid, path } => {
                 let _ = self.main.sender().send(MainInput::AvatarReady { jid, path });
+            }
+            AppMsg::AvatarFailed(jid) => {
+                let _ = self.main.sender().send(MainInput::AvatarFailed(jid));
             }
             AppMsg::AvatarTextureReady(path) => {
                 let _ = self
@@ -330,8 +343,8 @@ impl AppModel {
     /// already conveys the failure persistently.
     fn show_download_failed_dialog(&self, message_id: String, _error: String) {
         let toast = adw::Toast::builder()
-            .title("Download failed")
-            .button_label("Retry")
+            .title(&fl!("toast-download-failed"))
+            .button_label(&fl!("retry"))
             .timeout(4)
             .priority(adw::ToastPriority::Normal)
             .build();

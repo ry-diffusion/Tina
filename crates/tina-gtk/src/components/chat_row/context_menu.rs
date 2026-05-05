@@ -4,6 +4,7 @@
 // global safe.
 
 use std::cell::RefCell;
+use crate::fl;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -45,13 +46,13 @@ pub fn attach_context_menu(root: &gtk::Box, target: Rc<RefCell<Option<RowMenuTar
         .build();
 
     menu.append(&menu_row(
-        "Open",
+        &fl!("context-open"),
         Box::new(SidebarInput::OpenChatRequested),
         target.clone(),
         &popover,
     ));
     menu.append(&menu_row(
-        "Open in New Tab",
+        &fl!("context-open-new-tab"),
         Box::new(SidebarInput::OpenInNewTabRequested),
         target.clone(),
         &popover,
@@ -99,7 +100,7 @@ fn build_pin_button(
     popover: &gtk::Popover,
 ) -> (gtk::Button, gtk::Label) {
     let pin_label = gtk::Label::builder()
-        .label("Pin")
+        .label(&fl!("context-pin"))
         .xalign(0.0)
         .hexpand(true)
         .build();
@@ -134,7 +135,7 @@ fn attach_gesture(
             // Update the inner label rather than calling
             // `Button::set_label` — the latter swaps in a brand-new
             // child label and drops our xalign/hexpand styling.
-            pin_label.set_label(if t.pinned { "Unpin" } else { "Pin" });
+            pin_label.set_label(&(if t.pinned { fl!("context-unpin") } else { fl!("context-pin") }));
         }
         let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
         pop.set_pointing_to(Some(&rect));

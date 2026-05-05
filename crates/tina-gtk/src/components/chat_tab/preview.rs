@@ -13,6 +13,7 @@
 // retained state to forget to wipe between attachments.
 
 use std::cell::RefCell;
+use crate::fl;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -39,20 +40,20 @@ pub fn present(
     filename: Option<String>,
 ) {
     let dialog = adw::AlertDialog::builder()
-        .heading(heading_for(kind))
+        .heading(&heading_for(kind))
         .body("")
         .close_response("cancel")
         .default_response("send")
         .build();
 
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("send", "Send");
+    dialog.add_response("cancel", &fl!("send-cancel"));
+    dialog.add_response("send", &fl!("send-send"));
     dialog.set_response_appearance("send", adw::ResponseAppearance::Suggested);
 
     let content = build_preview_widget(kind, &path, &filename);
     let caption_entry: Option<gtk::Entry> = if kind_has_caption(kind) {
         let entry = gtk::Entry::builder()
-            .placeholder_text("Add a caption…")
+            .placeholder_text(&fl!("send-caption-placeholder"))
             .activates_default(true)
             .hexpand(true)
             .margin_top(8)
@@ -100,14 +101,14 @@ pub fn present(
     dialog.present(Some(parent));
 }
 
-fn heading_for(kind: tina_core::MediaKind) -> &'static str {
+fn heading_for(kind: tina_core::MediaKind) -> String {
     match kind {
-        tina_core::MediaKind::Image => "Send photo",
-        tina_core::MediaKind::Video => "Send video",
-        tina_core::MediaKind::Audio => "Send audio",
-        tina_core::MediaKind::Voice => "Send voice note",
-        tina_core::MediaKind::Sticker => "Send sticker",
-        tina_core::MediaKind::Document => "Send document",
+        tina_core::MediaKind::Image => fl!("send-heading-photo"),
+        tina_core::MediaKind::Video => fl!("send-heading-video"),
+        tina_core::MediaKind::Audio => fl!("send-heading-audio"),
+        tina_core::MediaKind::Voice => fl!("send-heading-voice"),
+        tina_core::MediaKind::Sticker => fl!("send-heading-sticker"),
+        tina_core::MediaKind::Document => fl!("send-heading-document"),
     }
 }
 

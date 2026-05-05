@@ -13,6 +13,7 @@ mod app;
 mod banner;
 mod components;
 mod format;
+mod i18n;
 mod inventory;
 mod qr;
 mod service;
@@ -37,6 +38,16 @@ use tracing_subscriber::EnvFilter;
 use crate::banner::print_banner;
 
 const APP_ID: &str = "br.com.zesmoi.Tina";
+
+fn tina_data_dir() -> PathBuf {
+    if let Some(dirs) = directories::ProjectDirs::from("com.br", "zesmoi", "tina") {
+        return dirs.data_dir().to_path_buf();
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".local").join("share").join("tina");
+    }
+    PathBuf::from(".")
+}
 
 fn find_nanachi_dir() -> color_eyre::Result<PathBuf> {
     let exe_path = std::env::current_exe()?;
@@ -64,12 +75,19 @@ fn main() -> color_eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_thread_names(true)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("tina_gtk=info,tina_core=info,tina_worker=info,tina_db=info")
+            EnvFilter::new("tina_gtk=info,tina_core=info,tina_worker=info,tina_db=info,tina_ipc=warn")
         }))
         .pretty()
         .init();
 
     tracing::info!("Tina (GTK) start");
+
+    let data_dir = tina_data_dir();
+    let saved_locale = std::fs::read_to_string(data_dir.join("language"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    i18n::init(saved_locale);
 
     let nanachi_dir = find_nanachi_dir().wrap_err("locating nanachi dir")?;
 
@@ -80,6 +98,6 @@ fn main() -> color_eyre::Result<()> {
         components::message_bubble::MESSAGE_ROW_CSS,
         components::chat_row::CHAT_ROW_CSS,
     ));
-    app.run::<app::AppModel>(app::AppInit { nanachi_dir });
+    app.run::<app::AppModel>(app::AppInit { nanachi_dir, data_dir });
     Ok(())
 }

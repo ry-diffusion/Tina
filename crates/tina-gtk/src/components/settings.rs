@@ -1,35 +1,31 @@
 // Preferences dialog (AdwPreferencesDialog). Three pages:
-//   * General — download method (on-demand / manual / eager)
-//   * Storage — disk usage breakdown + Repair button + clear-cache
-//   * About   — app version + RSS for tina-gtk and the nanachi child
-//
-// This component owns the dialog widget; the parent presents it via
-// `dialog.present(parent_window)` whenever the user opens it from the
-// profile menu. Storage usage and RSS are recomputed on each open
-// (signalled by `SettingsInput::Refresh`) so the numbers stay fresh
-// without a recurring timer eating CPU while the dialog is hidden.
+//   * General — download method + language
+//   * Storage — disk usage breakdown + Repair + clear-cache
+//   * About   — version + segmented memory bar
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use crate::fl;
 
 use adw::prelude::*;
 use relm4::prelude::*;
 
-/// Persisted under `settings.download_method`. Default is `OnDemand`,
-/// matching the current behaviour: media is downloaded only when the
-/// user clicks the placeholder.
+// RGB colour triples for the two segmented bars.
+const COLOR_DB: [f64; 3] = [0.22, 0.52, 0.84];      // blue   — database
+const COLOR_MEDIA: [f64; 3] = [0.20, 0.82, 0.48];   // green  — media
+const COLOR_AVATARS: [f64; 3] = [1.00, 0.47, 0.00]; // orange — avatars
+const COLOR_GTK: [f64; 3] = [0.57, 0.25, 0.67];     // purple — interface
+const COLOR_NANACHI: [f64; 3] = [0.13, 0.63, 0.64]; // teal   — service
+
+type BarSegments = Vec<(f64, [f64; 3])>;
+
+/// Persisted under `settings.download_method`. Default is `OnDemand`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloadMethod {
-    /// Auto-download visible media as soon as the message is loaded
-    /// into an open chat tab. The default — closest match to "fetch
-    /// when the user sees it" without paying for closed-tab traffic.
     #[default]
     OnDemand,
-    /// No automatic downloads at all — user must trigger every fetch
-    /// by clicking the placeholder. Useful on metered networks.
     Manual,
-    /// Auto-download every incoming media payload as it arrives,
-    /// regardless of whether the chat is open. Costs bandwidth but
-    /// means images render immediately on switch-in.
     Eager,
 }
 
@@ -69,46 +65,87 @@ impl DownloadMethod {
     }
 }
 
+/// User's explicit language preference. `System` means "follow the OS locale".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LanguagePref {
+    #[default]
+    System,
+    En,
+    PtBr,
+}
+
+impl LanguagePref {
+    pub fn as_locale(self) -> Option<&'static str> {
+        match self {
+            Self::System => None,
+            Self::En => Some("en-US"),
+            Self::PtBr => Some("pt-BR"),
+        }
+    }
+
+    pub fn to_file_str(self) -> &'static str {
+        match self {
+            Self::System => "",
+            Self::En => "en-US",
+            Self::PtBr => "pt-BR",
+        }
+    }
+
+    pub fn from_file_str(s: &str) -> Self {
+        match s.trim() {
+            "en-US" => Self::En,
+            "pt-BR" => Self::PtBr,
+            _ => Self::System,
+        }
+    }
+
+    fn position(self) -> u32 {
+        match self {
+            Self::System => 0,
+            Self::En => 1,
+            Self::PtBr => 2,
+        }
+    }
+
+    fn from_position(pos: u32) -> Self {
+        match pos {
+            1 => Self::En,
+            2 => Self::PtBr,
+            _ => Self::System,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SettingsInit {
-    /// Root of the per-user data dir (`~/.local/share/tina/`). Used to
-    /// compute disk usage rows. Pulled from `directories::ProjectDirs`
-    /// at init time so the dialog stays self-contained.
     pub data_dir: PathBuf,
 }
 
 #[derive(Debug)]
 pub enum SettingsInput {
-    /// Recompute storage + RSS rows. Sent by the parent right before
-    /// presenting the dialog.
     Refresh,
-    /// Worker reported the persisted download method.
     SetDownloadMethod(DownloadMethod),
-    /// Worker reported the nanachi PID (or `None` if not running yet).
     SetNanachiPid(Option<u32>),
-    /// Internal: ComboRow selection changed.
     PickDownloadMethod(DownloadMethod),
-    /// User clicked the "Repair (reconcile)" row.
+    PickLanguage(LanguagePref),
     Repair,
-    /// User clicked "Clear media cache" / "Clear avatar cache".
     ClearMedia,
     ClearAvatars,
 }
 
 #[derive(Debug)]
 pub enum SettingsOutput {
-    /// Persist via the worker.
     SetDownloadMethod(DownloadMethod),
-    /// Bubble up to AppMsg::RequestRepair.
     Repair,
     ClearMedia,
     ClearAvatars,
+    SetLanguage(String),
 }
 
 pub struct Settings {
     data_dir: PathBuf,
     download_method: DownloadMethod,
-    /// Total bytes for `data_dir`, summed recursively.
+    language_pref: LanguagePref,
     total_size: u64,
     db_size: u64,
     media_size: u64,
@@ -116,11 +153,14 @@ pub struct Settings {
     self_rss: u64,
     nanachi_rss: Option<u64>,
     nanachi_pid: Option<u32>,
-    /// Latch for the ComboRow `selected` setter — without it, the
-    /// `notify::selected` handler we install fires recursively on
-    /// programmatic updates and pushes the same message to the
-    /// worker every time we Refresh.
     suppress_combo: std::cell::Cell<bool>,
+    suppress_language_combo: std::cell::Cell<bool>,
+    // Shared with the Cairo draw closures.
+    storage_bar_data: Rc<RefCell<BarSegments>>,
+    memory_bar_data: Rc<RefCell<BarSegments>>,
+    // Strong refs so we can call queue_draw() from update().
+    storage_bar: Option<gtk::DrawingArea>,
+    memory_bar: Option<gtk::DrawingArea>,
 }
 
 #[relm4::component(pub)]
@@ -132,65 +172,92 @@ impl SimpleComponent for Settings {
     view! {
         #[root]
         adw::PreferencesDialog {
-            set_title: "Preferences",
+            set_title: &fl!("settings-title"),
             set_search_enabled: false,
 
+            // ── General ──────────────────────────────────────────────
             add = &adw::PreferencesPage {
-                set_title: "General",
+                set_title: &fl!("settings-general"),
                 set_icon_name: Some("preferences-system-symbolic"),
 
                 add = &adw::PreferencesGroup {
-                    set_title: "Downloads",
-                    set_description: Some(
-                        "When to fetch image, video and audio attachments.",
-                    ),
+                    set_title: &fl!("settings-downloads"),
+                    set_description: Some(&fl!("settings-downloads-description")),
 
                     #[name(method_row)]
                     adw::ComboRow {
-                        set_title: "Download method",
-                        set_subtitle: "On-demand: fetched as soon as the message is visible. \
-                                       Manual: only when you tap the placeholder.",
-
+                        set_title: &fl!("settings-download-method"),
+                        set_subtitle: &fl!("settings-download-method-subtitle"),
                         set_model: Some(&gtk::StringList::new(&[
-                            "On-demand",
-                            "Manual",
-                            "Eager",
+                            &fl!("settings-download-on-demand"),
+                            &fl!("settings-download-manual"),
+                            &fl!("settings-download-eager"),
                         ])),
                         #[watch]
                         set_selected: model.download_method.position(),
-
                         connect_selected_notify[sender, suppress = model.suppress_combo.clone()] => move |row| {
-                            if suppress.get() {
-                                return;
-                            }
-                            let pick = DownloadMethod::from_position(row.selected());
-                            sender.input(SettingsInput::PickDownloadMethod(pick));
+                            if suppress.get() { return; }
+                            sender.input(SettingsInput::PickDownloadMethod(
+                                DownloadMethod::from_position(row.selected()),
+                            ));
+                        },
+                    },
+                },
+
+                add = &adw::PreferencesGroup {
+                    set_title: &fl!("settings-language-group"),
+
+                    #[name(language_row)]
+                    adw::ComboRow {
+                        set_title: &fl!("settings-language"),
+                        set_subtitle: &fl!("settings-language-subtitle"),
+                        set_model: Some(&gtk::StringList::new(&[
+                            &fl!("settings-language-system"),
+                            &fl!("settings-language-en"),
+                            &fl!("settings-language-pt-br"),
+                        ])),
+                        #[watch]
+                        set_selected: model.language_pref.position(),
+                        connect_selected_notify[sender, suppress = model.suppress_language_combo.clone()] => move |row| {
+                            if suppress.get() { return; }
+                            sender.input(SettingsInput::PickLanguage(
+                                LanguagePref::from_position(row.selected()),
+                            ));
                         },
                     },
                 },
             },
 
+            // ── Storage ──────────────────────────────────────────────
             add = &adw::PreferencesPage {
-                set_title: "Storage",
+                set_title: &fl!("settings-storage"),
                 set_icon_name: Some("drive-harddisk-symbolic"),
 
                 add = &adw::PreferencesGroup {
-                    set_title: "Disk usage",
+                    set_title: &fl!("settings-disk-usage"),
                     #[watch]
-                    set_description: Some(&format!(
-                        "Total: {}",
-                        format_bytes(model.total_size),
+                    set_description: Some(&fl!("settings-disk-total",
+                        "size" = format_bytes(model.total_size)
                     )),
 
-                    // The suffix labels are declared inline (not via a
-                    // helper) so the relm4 macro builds the widget once
-                    // at init and only updates `set_label` reactively.
-                    // Calling `add_suffix` with `#[watch]` and a freshly-
-                    // built helper kept appending a new row of labels
-                    // on every refresh.
+                    // Segmented storage bar — lives in the group header
+                    // area (above the listbox) because it's not a
+                    // PreferencesRow. libadwaita inserts it between the
+                    // title/description box and the row list.
+                    add = &gtk::Box {
+                        set_margin_top: 2,
+                        set_margin_bottom: 6,
+
+                        #[name(storage_bar_da)]
+                        gtk::DrawingArea {
+                            set_content_height: 14,
+                            set_hexpand: true,
+                        },
+                    },
+
                     adw::ActionRow {
-                        set_title: "Database",
-                        set_subtitle: "Messages, chats, contacts (tina.db).",
+                        set_title: &fl!("settings-database"),
+                        set_subtitle: &fl!("settings-database-subtitle"),
                         add_suffix = &gtk::Label {
                             #[watch]
                             set_label: &format_bytes(model.db_size),
@@ -200,8 +267,8 @@ impl SimpleComponent for Settings {
                     },
 
                     adw::ActionRow {
-                        set_title: "Media",
-                        set_subtitle: "Images, videos, audio, documents.",
+                        set_title: &fl!("settings-media"),
+                        set_subtitle: &fl!("settings-media-subtitle"),
                         add_suffix = &gtk::Label {
                             #[watch]
                             set_label: &format_bytes(model.media_size),
@@ -210,7 +277,7 @@ impl SimpleComponent for Settings {
                         },
                         add_suffix = &gtk::Button {
                             set_icon_name: "user-trash-symbolic",
-                            set_tooltip_text: Some("Clear media cache"),
+                            set_tooltip_text: Some(&fl!("settings-clear-media")),
                             set_valign: gtk::Align::Center,
                             add_css_class: "flat",
                             connect_clicked => SettingsInput::ClearMedia,
@@ -218,8 +285,8 @@ impl SimpleComponent for Settings {
                     },
 
                     adw::ActionRow {
-                        set_title: "Avatars",
-                        set_subtitle: "Profile pictures cached on disk.",
+                        set_title: &fl!("settings-avatars"),
+                        set_subtitle: &fl!("settings-avatars-subtitle"),
                         add_suffix = &gtk::Label {
                             #[watch]
                             set_label: &format_bytes(model.avatars_size),
@@ -228,7 +295,7 @@ impl SimpleComponent for Settings {
                         },
                         add_suffix = &gtk::Button {
                             set_icon_name: "user-trash-symbolic",
-                            set_tooltip_text: Some("Clear avatar cache"),
+                            set_tooltip_text: Some(&fl!("settings-clear-avatars")),
                             set_valign: gtk::Align::Center,
                             add_css_class: "flat",
                             connect_clicked => SettingsInput::ClearAvatars,
@@ -237,15 +304,13 @@ impl SimpleComponent for Settings {
                 },
 
                 add = &adw::PreferencesGroup {
-                    set_title: "Maintenance",
+                    set_title: &fl!("settings-maintenance"),
 
                     adw::ActionRow {
-                        set_title: "Repair",
-                        set_subtitle:
-                            "Re-pull contacts, groups and newsletter metadata \
-                             from WhatsApp without re-pairing.",
+                        set_title: &fl!("settings-repair"),
+                        set_subtitle: &fl!("settings-repair-subtitle"),
                         add_suffix = &gtk::Button {
-                            set_label: "Run",
+                            set_label: &fl!("settings-repair-run"),
                             set_valign: gtk::Align::Center,
                             add_css_class: "suggested-action",
                             connect_clicked => SettingsInput::Repair,
@@ -254,44 +319,77 @@ impl SimpleComponent for Settings {
                 },
             },
 
+            // ── About ─────────────────────────────────────────────────
             add = &adw::PreferencesPage {
-                set_title: "About",
+                set_title: &fl!("settings-about"),
                 set_icon_name: Some("help-about-symbolic"),
 
                 add = &adw::PreferencesGroup {
-                    set_title: "Tina",
+                    set_title: &fl!("app-title"),
 
                     adw::ActionRow {
-                        set_title: "Version",
+                        set_title: &fl!("settings-version"),
                         add_suffix = &gtk::Label {
                             set_label: env!("CARGO_PKG_VERSION"),
                             add_css_class: "dim-label",
                         },
                     },
+                },
+
+                add = &adw::PreferencesGroup {
+                    set_title: &fl!("settings-memory-group"),
+                    #[watch]
+                    set_description: Some(&format_bytes(
+                        model.self_rss + model.nanachi_rss.unwrap_or(0)
+                    )),
+
+                    // Segmented memory bar.
+                    add = &gtk::Box {
+                        set_margin_top: 2,
+                        set_margin_bottom: 6,
+
+                        #[name(memory_bar_da)]
+                        gtk::DrawingArea {
+                            set_content_height: 14,
+                            set_hexpand: true,
+                        },
+                    },
 
                     adw::ActionRow {
-                        set_title: "Memory (this process)",
-                        set_subtitle: "Resident set size of tina-gtk.",
+                        set_title: &fl!("settings-memory-gtk"),
                         add_suffix = &gtk::Label {
                             #[watch]
                             set_label: &format_bytes(model.self_rss),
                             add_css_class: "dim-label",
                             set_valign: gtk::Align::Center,
                         },
+                        add_prefix = &gtk::Box {
+                            set_valign: gtk::Align::Center,
+                            set_size_request: (10, 10),
+                            add_css_class: "tina-legend-dot",
+                            // purple dot for interface
+                        },
                     },
 
                     adw::ActionRow {
-                        set_title: "Memory (nanachi)",
+                        set_title: &fl!("settings-memory-nanachi"),
                         #[watch]
-                        set_subtitle: &match model.nanachi_pid {
-                            Some(pid) => format!("Go subprocess (pid {pid})."),
-                            None => "Go subprocess (not running).".to_string(),
+                        set_subtitle: &if model.nanachi_pid.is_none() {
+                            fl!("settings-memory-nanachi-stopped")
+                        } else {
+                            String::new()
                         },
                         add_suffix = &gtk::Label {
                             #[watch]
                             set_label: &format_bytes(model.nanachi_rss.unwrap_or(0)),
                             add_css_class: "dim-label",
                             set_valign: gtk::Align::Center,
+                        },
+                        add_prefix = &gtk::Box {
+                            set_valign: gtk::Align::Center,
+                            set_size_request: (10, 10),
+                            add_css_class: "tina-legend-dot-teal",
+                            // teal dot for service
                         },
                     },
                 },
@@ -304,9 +402,15 @@ impl SimpleComponent for Settings {
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let model = Settings {
+        let saved_lang = std::fs::read_to_string(init.data_dir.join("language"))
+            .ok()
+            .map(|s| LanguagePref::from_file_str(&s))
+            .unwrap_or_default();
+
+        let mut model = Settings {
             data_dir: init.data_dir,
             download_method: DownloadMethod::OnDemand,
+            language_pref: saved_lang,
             total_size: 0,
             db_size: 0,
             media_size: 0,
@@ -315,9 +419,35 @@ impl SimpleComponent for Settings {
             nanachi_rss: None,
             nanachi_pid: None,
             suppress_combo: std::cell::Cell::new(false),
+            suppress_language_combo: std::cell::Cell::new(false),
+            storage_bar_data: Rc::new(RefCell::new(vec![])),
+            memory_bar_data: Rc::new(RefCell::new(vec![])),
+            storage_bar: None,
+            memory_bar: None,
         };
+
         let widgets = view_output!();
-        sender.input(SettingsInput::Refresh);
+
+        // Wire up Cairo draw functions and keep widget handles for queue_draw.
+        {
+            let data = model.storage_bar_data.clone();
+            widgets.storage_bar_da.set_draw_func(move |_, ctx, w, h| {
+                draw_bar(ctx, w as f64, h as f64, &data.borrow());
+            });
+            model.storage_bar = Some(widgets.storage_bar_da.clone());
+        }
+        {
+            let data = model.memory_bar_data.clone();
+            widgets.memory_bar_da.set_draw_func(move |_, ctx, w, h| {
+                draw_bar(ctx, w as f64, h as f64, &data.borrow());
+            });
+            model.memory_bar = Some(widgets.memory_bar_da.clone());
+        }
+
+        // Do NOT refresh at init — dir_size() walks the filesystem on the
+        // main thread and would freeze the startup spinner. The parent calls
+        // SettingsInput::Refresh right before presenting the dialog, which
+        // is the right time to pay that cost.
         ComponentParts { model, widgets }
     }
 
@@ -329,8 +459,6 @@ impl SimpleComponent for Settings {
                 self.refresh_nanachi_rss();
             }
             SettingsInput::SetDownloadMethod(m) => {
-                // Programmatic update — block our own combo handler so
-                // the worker doesn't see this echoed back as a write.
                 self.suppress_combo.set(true);
                 self.download_method = m;
                 self.suppress_combo.set(false);
@@ -343,6 +471,14 @@ impl SimpleComponent for Settings {
                 if self.download_method != m {
                     self.download_method = m;
                     let _ = sender.output(SettingsOutput::SetDownloadMethod(m));
+                }
+            }
+            SettingsInput::PickLanguage(lang) => {
+                if self.language_pref != lang {
+                    self.language_pref = lang;
+                    let _ = sender.output(SettingsOutput::SetLanguage(
+                        lang.to_file_str().to_string(),
+                    ));
                 }
             }
             SettingsInput::Repair => {
@@ -368,39 +504,101 @@ impl Settings {
             + file_size(&self.data_dir.join("whatsmeow.db-shm"));
         self.media_size = dir_size(&self.data_dir.join("media"));
         self.avatars_size = dir_size(&self.data_dir.join("avatars"));
-        // Total walks the whole data dir (catches the .bak files +
-        // any future subdirs) — separate from the labelled rows so
-        // the breakdown still adds up to something close.
         self.total_size = dir_size(&self.data_dir);
+
+        self.update_storage_bar();
     }
 
     fn refresh_self_rss(&mut self) {
         self.self_rss = read_rss(std::process::id()).unwrap_or(0);
+        self.update_memory_bar();
     }
 
     fn refresh_nanachi_rss(&mut self) {
         self.nanachi_rss = self.nanachi_pid.and_then(read_rss);
+        self.update_memory_bar();
+    }
+
+    fn update_storage_bar(&self) {
+        let total = self.total_size as f64;
+        let mut segs: BarSegments = vec![];
+        if total > 0.0 {
+            let db_f = self.db_size as f64 / total;
+            let media_f = self.media_size as f64 / total;
+            let avatars_f = self.avatars_size as f64 / total;
+            if db_f > 0.005 { segs.push((db_f, COLOR_DB)); }
+            if media_f > 0.005 { segs.push((media_f, COLOR_MEDIA)); }
+            if avatars_f > 0.005 { segs.push((avatars_f, COLOR_AVATARS)); }
+        }
+        *self.storage_bar_data.borrow_mut() = segs;
+        if let Some(bar) = &self.storage_bar { bar.queue_draw(); }
+    }
+
+    fn update_memory_bar(&self) {
+        let gtk_rss = self.self_rss as f64;
+        let nan_rss = self.nanachi_rss.unwrap_or(0) as f64;
+        let total = gtk_rss + nan_rss;
+        let mut segs: BarSegments = vec![];
+        if total > 0.0 {
+            if gtk_rss > 0.0 { segs.push((gtk_rss / total, COLOR_GTK)); }
+            if nan_rss > 0.0 { segs.push((nan_rss / total, COLOR_NANACHI)); }
+        }
+        *self.memory_bar_data.borrow_mut() = segs;
+        if let Some(bar) = &self.memory_bar { bar.queue_draw(); }
     }
 }
 
-/// Total bytes for a regular file (returns 0 if missing/unreadable —
-/// the storage panel is informational, not load-bearing).
+// ── Cairo drawing ─────────────────────────────────────────────────────────────
+
+fn draw_bar(ctx: &gtk::cairo::Context, w: f64, h: f64, segments: &BarSegments) {
+    let r = h / 2.0;
+
+    ctx.save().ok();
+
+    // Clip everything to a fully-rounded pill shape.
+    pill(ctx, 0.0, 0.0, w, h, r);
+    ctx.clip();
+
+    // Unfilled background.
+    ctx.set_source_rgba(0.5, 0.5, 0.5, 0.18);
+    ctx.paint().ok();
+
+    // Coloured segments left-to-right.
+    let mut x = 0.0_f64;
+    for (frac, [r, g, b]) in segments {
+        let seg_w = frac * w;
+        if seg_w < 0.5 { x += seg_w; continue; }
+        ctx.rectangle(x, 0.0, seg_w, h);
+        ctx.set_source_rgb(*r, *g, *b);
+        ctx.fill().ok();
+        x += seg_w;
+    }
+
+    ctx.restore().ok();
+}
+
+/// Rounded-rectangle path (radius r, assumed ≤ min(w,h)/2).
+fn pill(ctx: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    use std::f64::consts::PI;
+    ctx.new_sub_path();
+    ctx.arc(x + r,     y + r,     r, PI,       3.0 * PI / 2.0);
+    ctx.arc(x + w - r, y + r,     r, -PI / 2.0, 0.0);
+    ctx.arc(x + w - r, y + h - r, r, 0.0,       PI / 2.0);
+    ctx.arc(x + r,     y + h - r, r, PI / 2.0,  PI);
+    ctx.close_path();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// Recursively-summed size of a directory tree. Skips on the first I/O
-/// error rather than aborting; an unreadable subdirectory just gets a
-/// short-count, which is fine for the disk-usage row.
 fn dir_size(path: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return 0;
-    };
+    let Ok(entries) = std::fs::read_dir(path) else { return 0; };
     let mut total = 0u64;
     for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
+        let Ok(meta) = entry.metadata() else { continue; };
         if meta.is_dir() {
             total += dir_size(&entry.path());
         } else {
@@ -410,19 +608,11 @@ fn dir_size(path: &Path) -> u64 {
     total
 }
 
-/// Read VmRSS (resident set size) for `pid` from `/proc/<pid>/status`.
-/// Returns bytes. None if the file is missing or unparseable.
 fn read_rss(pid: u32) -> Option<u64> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     for line in s.lines() {
         if let Some(rest) = line.strip_prefix("VmRSS:") {
-            // "VmRSS:    12345 kB"
-            let kb: u64 = rest
-                .trim()
-                .split_whitespace()
-                .next()?
-                .parse()
-                .ok()?;
+            let kb: u64 = rest.trim().split_whitespace().next()?.parse().ok()?;
             return Some(kb * 1024);
         }
     }
@@ -437,10 +627,5 @@ fn format_bytes(n: u64) -> String {
         v /= 1024.0;
         i += 1;
     }
-    if i == 0 {
-        format!("{n} B")
-    } else {
-        format!("{:.1} {}", v, UNITS[i])
-    }
+    if i == 0 { format!("{n} B") } else { format!("{:.1} {}", v, UNITS[i]) }
 }
-

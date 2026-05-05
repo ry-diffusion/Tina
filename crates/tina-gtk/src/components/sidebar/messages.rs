@@ -79,6 +79,10 @@ pub enum SidebarInput {
         jid: WaIdentity,
         path: String,
     },
+    /// Avatar fetch failed (network error, no avatar set, etc.).
+    /// Decrements the in-flight counter so the fetch queue can
+    /// drain the next pending request.
+    AvatarFailed(WaIdentity),
     /// Local glycin decode of an avatar file landed. Refresh any
     /// row whose `avatar_path` matches `path` so the texture takes
     /// effect on screen.

@@ -296,6 +296,7 @@ pub struct GroupData {
     pub owner: Option<WaIdentity>,
     pub description: Option<String>,
     pub avatar_url: Option<String>,
+    #[serde(default)]
     pub participants: Vec<ParticipantData>,
 }
 

@@ -75,7 +75,7 @@ func newsletterToGroup(n *types.NewsletterMetadata) GroupData {
 		Subject:      strPtr(name),
 		Description:  strPtr(desc),
 		AvatarURL:    avatarURL,
-		Participants: nil,
+		Participants: []ParticipantData{},
 	}
 }
 

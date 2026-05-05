@@ -4,6 +4,7 @@
 // definition + the small read-only helpers everyone reuses.
 
 use std::cell::Cell;
+use crate::fl;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -122,12 +123,12 @@ impl ChatTab {
         matches!(self.kind.as_str(), "newsletter" | "status" | "broadcast")
     }
 
-    pub(super) fn read_only_label(&self) -> &'static str {
+    pub(super) fn read_only_label(&self) -> String {
         match self.kind.as_str() {
-            "newsletter" => "You can't reply to channels.",
-            "status" => "Status updates can't be answered here.",
-            "broadcast" => "Broadcast lists are read-only.",
-            _ => "Read-only.",
+            "newsletter" => fl!("readonly-newsletter"),
+            "status" => fl!("readonly-status"),
+            "broadcast" => fl!("readonly-broadcast"),
+            _ => fl!("readonly-default"),
         }
     }
 

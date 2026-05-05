@@ -63,6 +63,19 @@ func extractMedia(m *waE2E.Message) *MediaInfo {
 			SizeBytes: i64PtrOrNil(int64(x.GetFileLength())),
 			SHA256:    hexPtrOrNil(x.GetFileSHA256()),
 		}
+	case m.LottieStickerMessage != nil:
+		inner := m.LottieStickerMessage.GetMessage()
+		if inner == nil || inner.StickerMessage == nil {
+			return nil
+		}
+		x := inner.StickerMessage
+		return &MediaInfo{
+			Mimetype:  strPtrOrNil(x.GetMimetype()),
+			Width:     i64PtrOrNil(int64(x.GetWidth())),
+			Height:    i64PtrOrNil(int64(x.GetHeight())),
+			SizeBytes: i64PtrOrNil(int64(x.GetFileLength())),
+			SHA256:    hexPtrOrNil(x.GetFileSHA256()),
+		}
 	case m.DocumentMessage != nil:
 		x := m.DocumentMessage
 		return &MediaInfo{

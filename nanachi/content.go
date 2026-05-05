@@ -36,6 +36,10 @@ func extractContent(m *waE2E.Message) (string, string) {
 		return "[Document]", "document"
 	case m.StickerMessage != nil:
 		return "[Sticker]", "sticker"
+	case m.LottieStickerMessage != nil:
+		// Lottie / animated stickers are wrapped in FutureProofMessage.
+		// The inner message holds the same StickerMessage download fields.
+		return "[Sticker]", "sticker"
 	case m.ContactMessage != nil:
 		return "[Contact]", "contact"
 	case m.LocationMessage != nil:

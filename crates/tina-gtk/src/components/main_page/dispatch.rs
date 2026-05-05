@@ -167,6 +167,9 @@ impl MainPage {
                     .sender()
                     .send(ChatAreaInput::AvatarReady { jid, path });
             }
+            MainInput::AvatarFailed(jid) => {
+                let _ = self.sidebar.sender().send(SidebarInput::AvatarFailed(jid));
+            }
             MainInput::AvatarTextureReady(path) => {
                 // glycin async decode landed → fan out to both
                 // children so they rebind matching rows.

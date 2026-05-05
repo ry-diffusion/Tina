@@ -6,6 +6,7 @@
 // widget is realized for an item, not on arbitrary updates).
 
 use adw::prelude::*;
+use crate::fl;
 
 use super::super::message_bubble::{delivery_css_class, delivery_icon_name};
 use super::item::MessageRowItem;
@@ -33,7 +34,7 @@ pub fn bind(item: &MessageRowItem, w: &mut MessageRowWidgets, root: &mut gtk::Bo
 
     // ── Avatar / collapsed timestamp ──────────────────────────────
     w.avatar.set_visible(!m.is_collapsed);
-    w.avatar.set_text(Some(m.display_sender_name()));
+    w.avatar.set_text(Some(&m.display_sender_name()));
     let avatar_paintable: Option<gtk::gdk::Paintable> = item
         .avatars
         .load_texture(m.display_avatar_path())
@@ -60,7 +61,7 @@ pub fn bind(item: &MessageRowItem, w: &mut MessageRowWidgets, root: &mut gtk::Bo
     w.reply_button.set_visible(has_reply);
     if has_reply {
         w.reply_author.set_label(&m.quoted_sender_label());
-        w.reply_preview.set_label(m.quoted_preview_text());
+        w.reply_preview.set_label(&m.quoted_preview_text());
     }
 
     // ── Visual media (image / sticker / video thumbnail) ──────────
@@ -116,7 +117,7 @@ pub fn bind(item: &MessageRowItem, w: &mut MessageRowWidgets, root: &mut gtk::Bo
         has_local && m.message_type == "audio" && !media_expanded;
     w.audio_compact_box.set_visible(show_audio_compact);
     if show_audio_compact {
-        w.audio_compact_kind.set_label(m.media_kind_label());
+        w.audio_compact_kind.set_label(&m.media_kind_label());
         w.audio_compact_summary
             .set_visible(!m.media_summary.is_empty());
         w.audio_compact_summary.set_label(&m.media_summary);
@@ -141,7 +142,7 @@ pub fn bind(item: &MessageRowItem, w: &mut MessageRowWidgets, root: &mut gtk::Bo
     w.generic_dl_box.set_visible(show_generic_dl);
     if show_generic_dl {
         w.generic_dl_icon.set_icon_name(Some(m.placeholder_icon()));
-        w.generic_dl_kind.set_label(m.media_kind_label());
+        w.generic_dl_kind.set_label(&m.media_kind_label());
         w.generic_dl_summary.set_visible(!m.media_summary.is_empty());
         w.generic_dl_summary.set_label(&m.media_summary);
         let downloading = m.media_status == "downloading";
@@ -154,10 +155,10 @@ pub fn bind(item: &MessageRowItem, w: &mut MessageRowWidgets, root: &mut gtk::Bo
             };
             w.generic_dl_button.set_icon_name(icon);
             let tip = match m.media_status.as_str() {
-                "failed" => "Retry download",
-                _ => "Download",
+                "failed" => fl!("download-retry"),
+                _ => fl!("download-download"),
             };
-            w.generic_dl_button.set_tooltip_text(Some(tip));
+            w.generic_dl_button.set_tooltip_text(Some(&tip));
         }
     }
 

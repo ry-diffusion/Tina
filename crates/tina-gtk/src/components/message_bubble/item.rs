@@ -3,6 +3,7 @@
 // helpers for header markup, media kind, etc.
 
 use adw::prelude::*;
+use crate::fl;
 use tina_db::MessageRow;
 
 use crate::time::format_message_time;
@@ -224,15 +225,16 @@ impl MessageItem {
             Some(s) if !s.is_empty() => {
                 tina_core::WaIdentity::parse(s).display_short().to_string()
             }
-            _ => "Unknown".to_string(),
+            _ => fl!("sender-unknown"),
         }
     }
 
-    pub fn quoted_preview_text(&self) -> &str {
+    pub fn quoted_preview_text(&self) -> String {
         self.quoted_preview
             .as_deref()
             .filter(|s| !s.is_empty())
-            .unwrap_or("Replied message")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| fl!("quoted-replied-message"))
     }
 
     pub fn thumbnail_paintable(&self) -> Option<gtk::gdk::Paintable> {
@@ -256,14 +258,14 @@ impl MessageItem {
         matches!(self.message_type.as_str(), "image" | "video" | "sticker")
     }
 
-    pub fn media_kind_label(&self) -> &'static str {
+    pub fn media_kind_label(&self) -> String {
         match self.message_type.as_str() {
-            "image" => "Image",
-            "audio" => "Voice / Audio",
-            "video" => "Video",
-            "sticker" => "Sticker",
-            "document" => "Document",
-            _ => "Attachment",
+            "image" => fl!("media-image"),
+            "audio" => fl!("media-voice-audio"),
+            "video" => fl!("media-video"),
+            "sticker" => fl!("media-sticker"),
+            "document" => fl!("media-document"),
+            _ => fl!("media-attachment"),
         }
     }
 
@@ -297,20 +299,20 @@ impl MessageItem {
     /// as the channel itself, so we substitute the chat's own name +
     /// avatar instead of letting "Unknown" leak through when the
     /// per-message sender lookup fails.
-    pub fn display_sender_name(&self) -> &str {
+    pub fn display_sender_name(&self) -> String {
         if self.from_me {
-            return "You";
+            return fl!("sender-you");
         }
         if self.chat_kind == "newsletter"
             && let Some(n) = self.chat_display_name.as_deref()
             && !n.is_empty()
         {
-            return n;
+            return n.to_string();
         }
         if self.sender_name.is_empty() {
-            "Unknown"
+            fl!("sender-unknown")
         } else {
-            self.sender_name.as_str()
+            self.sender_name.clone()
         }
     }
 
@@ -339,7 +341,7 @@ impl MessageItem {
         // tradeoff here.
         format!(
             "<b>{}</b>  <span alpha=\"60%\" size=\"small\">{}</span>",
-            glib_markup_escape(self.display_sender_name()),
+            glib_markup_escape(&self.display_sender_name()),
             glib_markup_escape(&self.timestamp),
         )
     }

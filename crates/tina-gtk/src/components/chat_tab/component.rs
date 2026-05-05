@@ -7,6 +7,7 @@
 // view + the `init` + a thin `update` dispatcher.
 
 use std::cell::Cell;
+use crate::fl;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -63,12 +64,6 @@ impl SimpleComponent for ChatTab {
             // out on send.
             gtk::Stack {
                 set_transition_type: gtk::StackTransitionType::Crossfade,
-                #[watch]
-                set_visible_child_name: if model.is_read_only() {
-                    "readonly"
-                } else {
-                    "compose"
-                },
 
                 add_named[Some("compose")] = &gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
@@ -87,7 +82,7 @@ impl SimpleComponent for ChatTab {
                     // a broken bubble on the peer.
                     gtk::MenuButton {
                         set_icon_name: "attachment-symbolic",
-                        set_tooltip_text: Some("Attach"),
+                        set_tooltip_text: Some(&fl!("compose-attach")),
                         set_valign: gtk::Align::Center,
                         #[wrap(Some)]
                         set_popover = &gtk::Popover {
@@ -98,7 +93,7 @@ impl SimpleComponent for ChatTab {
                                 set_spacing: 2,
 
                                 gtk::Button {
-                                    set_label: "Photo",
+                                    set_label: &fl!("compose-photo"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |btn| {
                                         if let Some(pop) = btn
@@ -115,7 +110,7 @@ impl SimpleComponent for ChatTab {
                                     },
                                 },
                                 gtk::Button {
-                                    set_label: "Video",
+                                    set_label: &fl!("compose-video"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |btn| {
                                         if let Some(pop) = btn
@@ -132,7 +127,7 @@ impl SimpleComponent for ChatTab {
                                     },
                                 },
                                 gtk::Button {
-                                    set_label: "Audio file",
+                                    set_label: &fl!("compose-audio-file"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |btn| {
                                         if let Some(pop) = btn
@@ -149,7 +144,7 @@ impl SimpleComponent for ChatTab {
                                     },
                                 },
                                 gtk::Button {
-                                    set_label: "Sticker (file)",
+                                    set_label: &fl!("compose-sticker-file"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |btn| {
                                         if let Some(pop) = btn
@@ -166,7 +161,7 @@ impl SimpleComponent for ChatTab {
                                     },
                                 },
                                 gtk::Button {
-                                    set_label: "Document",
+                                    set_label: &fl!("compose-document"),
                                     add_css_class: "flat",
                                     connect_clicked[sender] => move |btn| {
                                         if let Some(pop) = btn
@@ -193,7 +188,7 @@ impl SimpleComponent for ChatTab {
                     #[name(sticker_picker_btn)]
                     gtk::Button {
                         set_icon_name: "sticker-regular-symbolic",
-                        set_tooltip_text: Some("Stickers"),
+                        set_tooltip_text: Some(&fl!("compose-stickers")),
                         set_valign: gtk::Align::Center,
                         connect_clicked => ChatTabInput::OpenStickerPicker,
                     },
@@ -202,7 +197,7 @@ impl SimpleComponent for ChatTab {
                     gtk::Entry {
                         set_buffer: &model.composer_buffer,
                         set_hexpand: true,
-                        set_placeholder_text: Some("Message…"),
+                        set_placeholder_text: Some(&fl!("compose-message-placeholder")),
                         connect_activate => ChatTabInput::Send,
                     },
 
@@ -218,10 +213,10 @@ impl SimpleComponent for ChatTab {
                             "mic-3-symbolic"
                         },
                         #[watch]
-                        set_tooltip_text: Some(if model.recording_active.get() {
-                            "Stop recording"
+                        set_tooltip_text: Some(&if model.recording_active.get() {
+                            fl!("compose-stop-recording")
                         } else {
-                            "Record voice note"
+                            fl!("compose-record-voice")
                         }),
                         #[watch]
                         set_css_classes: if model.recording_active.get() {
@@ -238,7 +233,7 @@ impl SimpleComponent for ChatTab {
                         // build.rs for compatibility but the WhatsApp
                         // mental model maps better to a send icon.
                         set_icon_name: "paper-plane-symbolic",
-                        set_tooltip_text: Some("Send"),
+                        set_tooltip_text: Some(&fl!("compose-send")),
                         add_css_class: "suggested-action",
                         connect_clicked => ChatTabInput::Send,
                     },
@@ -259,9 +254,19 @@ impl SimpleComponent for ChatTab {
                     },
                     gtk::Label {
                         #[watch]
-                        set_label: model.read_only_label(),
+                        set_label: &model.read_only_label(),
                         add_css_class: "dim-label",
                     },
+                },
+
+                // Children declared first — set_visible_child_name after
+                // add_named so the target page already exists when GTK
+                // evaluates the property (avoids a Gtk-WARNING on boot).
+                #[watch]
+                set_visible_child_name: if model.is_read_only() {
+                    "readonly"
+                } else {
+                    "compose"
                 },
             },
         }

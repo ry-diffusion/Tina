@@ -7,6 +7,7 @@
 // showing the timeline.
 
 use std::cell::Cell;
+use crate::fl;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -41,7 +42,7 @@ pub fn open_stories_viewer<W: IsA<gtk::Widget>>(
 
     let header = adw::HeaderBar::new();
     header.set_show_end_title_buttons(true);
-    header.set_title_widget(Some(&adw::WindowTitle::new(author_name, "Status")));
+    header.set_title_widget(Some(&adw::WindowTitle::new(author_name, &fl!("stories-status-subtitle"))));
 
     // Progress bar strip — one per post, stacked horizontally.
     // `osd` styles them as the white slivers WhatsApp uses; the
@@ -168,7 +169,7 @@ fn build_post_widget(post: &MessageRow) -> gtk::Widget {
                     }
                 });
             } else {
-                outer.append(&loading_widget("Photo downloading…"));
+                outer.append(&loading_widget(&fl!("stories-photo-downloading")));
             }
         }
         "video" => {
@@ -179,12 +180,12 @@ fn build_post_widget(post: &MessageRow) -> gtk::Widget {
                 video.set_vexpand(true);
                 outer.append(&video);
             } else {
-                outer.append(&loading_widget("Video downloading…"));
+                outer.append(&loading_widget(&fl!("stories-video-downloading")));
             }
         }
         _ => {
             let lbl = gtk::Label::builder()
-                .label(post.content.as_deref().unwrap_or("Status update"))
+                .label(post.content.as_deref().unwrap_or(&fl!("stories-status-update")))
                 .wrap(true)
                 .justify(gtk::Justification::Center)
                 .halign(gtk::Align::Center)

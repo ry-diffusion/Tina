@@ -7,6 +7,7 @@ use tina_db::{ChatRow, MentionCandidate, MessageRow, StatusAuthorRow};
 
 pub struct AppInit {
     pub nanachi_dir: PathBuf,
+    pub data_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +115,7 @@ pub enum AppMsg {
         jid: WaIdentity,
         path: String,
     },
+    AvatarFailed(WaIdentity),
     /// glycin finished decoding an avatar file locally. Broadcast
     /// to UI components so they rebind rows whose `avatar_path`
     /// matches `path`.
@@ -198,6 +200,9 @@ pub enum AppMsg {
     },
     /// Settings dialog asked us to drop the on-disk avatar cache.
     ClearAvatarCache,
+    /// User picked a language in Preferences. Locale key ("en-US",
+    /// "pt-BR", or "" for system). Written to disk; restart required.
+    SetLanguage(String),
     /// Worker resolved the mention-picker candidates for `chat_id`.
     /// Forwarded down to the matching `ChatTab` so its `@`-popover
     /// has the live list to filter against.
