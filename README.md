@@ -18,6 +18,7 @@ Its fucking native. No electron/tauri/webview bs.
 - [x] i18n
 - [x] Chat Preview 
 - [x] Phone Pairing
+- [x] JID and LID handling 
 
 # What isn't a implemented?
 - [ ] Group Details
