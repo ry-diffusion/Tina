@@ -62,8 +62,10 @@ func (c *Client) fetchAllNewsletters() {
 		emitError(&c.accountID, fmt.Sprintf("get subscribed newsletters: %v", err))
 		return
 	}
+	fmt.Fprintf(os.Stderr, "[newsletter] GetSubscribedNewsletters: %d channels\n", len(newsletters))
 	mapped := make([]GroupData, 0, len(newsletters))
 	for _, n := range newsletters {
+		fmt.Fprintf(os.Stderr, "[newsletter] channel %s name=%q\n", n.ID, n.ThreadMeta.Name.Text)
 		mapped = append(mapped, newsletterToGroup(n))
 	}
 	emitGroups(c.accountID, mapped)
@@ -129,5 +131,9 @@ func (c *Client) refreshNewsletter(jid types.JID) {
 		)
 		return
 	}
+	fmt.Fprintf(os.Stderr,
+		"[newsletter] GetNewsletterInfo(%s): name=%q state=%q\n",
+		jid.String(), info.ThreadMeta.Name.Text, info.State.Type,
+	)
 	emitGroups(c.accountID, []GroupData{newsletterToGroup(info)})
 }

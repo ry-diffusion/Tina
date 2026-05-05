@@ -92,6 +92,8 @@ mod tests {
             media_width: None,
             media_height: None,
             media_size_bytes: None,
+            media_width: None,
+            media_height: None,
             media_sha256: None,
             media_path: None,
             media_status: "none".into(),
@@ -101,6 +103,7 @@ mod tests {
             quoted_preview: None,
             quoted_sender_name: None,
             mentions_json: None,
+            delivery_status: "sent".into(),
         }
     }
 

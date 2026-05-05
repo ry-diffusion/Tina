@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
 use tina_core::IpcCommand;
-use tina_db::{ChatRow, TinaDb};
+use tina_db::{ChatRow, MentionCandidate, TinaDb};
 use tina_ipc::NanachiManager;
 
 use crate::error::Result;
@@ -78,6 +78,10 @@ impl TinaWorker {
         Ok(self.db.create_account(account_id, name).await?)
     }
 
+    pub async fn get_account(&self, account_id: &str) -> Result<tina_db::Account> {
+        Ok(self.db.get_account(account_id).await?)
+    }
+
     pub async fn list_accounts(&self) -> Result<Vec<tina_db::Account>> {
         Ok(self.db.list_accounts().await?)
     }
@@ -130,13 +134,24 @@ impl TinaWorker {
         Ok(())
     }
 
-    pub async fn send_message(&self, account_id: &str, to: &str, content: &str) -> Result<()> {
+    pub async fn send_message(
+        &self,
+        account_id: &str,
+        to: &str,
+        content: &str,
+        mentioned_jids: &[String],
+    ) -> Result<()> {
         let nanachi = self.nanachi.read().await;
+        let mentioned: Vec<tina_core::WaIdentity> = mentioned_jids
+            .iter()
+            .map(|j| tina_core::WaIdentity::parse(j))
+            .collect();
         nanachi
             .send_command(IpcCommand::SendMessage {
                 account_id: account_id.to_string(),
                 to: tina_core::WaIdentity::parse(to),
                 content: content.to_string(),
+                mentioned_jids: mentioned,
             })
             .await?;
         Ok(())
@@ -202,6 +217,25 @@ impl TinaWorker {
             .send_command(IpcCommand::FetchAvatar {
                 account_id: account_id.to_string(),
                 jid: tina_core::WaIdentity::parse(jid),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Baixa o avatar de um canal diretamente de uma URL, sem chamar
+    /// GetProfilePictureInfo (que retorna 504 para @newsletter).
+    pub async fn fetch_avatar_from_url(
+        &self,
+        account_id: &str,
+        jid: &str,
+        url: &str,
+    ) -> Result<()> {
+        let nanachi = self.nanachi.read().await;
+        nanachi
+            .send_command(IpcCommand::FetchAvatarFromURL {
+                account_id: account_id.to_string(),
+                jid: tina_core::WaIdentity::parse(jid),
+                url: url.to_string(),
             })
             .await?;
         Ok(())
@@ -304,12 +338,46 @@ impl TinaWorker {
             .await?)
     }
 
+    /// Próxima página descendente: mensagens com timestamp
+    /// estritamente maior que `after_ts`, em ordem ASC. Simétrico de
+    /// `get_message_rows_before`, usado pela UI quando o usuário
+    /// scrolla pro fundo do thread e o factory cortou as últimas N
+    /// pelo soft-cap (precisamos buscar de volta as mais recentes).
+    pub async fn get_message_rows_after(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        after_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<tina_db::MessageRow>> {
+        Ok(self
+            .db
+            .get_message_rows_after(account_id, chat_id, after_ts, limit)
+            .await?)
+    }
+
     pub async fn get_chat(
         &self,
         account_id: &str,
         chat_id: &str,
     ) -> Result<Option<tina_db::Chat>> {
         Ok(self.db.get_chat(account_id, chat_id).await?)
+    }
+
+    /// Resolved `@`-mention candidates for a chat. Empty for DMs /
+    /// newsletters; for groups, returns each participant joined
+    /// against the contacts table so the popover can show names
+    /// instead of bare digits.
+    pub async fn list_mention_candidates(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        exclude_jid: Option<&str>,
+    ) -> Result<Vec<MentionCandidate>> {
+        Ok(self
+            .db
+            .list_mention_candidates(account_id, chat_id, exclude_jid)
+            .await?)
     }
 
     pub async fn get_chat_row(&self, account_id: &str, chat_id: &str) -> Result<Option<ChatRow>> {

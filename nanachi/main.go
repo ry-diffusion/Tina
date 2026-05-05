@@ -134,7 +134,7 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
 			return
 		}
-		ok, err := mgr.sendMessage(p.AccountID, p.To, p.Content)
+		ok, err := mgr.sendMessage(p.AccountID, p.To, p.Content, p.MentionedJIDs)
 		var errStr *string
 		if err != nil {
 			s := err.Error()
@@ -206,6 +206,23 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 		emitCommandResult(msg.ID, true, nil, nil)
 		go func() {
 			if err := fetchAvatar(mgr, p.AccountID, p.JID); err != nil {
+				emitAvatarFailed(p.AccountID, p.JID, err.Error())
+			}
+		}()
+
+	case "FetchAvatarFromURL":
+		var p struct {
+			AccountID string `json:"account_id"`
+			JID       string `json:"jid"`
+			URL       string `json:"url"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
+			return
+		}
+		emitCommandResult(msg.ID, true, nil, nil)
+		go func() {
+			if err := fetchAvatarFromURL(p.AccountID, p.JID, p.URL); err != nil {
 				emitAvatarFailed(p.AccountID, p.JID, err.Error())
 			}
 		}()

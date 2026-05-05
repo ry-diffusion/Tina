@@ -119,8 +119,16 @@ impl AppModel {
             AppMsg::Toast(text) => self.toast(text),
             AppMsg::OpenChatNew(id) => self.service.handle.send(Cmd::OpenChat(id)),
             AppMsg::CloseChat(id) => self.service.handle.send(Cmd::CloseChat(id)),
-            AppMsg::SendText { chat_id, text } => {
-                self.service.handle.send(Cmd::SendText { chat_id, text });
+            AppMsg::SendText {
+                chat_id,
+                text,
+                mentioned_jids,
+            } => {
+                self.service.handle.send(Cmd::SendText {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                });
             }
             AppMsg::SendMedia {
                 chat_id,
@@ -227,11 +235,27 @@ impl AppModel {
                     limit: 50,
                 });
             }
+            AppMsg::RequestLoadNewer { chat_id, after_ts } => {
+                self.service.handle.send(Cmd::LoadNewer {
+                    chat_id,
+                    after_ts,
+                    limit: 50,
+                });
+            }
             AppMsg::RequestFetchAvatar(jid) => {
                 self.service.handle.send(Cmd::FetchAvatar { jid });
             }
+            AppMsg::RequestFetchAvatarFromURL(jid, url) => {
+                self.service.handle.send(Cmd::FetchAvatarFromURL { jid, url });
+            }
             AppMsg::AvatarReady { jid, path } => {
                 let _ = self.main.sender().send(MainInput::AvatarReady { jid, path });
+            }
+            AppMsg::AvatarTextureReady(path) => {
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::AvatarTextureReady(path));
             }
             AppMsg::OlderMessagesLoaded {
                 chat_id,
@@ -242,6 +266,17 @@ impl AppModel {
                     chat_id,
                     messages,
                     reached_top,
+                });
+            }
+            AppMsg::NewerMessagesLoaded {
+                chat_id,
+                messages,
+                reached_bottom,
+            } => {
+                let _ = self.main.sender().send(MainInput::NewerMessagesLoaded {
+                    chat_id,
+                    messages,
+                    reached_bottom,
                 });
             }
             AppMsg::MediaDownloadProgress { .. } => {
@@ -257,6 +292,12 @@ impl AppModel {
                     path,
                     mimetype,
                 });
+            }
+            AppMsg::MentionCandidatesLoaded { chat_id, candidates } => {
+                let _ = self
+                    .main
+                    .sender()
+                    .send(MainInput::MentionCandidatesLoaded { chat_id, candidates });
             }
             AppMsg::MediaDownloadFailed { message_id, error } => {
                 // Tell the chat area first so the bubble flips out of
@@ -279,37 +320,28 @@ impl AppModel {
     }
 
     /// Modal alert when a media download fails. Replaces the old toast
-    /// path because download failures are explicit user actions —
-    /// surfacing them as a transient toast meant the user could miss
-    /// the error by the time they noticed the spinner had stopped.
-    /// Offers a Retry response that re-issues the same `Cmd::DownloadMedia`.
-    fn show_download_failed_dialog(&self, message_id: String, error: String) {
-        let dialog = adw::AlertDialog::builder()
-            .heading("Download failed")
-            .body(&error)
+    /// Surface a media-download failure as a non-modal toast with a
+    /// Retry button. We deliberately avoid `AlertDialog` here: when
+    /// the OnDemand policy triggers many parallel auto-downloads
+    /// against an expired URL, a modal-per-failure stacks endlessly
+    /// and forces the user to dismiss them one by one. The toast
+    /// auto-dismisses, multiple toasts queue rather than block, and
+    /// the row's own visual state (download icon flips to retry)
+    /// already conveys the failure persistently.
+    fn show_download_failed_dialog(&self, message_id: String, _error: String) {
+        let toast = adw::Toast::builder()
+            .title("Download failed")
+            .button_label("Retry")
+            .timeout(4)
+            .priority(adw::ToastPriority::Normal)
             .build();
-        dialog.add_response("close", "Close");
-        dialog.add_response("retry", "Retry");
-        dialog.set_response_appearance("retry", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("retry"));
-        dialog.set_close_response("close");
-
-        // Capture only what the response handler needs — the worker
-        // handle is `Clone` so this doesn't pin the AppModel.
         let handle = self.service.handle.clone();
-        dialog.connect_response(None, move |_, resp| {
-            if resp == "retry" {
-                handle.send(Cmd::DownloadMedia {
-                    message_id: message_id.clone(),
-                });
-            }
+        toast.connect_button_clicked(move |_| {
+            handle.send(Cmd::DownloadMedia {
+                message_id: message_id.clone(),
+            });
         });
-
-        let parent: Option<gtk::Window> = self
-            .toast_overlay
-            .root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok());
-        dialog.present(parent.as_ref());
+        self.toast_overlay.add_toast(toast);
     }
 
     fn handle_open_stories(&self, name: String, posts: Vec<tina_db::MessageRow>) {

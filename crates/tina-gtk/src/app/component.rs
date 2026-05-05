@@ -153,6 +153,7 @@ impl SimpleComponent for AppModel {
         let media = crate::inventory::MediaInventory::new();
         let chats = crate::inventory::ChatInventory::new();
         let messages = crate::inventory::MessageInventory::new();
+        let mentions = crate::inventory::MentionInventory::new();
         // Wire the inventory's miss callback to bubble up as
         // `RequestRefreshChat`. Closes the loop: any render that asks
         // for a missing chat name → `Cmd::RefreshChat` → nanachi
@@ -166,6 +167,16 @@ impl SimpleComponent for AppModel {
                 ));
             });
         }
+        // Avatar decode landed (glycin async) → broadcast a refresh
+        // message so the sidebar + open chat tabs rebind rows whose
+        // `avatar_path` matches. Without this the avatar would only
+        // appear after the next unrelated rebind.
+        {
+            let app_sender = sender.input_sender().clone();
+            avatars.set_texture_ready_handler(move |path| {
+                let _ = app_sender.send(AppMsg::AvatarTextureReady(path));
+            });
+        }
 
         let main = MainPage::builder()
             .launch(crate::components::main_page::MainInit {
@@ -174,11 +185,20 @@ impl SimpleComponent for AppModel {
                 media: media.clone(),
                 chats,
                 messages,
+                mentions,
             })
             .forward(sender.input_sender(), |o| match o {
                 MainOutput::OpenChatNew(id) => AppMsg::OpenChatNew(id),
                 MainOutput::CloseChat(id) => AppMsg::CloseChat(id),
-                MainOutput::SendText { chat_id, text } => AppMsg::SendText { chat_id, text },
+                MainOutput::SendText {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                } => AppMsg::SendText {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                },
                 MainOutput::SendMedia {
                     chat_id,
                     kind,
@@ -204,7 +224,13 @@ impl SimpleComponent for AppModel {
                 MainOutput::RequestLoadOlder { chat_id, before_ts } => {
                     AppMsg::RequestLoadOlder { chat_id, before_ts }
                 }
+                MainOutput::RequestLoadNewer { chat_id, after_ts } => {
+                    AppMsg::RequestLoadNewer { chat_id, after_ts }
+                }
                 MainOutput::RequestFetchAvatar(jid) => AppMsg::RequestFetchAvatar(jid),
+                MainOutput::RequestFetchAvatarFromURL(jid, url) => {
+                    AppMsg::RequestFetchAvatarFromURL(jid, url)
+                }
                 MainOutput::SetChatPinned { chat_id, pinned } => {
                     AppMsg::SetChatPinned { chat_id, pinned }
                 }

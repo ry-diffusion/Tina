@@ -134,6 +134,26 @@ impl MainPage {
                         reached_top,
                     });
             }
+            MainInput::NewerMessagesLoaded {
+                chat_id,
+                messages,
+                reached_bottom,
+            } => {
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::NewerMessagesLoaded {
+                        chat_id,
+                        messages,
+                        reached_bottom,
+                    });
+            }
+            MainInput::MentionCandidatesLoaded { chat_id, candidates } => {
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::MentionCandidatesLoaded { chat_id, candidates });
+            }
             MainInput::AvatarReady { jid, path } => {
                 // Both children may care: sidebar (chat list rows + own
                 // user avatar in the profile popover), chat_area (header
@@ -146,6 +166,18 @@ impl MainPage {
                     .chat_area
                     .sender()
                     .send(ChatAreaInput::AvatarReady { jid, path });
+            }
+            MainInput::AvatarTextureReady(path) => {
+                // glycin async decode landed → fan out to both
+                // children so they rebind matching rows.
+                let _ = self
+                    .sidebar
+                    .sender()
+                    .send(SidebarInput::AvatarTextureReady(path.clone()));
+                let _ = self
+                    .chat_area
+                    .sender()
+                    .send(ChatAreaInput::AvatarTextureReady(path));
             }
             MainInput::FromSidebar(out) => self.handle_sidebar_output(out, &sender),
             MainInput::FromChatArea(out) => self.handle_chat_area_output(out, &sender),
@@ -201,6 +233,9 @@ impl MainPage {
             SidebarOutput::RequestFetchAvatar(jid) => {
                 let _ = sender.output(MainOutput::RequestFetchAvatar(jid));
             }
+            SidebarOutput::RequestFetchAvatarFromURL(jid, url) => {
+                let _ = sender.output(MainOutput::RequestFetchAvatarFromURL(jid, url));
+            }
             SidebarOutput::SetChatPinned { chat_id, pinned } => {
                 let _ = sender.output(MainOutput::SetChatPinned { chat_id, pinned });
             }
@@ -215,8 +250,16 @@ impl MainPage {
             ChatAreaOutput::OpenChatNew(id) => {
                 let _ = sender.output(MainOutput::OpenChatNew(id));
             }
-            ChatAreaOutput::SendText { chat_id, text } => {
-                let _ = sender.output(MainOutput::SendText { chat_id, text });
+            ChatAreaOutput::SendText {
+                chat_id,
+                text,
+                mentioned_jids,
+            } => {
+                let _ = sender.output(MainOutput::SendText {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                });
             }
             ChatAreaOutput::SendMedia {
                 chat_id,
@@ -243,6 +286,9 @@ impl MainPage {
             }
             ChatAreaOutput::RequestLoadOlder { chat_id, before_ts } => {
                 let _ = sender.output(MainOutput::RequestLoadOlder { chat_id, before_ts });
+            }
+            ChatAreaOutput::RequestLoadNewer { chat_id, after_ts } => {
+                let _ = sender.output(MainOutput::RequestLoadNewer { chat_id, after_ts });
             }
             ChatAreaOutput::RequestFetchAvatar(jid) => {
                 let _ = sender.output(MainOutput::RequestFetchAvatar(jid));

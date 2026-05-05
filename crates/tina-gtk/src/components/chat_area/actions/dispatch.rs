@@ -29,6 +29,11 @@ impl ChatArea {
                 messages,
                 reached_top,
             } => self.handle_older_messages_loaded(chat_id, messages, reached_top),
+            ChatAreaInput::NewerMessagesLoaded {
+                chat_id,
+                messages,
+                reached_bottom,
+            } => self.handle_newer_messages_loaded(chat_id, messages, reached_bottom),
             ChatAreaInput::MediaReady {
                 message_ids,
                 path,
@@ -36,6 +41,9 @@ impl ChatArea {
             } => self.handle_media_ready(message_ids, path, mimetype),
             ChatAreaInput::MediaFailed { message_id } => self.handle_media_failed(message_id),
             ChatAreaInput::AvatarReady { jid, path } => self.handle_avatar_ready(jid, path),
+            ChatAreaInput::AvatarTextureReady(path) => {
+                self.handle_avatar_texture_ready(&path)
+            }
             ChatAreaInput::PaneTabSelected { pane, chat_id } => {
                 self.handle_pane_tab_selected(pane, chat_id)
             }
@@ -47,9 +55,11 @@ impl ChatArea {
             }
             ChatAreaInput::AutoMergePane1 => self.handle_auto_merge_pane1(),
             ChatAreaInput::MoveTabToOtherPane(from) => self.handle_move_tab_to_other_pane(from),
-            ChatAreaInput::SendFromTab { chat_id, text } => {
-                self.forward_send(chat_id, text, &sender)
-            }
+            ChatAreaInput::SendFromTab {
+                chat_id,
+                text,
+                mentioned_jids,
+            } => self.forward_send(chat_id, text, mentioned_jids, &sender),
             ChatAreaInput::SendMediaFromTab {
                 chat_id,
                 kind,
@@ -61,6 +71,9 @@ impl ChatArea {
             ChatAreaInput::RequestMediaDownload(id) => self.forward_media_download(id, &sender),
             ChatAreaInput::RequestLoadOlder { chat_id, before_ts } => {
                 self.forward_load_older(chat_id, before_ts, &sender)
+            }
+            ChatAreaInput::RequestLoadNewer { chat_id, after_ts } => {
+                self.forward_load_newer(chat_id, after_ts, &sender)
             }
             ChatAreaInput::RequestFetchAvatar(jid) => self.forward_fetch_avatar(jid, &sender),
             ChatAreaInput::RequestStickers { chat_id } => {
@@ -84,6 +97,9 @@ impl ChatArea {
                 self.handle_receipt_update(message_ids, status);
             }
             ChatAreaInput::SetUserJid(jid) => self.handle_set_user_jid(jid),
+            ChatAreaInput::MentionCandidatesLoaded { chat_id, candidates } => {
+                self.handle_mention_candidates_loaded(chat_id, candidates);
+            }
         }
     }
 }

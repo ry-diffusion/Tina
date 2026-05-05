@@ -6,7 +6,7 @@
 use tina_db::MessageRow;
 
 use crate::components::message_bubble::MessageItem;
-use crate::inventory::{AvatarInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, MediaInventory, MentionInventory};
 
 use super::messages::COLLAPSE_WINDOW_SECS;
 
@@ -38,6 +38,7 @@ pub fn build_item(
     is_collapsed: bool,
     avatars: &AvatarInventory,
     media: &MediaInventory,
+    mentions: &MentionInventory,
     user_jid: Option<&str>,
     chat: &ChatContext,
     request_fetch_avatar: &mut impl FnMut(String),
@@ -47,6 +48,11 @@ pub fn build_item(
     item.chat_kind = chat.kind.clone();
     item.chat_display_name = chat.display_name.clone();
     item.chat_avatar_path = chat.avatar_path.clone();
+    // Resolve mention chips against the live inventory. Stale or
+    // unresolved mentions stay as bare `@<digits>` until the next
+    // rebuild — the next batch fetch / scrollback page will pick
+    // up names freshly populated by `set_candidates`.
+    item.resolve_mentions(|digits| mentions.name_for_digits(digits));
 
     // For from_me messages the DB stores sender_contact_id=NULL (we
     // never auto-register a contact for the signed-in user), so the
@@ -102,4 +108,21 @@ pub fn collapse_against(
     *last_sender = Some(key);
     *last_ts = Some(row.timestamp);
     collapsed
+}
+
+/// True when `row`'s local-time day differs from `last_day`'s. Updates
+/// `last_day` in place. The first row in any iteration always returns
+/// `true` (no previous day to compare against), which is what the chat
+/// thread wants — show the date pill at the top of the loaded window.
+/// Mirrors Fractal's day-divider insertion logic from
+/// `room_history::timeline::update_items_headers`, scoped down to the
+/// inline-pill rendering Tina uses.
+pub fn day_flips(row: &MessageRow, last_day: &mut Option<String>) -> bool {
+    let key = crate::time::local_day_key(row.timestamp);
+    if key.is_empty() {
+        return false;
+    }
+    let flipped = last_day.as_deref() != Some(key.as_str());
+    *last_day = Some(key);
+    flipped
 }

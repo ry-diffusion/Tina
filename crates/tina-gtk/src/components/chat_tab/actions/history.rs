@@ -11,7 +11,7 @@ use tina_db::MessageRow;
 
 use crate::components::message_bubble::MessageItem;
 
-use super::super::build::{build_item, collapse_against};
+use super::super::build::{build_item, collapse_against, day_flips};
 use super::super::messages::{ChatTabOutput, COLLAPSE_WINDOW_SECS};
 use super::super::model::ChatTab;
 use super::echo::match_pending_echoes;
@@ -23,8 +23,15 @@ impl ChatTab {
         sender: &ComponentSender<Self>,
     ) {
         self.oldest_ts = rows.iter().map(|r| r.timestamp).min();
+        self.newest_ts = rows.iter().map(|r| r.timestamp).max();
         self.reached_top = rows.len() < 50;
         self.loading_older = false;
+        // Reset always pulls the newest 50 from the worker — the
+        // factory tail is the actual DB tail at this moment. Live
+        // pushes via `MessagesAppended` keep it that way; trim paths
+        // (TrimBottom, Append cumulative cap) clear this.
+        self.loading_newer = false;
+        self.reached_bottom = true;
         // Force sticky-bottom on every chat open. The connect_changed
         // handler we registered will catch each upper-grew tick as the
         // factory lays out the rows and re-scroll to the bottom; no
@@ -33,25 +40,32 @@ impl ChatTab {
         let mut avatar_fetches: Vec<String> = Vec::new();
         {
             let chat_ctx = self.chat_context();
-            let mut guard = self.messages.guard();
-            guard.clear();
+            self.list.clear();
             self.seen_message_ids.clear();
             let mut cursor_sender: Option<String> = None;
             let mut cursor_ts: Option<i64> = None;
+            let mut cursor_day: Option<String> = None;
             for row in &rows {
                 let collapsed =
                     collapse_against(row, &mut cursor_sender, &mut cursor_ts);
+                let day_flip = day_flips(row, &mut cursor_day);
                 self.seen_message_ids.insert(row.message_id.clone());
-                let item = build_item(
+                let mut item = build_item(
                     row,
                     collapsed,
                     &self.avatars,
                     &self.media,
+                    &self.mentions,
                     self.user_jid.as_ref().map(|x| x.raw()),
                     &chat_ctx,
                     &mut |jid| avatar_fetches.push(jid),
                 );
-                guard.push_back(item);
+                if day_flip {
+                    item.is_first_of_day = true;
+                    item.day_label = crate::time::format_day_divider(row.timestamp);
+                    item.is_collapsed = false;
+                }
+                self.list.append(self.wrap_row(item));
             }
         }
         for jid in avatar_fetches {
@@ -181,7 +195,11 @@ impl ChatTab {
         // The tail is what the autoscroll lands on anyway, so keep
         // only that and discard the older portion of this batch — the
         // user can page back via near-top to retrieve them from disk.
-        const APPEND_BATCH_CAP: usize = 200;
+        // Tightened from 200 → 100 to keep big sync flushes from
+        // realising 200 widget subtrees in a single update tick. The
+        // newly-wired `LoadNewer` path will refill the dropped tail
+        // on demand if the user scrolls there.
+        const APPEND_BATCH_CAP: usize = 100;
         if self.bottomed.get() && new_rows.len() > APPEND_BATCH_CAP {
             let drop = new_rows.len() - APPEND_BATCH_CAP;
             let dropped: Vec<_> = new_rows.drain(..drop).collect();
@@ -219,22 +237,28 @@ impl ChatTab {
         // messages if we trusted a stale `last_sender`. The factory IS
         // the source of truth.
         let (mut cursor_sender, mut cursor_ts) = self.factory_tail_cursor();
+        let mut cursor_day = self.factory_tail_day();
         let chat_ctx = self.chat_context();
-        {
-            let mut guard = self.messages.guard();
-            for row in &new_rows {
-                let collapsed = collapse_against(row, &mut cursor_sender, &mut cursor_ts);
-                let item = build_item(
-                    row,
-                    collapsed,
-                    &self.avatars,
-                    &self.media,
-                    self.user_jid.as_ref().map(|x| x.raw()),
-                    &chat_ctx,
-                    &mut |jid| avatar_fetches.push(jid),
-                );
-                guard.push_back(item);
+        for row in &new_rows {
+            let collapsed = collapse_against(row, &mut cursor_sender, &mut cursor_ts);
+            let day_flip = day_flips(row, &mut cursor_day);
+            let mut item = build_item(
+                row,
+                collapsed,
+                &self.avatars,
+                &self.media,
+                &self.mentions,
+                self.user_jid.as_ref().map(|x| x.raw()),
+                &chat_ctx,
+                &mut |jid| avatar_fetches.push(jid),
+            );
+            if day_flip {
+                item.is_first_of_day = true;
+                item.day_label = crate::time::format_day_divider(row.timestamp);
+                item.is_collapsed = false;
             }
+            let wrapped = self.wrap_row(item);
+            self.list.append(wrapped);
         }
         for jid in avatar_fetches {
             let _ = sender.output(ChatTabOutput::RequestFetchAvatar(
@@ -242,41 +266,48 @@ impl ChatTab {
             ));
         }
 
+        // Live pushes always extend the tail — update newest_ts so
+        // a subsequent NearBottomFetch (e.g. after a TrimBottom)
+        // pages forward from the right anchor.
+        if let Some(t) = new_rows.iter().map(|r| r.timestamp).max() {
+            self.newest_ts = Some(match self.newest_ts {
+                Some(prev) => prev.max(t),
+                None => t,
+            });
+        }
+
         // Cumulative cap: even with each batch capped, repeated
         // appends during a long sync can stack up. Trim from the
         // front when bottomed and over the soft cap so the factory
-        // never holds more than ~200 widgets during sync.
-        const FACTORY_SOFT_CAP: usize = 250;
-        const FACTORY_TARGET: usize = 200;
-        if self.bottomed.get() && self.messages.len() > FACTORY_SOFT_CAP {
-            let to_drop = self.messages.len() - FACTORY_TARGET;
+        // stays bounded. Tightened from 250/200 → 200/150 — the
+        // memory budget for a media-heavy chat is dominated by these
+        // live widgets, not by the lighter-weight items still in
+        // memory but offscreen.
+        const FACTORY_SOFT_CAP: usize = 200;
+        const FACTORY_TARGET: usize = 150;
+        if self.bottomed.get() && (self.list.len() as usize) > FACTORY_SOFT_CAP {
+            let to_drop = self.list.len() as usize - FACTORY_TARGET;
             let mut dropped_ids: Vec<String> = Vec::with_capacity(to_drop);
-            {
-                let guard = self.messages.guard();
-                for fac in guard.iter().take(to_drop) {
-                    dropped_ids.push(fac.item.id.clone());
+            for i in 0..to_drop {
+                if let Some(h) = self.list.get(i as u32) {
+                    dropped_ids.push(h.borrow().item.id.clone());
                 }
             }
-            {
-                let mut guard = self.messages.guard();
-                for _ in 0..to_drop {
-                    guard.pop_front();
-                }
+            // Remove from the front. Each `remove(0)` shifts the
+            // remaining indices down — pop the same offset N times.
+            for _ in 0..to_drop {
+                self.list.remove(0);
             }
             for id in &dropped_ids {
                 self.seen_message_ids.remove(id);
             }
-            self.oldest_ts = self
-                .messages
-                .guard()
-                .iter()
-                .next()
-                .map(|f| f.item.timestamp_unix);
+            self.ui_state.forget(&dropped_ids);
+            self.oldest_ts = self.list_front().map(|r| r.item.timestamp_unix);
             self.reached_top = false;
             tracing::info!(
                 chat = %self.chat_id,
                 dropped = to_drop,
-                remaining = self.messages.len(),
+                remaining = self.list.len(),
                 "ChatTab::Append: pruned cumulative overflow"
             );
         }
@@ -309,11 +340,9 @@ impl ChatTab {
         }
 
         let local_idx_state: HashMap<String, (usize, bool)> = self
-            .messages
-            .guard()
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.item.id.clone(), (i, f.item.is_collapsed)))
+            .list_snapshot()
+            .into_iter()
+            .map(|(i, r)| (r.item.id.clone(), (i as usize, r.item.is_collapsed)))
             .collect();
         let mut m = match_pending_echoes(rows, &mut self.pending_echoes, &local_idx_state);
 
@@ -356,13 +385,14 @@ impl ChatTab {
                 was_collapsed,
                 &self.avatars,
                 &self.media,
+                &self.mentions,
                 self.user_jid.as_ref().map(|x| x.raw()),
                 &chat_ctx,
                 &mut |jid| avatar_fetches.push(jid),
             );
-            let mut guard = self.messages.guard();
-            guard.remove(idx);
-            guard.insert(idx, item);
+            let wrapped = self.wrap_row(item);
+            self.list.remove(idx as u32);
+            self.list.insert(idx as u32, wrapped);
         }
         for id in &m.confirmed_local_ids {
             self.seen_message_ids.remove(id);
@@ -400,15 +430,37 @@ impl ChatTab {
         // Force sticky on send — even if the user had scrolled up to
         // read history, sending a message is a strong intent signal
         // that they want to see what they just typed.
+        // Render the markup BEFORE pushing to the list — the new
+        // virtualised bind reads `cached_markup` directly, so an
+        // empty cache made the optimistic echo appear blank until
+        // the server echo replaced it.
+        let mut local_item = local_item;
+        local_item.recompute_markup();
         self.bottomed.set(true);
-        {
-            let mut guard = self.messages.guard();
-            guard.push_back(local_item);
-        }
+        let wrapped = self.wrap_row(local_item);
+        self.list.append(wrapped);
 
+        // Mentions live in `pending_mentions` rather than being
+        // re-derived from `trimmed` because the popover may have
+        // inserted a chip whose digits the user later tweaked. We
+        // filter against the final text so a mention picked and
+        // then deleted doesn't leak into `contextInfo.MentionedJID`.
+        let mut mentioned_jids: Vec<String> = self
+            .pending_mentions
+            .iter()
+            .filter(|jid| {
+                let digits = jid.split('@').next().unwrap_or("");
+                !digits.is_empty() && trimmed.contains(&format!("@{digits}"))
+            })
+            .cloned()
+            .collect();
+        mentioned_jids.sort();
+        mentioned_jids.dedup();
+        self.pending_mentions.clear();
         let _ = sender.output(ChatTabOutput::Send {
             chat_id: self.chat_id.clone(),
             text: trimmed.to_string(),
+            mentioned_jids,
         });
         self.composer_buffer.set_text("");
     }
@@ -459,13 +511,19 @@ impl ChatTab {
             },
             chat_avatar_path: self.avatars.get(&self.chat_id),
             is_collapsed: local_collapsed,
+            is_first_of_day: false,
+            day_label: String::new(),
+            cached_markup: String::new(),
             content: trimmed.to_string(),
             message_type: "text".to_string(),
             timestamp: crate::time::format_message_time(now_unix),
+            short_time: crate::time::format_short_time(now_unix),
             timestamp_unix: now_unix,
             media_summary: String::new(),
             media_mimetype: None,
             media_size_bytes: None,
+            media_width: None,
+            media_height: None,
             media_duration_secs: None,
             media_path: None,
             media_status: "none".to_string(),

@@ -35,6 +35,11 @@ phonenumber = "0.3.9"
 directories.workspace = true
 sha2 = "0.10"
 hex = "0.4"
+# Animated WebP / AVIF / GIF / animated PNG support, same loader
+# Fractal uses. Sandboxes the decoder in a separate process; the
+# `glycin-loaders` daemon is bundled with the Flatpak runtime, so
+# we don't need to ship loaders ourselves.
+glycin = { version = "3.1", default-features = false, features = ["gdk4", "tokio"] }
 
 [build-dependencies]
 relm4-icons-build = "0.11"

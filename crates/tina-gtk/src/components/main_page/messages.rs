@@ -1,12 +1,14 @@
 // Init / Input / Output for the in-app page.
 
 use tina_core::WaIdentity;
-use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
+use tina_db::{ChatRow, MentionCandidate, MessageRow, StatusAuthorRow};
 
 use crate::app::ConnectionStatus;
 use crate::components::chat_area::ChatAreaOutput;
 use crate::components::sidebar::SidebarOutput;
-use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory, MessageInventory};
+use crate::inventory::{
+    AvatarInventory, ChatInventory, MediaInventory, MentionInventory, MessageInventory,
+};
 use crate::service::ServiceHandle;
 
 pub struct MainInit {
@@ -15,6 +17,7 @@ pub struct MainInit {
     pub media: MediaInventory,
     pub chats: ChatInventory,
     pub messages: MessageInventory,
+    pub mentions: MentionInventory,
 }
 
 #[derive(Debug)]
@@ -72,9 +75,21 @@ pub enum MainInput {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    NewerMessagesLoaded {
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_bottom: bool,
+    },
     AvatarReady {
         jid: WaIdentity,
         path: String,
+    },
+    AvatarTextureReady(String),
+    /// Worker resolved the `@`-mention picker for `chat_id`. Mirrored
+    /// into the inventory + forwarded down to the matching tab.
+    MentionCandidatesLoaded {
+        chat_id: String,
+        candidates: Vec<MentionCandidate>,
     },
     /// Forwarded from children.
     FromSidebar(SidebarOutput),
@@ -85,7 +100,11 @@ pub enum MainInput {
 pub enum MainOutput {
     OpenChatNew(String),
     CloseChat(String),
-    SendText { chat_id: String, text: String },
+    SendText {
+        chat_id: String,
+        text: String,
+        mentioned_jids: Vec<String>,
+    },
     SendMedia {
         chat_id: String,
         kind: tina_core::MediaKind,
@@ -103,7 +122,9 @@ pub enum MainOutput {
     },
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestLoadNewer { chat_id: String, after_ts: i64 },
     RequestFetchAvatar(WaIdentity),
+    RequestFetchAvatarFromURL(WaIdentity, String),
     SetChatPinned { chat_id: String, pinned: bool },
     /// Sticker-picker popover wants the recent-stickers catalog.
     RequestStickers { chat_id: String },

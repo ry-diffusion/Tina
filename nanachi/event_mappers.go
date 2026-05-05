@@ -66,10 +66,15 @@ func contactFromEvent(evt *events.Contact) ContactData {
 func newsletterToGroup(n *types.NewsletterMetadata) GroupData {
 	name := n.ThreadMeta.Name.Text
 	desc := n.ThreadMeta.Description.Text
+	var avatarURL *string
+	if n.ThreadMeta.Picture != nil && n.ThreadMeta.Picture.URL != "" {
+		avatarURL = &n.ThreadMeta.Picture.URL
+	}
 	return GroupData{
 		JID:          n.ID.String(),
 		Subject:      strPtr(name),
 		Description:  strPtr(desc),
+		AvatarURL:    avatarURL,
 		Participants: nil,
 	}
 }

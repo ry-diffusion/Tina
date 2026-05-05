@@ -79,6 +79,10 @@ pub enum SidebarInput {
         jid: WaIdentity,
         path: String,
     },
+    /// Local glycin decode of an avatar file landed. Refresh any
+    /// row whose `avatar_path` matches `path` so the texture takes
+    /// effect on screen.
+    AvatarTextureReady(String),
     /// ListView's `activate` signal fired with the row position (in the
     /// post-filter, post-sort visible model).
     RowActivated(u32),
@@ -117,6 +121,7 @@ pub enum SidebarOutput {
         name: String,
     },
     RequestFetchAvatar(WaIdentity),
+    RequestFetchAvatarFromURL(WaIdentity, String),
     SetChatPinned {
         chat_id: String,
         pinned: bool,

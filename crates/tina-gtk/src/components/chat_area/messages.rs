@@ -1,15 +1,18 @@
 // Init / Input / Output for the `ChatArea` component.
 
 use tina_core::WaIdentity;
-use tina_db::MessageRow;
+use tina_db::{MentionCandidate, MessageRow};
 
-use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory, MessageInventory};
+use crate::inventory::{
+    AvatarInventory, ChatInventory, MediaInventory, MentionInventory, MessageInventory,
+};
 
 pub struct ChatAreaInit {
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
     pub chats: ChatInventory,
     pub messages: MessageInventory,
+    pub mentions: MentionInventory,
 }
 
 #[derive(Debug)]
@@ -34,6 +37,11 @@ pub enum ChatAreaInput {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    NewerMessagesLoaded {
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_bottom: bool,
+    },
     MediaReady {
         message_ids: Vec<String>,
         path: String,
@@ -42,6 +50,7 @@ pub enum ChatAreaInput {
     MediaFailed {
         message_id: String,
     },
+    AvatarTextureReady(String),
     AvatarReady {
         jid: WaIdentity,
         path: String,
@@ -72,6 +81,9 @@ pub enum ChatAreaInput {
     SendFromTab {
         chat_id: String,
         text: String,
+        /// JIDs `@`-picked from the popover; routed straight through
+        /// to `Cmd::SendText` and then `IpcCommand::SendMessage`.
+        mentioned_jids: Vec<String>,
     },
     /// Forwarded from a ChatTab — user confirmed a media-attach
     /// preview.
@@ -89,6 +101,11 @@ pub enum ChatAreaInput {
     RequestLoadOlder {
         chat_id: String,
         before_ts: i64,
+    },
+    /// Forwarded from a ChatTab — symmetric of RequestLoadOlder.
+    RequestLoadNewer {
+        chat_id: String,
+        after_ts: i64,
     },
     /// Forwarded from a ChatTab — sender-avatar fetch.
     RequestFetchAvatar(WaIdentity),
@@ -114,6 +131,13 @@ pub enum ChatAreaInput {
     /// Identity arrived (or changed). Stored for new tabs + forwarded
     /// to existing ones so from_me rows pick up the user avatar.
     SetUserJid(Option<WaIdentity>),
+    /// Worker resolved the mention-picker candidates for `chat_id`.
+    /// Stashed in the inventory + forwarded to the matching tab so
+    /// the composer's `@`-popover repaints.
+    MentionCandidatesLoaded {
+        chat_id: String,
+        candidates: Vec<MentionCandidate>,
+    },
 }
 
 #[derive(Debug)]
@@ -125,6 +149,7 @@ pub enum ChatAreaOutput {
     SendText {
         chat_id: String,
         text: String,
+        mentioned_jids: Vec<String>,
     },
     SendMedia {
         chat_id: String,
@@ -141,6 +166,10 @@ pub enum ChatAreaOutput {
     RequestLoadOlder {
         chat_id: String,
         before_ts: i64,
+    },
+    RequestLoadNewer {
+        chat_id: String,
+        after_ts: i64,
     },
     RequestFetchAvatar(WaIdentity),
     /// Forwarded sticker-picker request.

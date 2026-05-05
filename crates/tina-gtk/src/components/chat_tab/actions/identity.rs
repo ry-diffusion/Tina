@@ -2,8 +2,6 @@
 
 use relm4::ComponentSender;
 
-use crate::components::message_bubble::MessageBubbleInput;
-
 use super::super::messages::ChatTabOutput;
 use super::super::model::ChatTab;
 
@@ -33,21 +31,17 @@ impl ChatTab {
         // Back-fill sender_jid on every existing from_me row + paint
         // the cached avatar if the inventory already has it.
         let cached = self.avatars.get(raw);
-        let indices: Vec<usize> = self
-            .messages
-            .guard()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| if f.item.from_me { Some(i) } else { None })
-            .collect();
-        for idx in indices {
-            self.messages
-                .send(idx, MessageBubbleInput::SetSenderJid(raw.to_string()));
-            if let Some(p) = cached.clone() {
-                self.messages
-                    .send(idx, MessageBubbleInput::SetAvatar(p));
-            }
-        }
+        let raw_owned = raw.to_string();
+        let cached_for_apply = cached.clone();
+        self.update_items_where(
+            |it| it.from_me,
+            |it| {
+                it.sender_jid = Some(raw_owned.clone());
+                if let Some(p) = cached_for_apply.clone() {
+                    it.sender_avatar_path = Some(p);
+                }
+            },
+        );
         if cached.is_none() && self.avatars.needs_fetch(raw) {
             let _ = sender.output(ChatTabOutput::RequestFetchAvatar(jid));
         }
@@ -58,23 +52,30 @@ impl ChatTab {
         jid: tina_core::WaIdentity,
         path: String,
     ) {
-        let raw = jid.raw();
-        let indices: Vec<usize> = self
-            .messages
-            .guard()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| {
-                if f.item.sender_jid.as_deref() == Some(raw) {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for idx in indices {
-            self.messages
-                .send(idx, MessageBubbleInput::SetAvatar(path.clone()));
-        }
+        let raw = jid.raw().to_string();
+        let raw_for_match = raw.clone();
+        self.update_items_where(
+            move |it| it.sender_jid.as_deref() == Some(raw_for_match.as_str()),
+            |it| {
+                it.sender_avatar_path = Some(path.clone());
+            },
+        );
+    }
+
+    /// glycin async decode of a sender's avatar file landed in the
+    /// shared cache. Force a rebind of any row showing the same
+    /// avatar_path so the bind pass picks up the now-cached texture.
+    /// We use `update_items_where` with an identity mutation
+    /// because the data didn't change — only the underlying texture
+    /// cache did, and re-binding is what reads from it.
+    pub(in crate::components::chat_tab) fn handle_avatar_texture_ready(
+        &mut self,
+        path: &str,
+    ) {
+        let path_owned = path.to_string();
+        self.update_items_where(
+            move |it| it.sender_avatar_path.as_deref() == Some(path_owned.as_str()),
+            |_| {},
+        );
     }
 }

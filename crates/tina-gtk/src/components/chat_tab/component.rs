@@ -11,13 +11,14 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use relm4::factory::FactoryVecDeque;
 use relm4::prelude::*;
+use relm4::typed_view::list::TypedListView;
 
-use super::build::{build_item, collapse_against};
+use super::build::{build_item, collapse_against, day_flips};
 use super::messages::{ChatTabInit, ChatTabInput, ChatTabOutput};
 use super::model::ChatTab;
 use super::scroll::{wire_changed, wire_value_changed};
+use crate::components::message_row::{MessageRowItem, RowUiInventory};
 
 #[relm4::component(pub)]
 impl SimpleComponent for ChatTab {
@@ -40,9 +41,16 @@ impl SimpleComponent for ChatTab {
                 set_hscrollbar_policy: gtk::PolicyType::Never,
 
                 #[local_ref]
-                messages_list -> gtk::ListBox {
-                    set_selection_mode: gtk::SelectionMode::None,
+                list_view -> gtk::ListView {
+                    set_single_click_activate: false,
                     add_css_class: "background",
+                    add_css_class: "tina-message-list",
+                    // Natural sizing so `gtk::Picture` (image / video
+                    // thumb) can grow to its preferred height instead
+                    // of being clipped by ListView's default minimum
+                    // sizing — same pattern Fractal uses on its
+                    // room_history ListView.
+                    set_vscroll_policy: gtk::ScrollablePolicy::Natural,
                 },
             },
 
@@ -264,23 +272,25 @@ impl SimpleComponent for ChatTab {
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let mut messages = FactoryVecDeque::builder()
-            .launch(gtk::ListBox::default())
-            .forward(sender.input_sender(), |o| match o {
-                crate::components::message_bubble::MessageBubbleOut::DownloadRequested(id) => {
-                    ChatTabInput::RequestMediaDownload(id)
-                }
-                crate::components::message_bubble::MessageBubbleOut::JumpToMessage(id) => {
-                    ChatTabInput::JumpToMessage(id)
-                }
-            });
+        // Virtualised typed list view — only realises widget trees
+        // for rows currently in the viewport. Replaces the previous
+        // FactoryVecDeque<MessageBubble> + gtk::ListBox setup.
+        let mut list: TypedListView<MessageRowItem, gtk::NoSelection> =
+            TypedListView::new();
+        // NoSelection has no select/unselect plumbing — the timeline
+        // doesn't have a "selected message" affordance, which is why
+        // we picked this selection model in the first place.
+        let _ = &mut list;
+        let ui_state = RowUiInventory::new();
+        let row_sender = sender.input_sender().clone();
 
         // Seed with initial history. The collapse cursor is purely
         // local to this loop — for any subsequent Append/Send we
-        // re-read the trailing item directly from the factory, keeping
-        // the factory as the single source of truth.
+        // re-read the trailing item directly from the list view,
+        // keeping the list as the source of truth.
         let mut last_sender: Option<String> = None;
         let mut last_ts: Option<i64> = None;
+        let mut last_day: Option<String> = None;
         let mut avatar_fetches: Vec<String> = Vec::new();
         let init_chat_ctx = super::build::ChatContext {
             kind: init.kind.clone(),
@@ -291,21 +301,35 @@ impl SimpleComponent for ChatTab {
             },
             avatar_path: init.avatars.get(&init.chat_id),
         };
-        {
-            let mut guard = messages.guard();
-            for row in &init.initial {
-                let collapsed = collapse_against(row, &mut last_sender, &mut last_ts);
-                let item = build_item(
-                    row,
-                    collapsed,
-                    &init.avatars,
-                    &init.media,
-                    init.user_jid.as_ref().map(|x| x.raw()),
-                    &init_chat_ctx,
-                    &mut |jid| avatar_fetches.push(jid),
-                );
-                guard.push_back(item);
+        for row in &init.initial {
+            let collapsed = collapse_against(row, &mut last_sender, &mut last_ts);
+            let day_flip = day_flips(row, &mut last_day);
+            let mut item = build_item(
+                row,
+                collapsed,
+                &init.avatars,
+                &init.media,
+                &init.mentions,
+                init.user_jid.as_ref().map(|x| x.raw()),
+                &init_chat_ctx,
+                &mut |jid| avatar_fetches.push(jid),
+            );
+            if day_flip {
+                item.is_first_of_day = true;
+                item.day_label = crate::time::format_day_divider(row.timestamp);
+                // First of a new day breaks any avatar/header
+                // collapse — the day pill needs a fresh cozy
+                // header above it, otherwise the divider sits
+                // visually attached to the prior day's bubble.
+                item.is_collapsed = false;
             }
+            list.append(MessageRowItem::new(
+                item,
+                init.avatars.clone(),
+                init.media.clone(),
+                ui_state.clone(),
+                row_sender.clone(),
+            ));
         }
         // Drain after the guard drops — Sender::send is cheap but we
         // don't want it to interleave with factory pushes.
@@ -321,9 +345,11 @@ impl SimpleComponent for ChatTab {
         }
 
         let oldest_ts = init.initial.iter().map(|r| r.timestamp).min();
+        let newest_ts = init.initial.iter().map(|r| r.timestamp).max();
 
         let bottomed = Rc::new(Cell::new(true));
         let updated_value = Rc::new(Cell::new(false));
+        let scroll_lock = Rc::new(Cell::new(false));
 
         // The local seed cursors are dropped here — `factory_tail_cursor()`
         // is what every subsequent collapse decision queries.
@@ -333,28 +359,41 @@ impl SimpleComponent for ChatTab {
             chat_id: init.chat_id,
             name: init.name,
             kind: init.kind,
-            messages,
+            list,
             composer_buffer: gtk::EntryBuffer::default(),
             avatars: init.avatars,
             media: init.media,
+            mentions: init.mentions,
+            ui_state,
+            pending_mentions: HashSet::new(),
+            mention_popover: None,
             user_jid: init.user_jid,
             scroll: None,
+            sender_handle: row_sender,
             seen_message_ids: seen,
             last_send: None,
             oldest_ts,
             loading_older: false,
             reached_top: false,
+            newest_ts,
+            loading_newer: false,
+            // Initial page from `OpenChat` always pulls the newest 50;
+            // therefore the list's tail starts as the DB's actual
+            // tail. Live `MessagesAppended` keeps it that way until a
+            // soft-cap trim drops the newest rows from the list.
+            reached_bottom: true,
             pending_echoes: HashMap::new(),
             pending_media_echoes: HashMap::new(),
             bottomed: bottomed.clone(),
             updated_value: updated_value.clone(),
+            scroll_lock: scroll_lock.clone(),
             recorder: None,
             recording_active: Rc::new(Cell::new(false)),
             sticker_popover: None,
             sticker_grid: None,
         };
 
-        let messages_list = model.messages.widget();
+        let list_view = &model.list.view;
         let widgets = view_output!();
         model.scroll = Some(widgets.scroll.clone());
 
@@ -393,12 +432,27 @@ impl SimpleComponent for ChatTab {
             sender.input_sender().clone(),
         );
 
+        // `@`-mention autocomplete popover. Constructed lazily so
+        // the entry widget exists before `set_parent`. Seeded with
+        // the candidate list the inventory already has for this
+        // chat (populated by the OpenChat handler before the tab
+        // launched), so a freshly-opened group already filters
+        // without round-tripping the worker.
+        let mention_popover = crate::components::mention_popover::MentionPopover::new(
+            &widgets.composer_entry,
+            model.avatars.clone(),
+            sender.input_sender().clone(),
+        );
+        mention_popover.set_candidates(model.mentions.candidates_for(&model.chat_id));
+        model.mention_popover = Some(mention_popover);
+
         wire_changed(&widgets.scroll, bottomed.clone(), updated_value.clone());
         wire_value_changed(
             &widgets.scroll,
             sender.input_sender().clone(),
             bottomed,
             updated_value,
+            scroll_lock,
         );
 
         ComponentParts { model, widgets }

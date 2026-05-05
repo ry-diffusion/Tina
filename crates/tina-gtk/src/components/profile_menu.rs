@@ -141,7 +141,15 @@ impl SimpleComponent for ProfileMenu {
                     // application window in `app/component.rs`.
                     gtk::Button {
                         add_css_class: "flat",
-                        connect_clicked => ProfileMenuInput::Preferences,
+                        connect_clicked[sender] => move |btn| {
+                            if let Some(pop) = btn
+                                .ancestor(gtk::Popover::static_type())
+                                .and_downcast::<gtk::Popover>()
+                            {
+                                pop.popdown();
+                            }
+                            let _ = sender.input_sender().send(ProfileMenuInput::Preferences);
+                        },
                         gtk::Box {
                             set_orientation: gtk::Orientation::Horizontal,
                             set_spacing: 24,

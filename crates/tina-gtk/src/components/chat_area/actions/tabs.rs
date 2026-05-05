@@ -105,12 +105,19 @@ impl ChatArea {
                 initial: messages,
                 avatars: self.avatars.clone(),
                 media: self.media.clone(),
+                mentions: self.mentions.clone(),
                 user_jid: self.user_jid.clone(),
             })
             .forward(sender.input_sender(), |o| match o {
-                ChatTabOutput::Send { chat_id, text } => {
-                    ChatAreaInput::SendFromTab { chat_id, text }
-                }
+                ChatTabOutput::Send {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                } => ChatAreaInput::SendFromTab {
+                    chat_id,
+                    text,
+                    mentioned_jids,
+                },
                 ChatTabOutput::SendMedia {
                     chat_id,
                     kind,
@@ -134,6 +141,9 @@ impl ChatArea {
                 }
                 ChatTabOutput::RequestLoadOlder { chat_id, before_ts } => {
                     ChatAreaInput::RequestLoadOlder { chat_id, before_ts }
+                }
+                ChatTabOutput::RequestLoadNewer { chat_id, after_ts } => {
+                    ChatAreaInput::RequestLoadNewer { chat_id, after_ts }
                 }
                 ChatTabOutput::RequestFetchAvatar(jid) => {
                     ChatAreaInput::RequestFetchAvatar(jid)

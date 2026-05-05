@@ -31,6 +31,7 @@ mod contacts;
 mod db;
 mod groups;
 mod media;
+mod mentions;
 mod merge;
 mod messages;
 mod messages_batch;

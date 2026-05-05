@@ -135,10 +135,10 @@ impl ChatTab {
                 .push_back(local_id);
         }
         self.bottomed.set(true);
-        {
-            let mut guard = self.messages.guard();
-            guard.push_back(local_item);
-        }
+        let mut local_item = local_item;
+        local_item.recompute_markup();
+        let wrapped = self.wrap_row(local_item);
+        self.list.append(wrapped);
         let _ = sender.output(ChatTabOutput::SendMedia {
             chat_id: self.chat_id.clone(),
             kind,
@@ -276,16 +276,21 @@ impl ChatTab {
             },
             chat_avatar_path: self.avatars.get(&self.chat_id),
             is_collapsed: local_collapsed,
+            is_first_of_day: false,
+            day_label: String::new(),
             content: summary.clone(),
             message_type: match kind {
                 tina_core::MediaKind::Voice => "audio".to_string(),
                 k => k.as_str().to_string(),
             },
             timestamp: crate::time::format_message_time(now_unix),
+            short_time: crate::time::format_short_time(now_unix),
             timestamp_unix: now_unix,
             media_summary: summary,
             media_mimetype: mt_string,
             media_size_bytes: size_bytes,
+            media_width: None,
+            media_height: None,
             media_duration_secs: None,
             media_path: Some(path.to_string()),
             media_status: "done".to_string(),
@@ -298,6 +303,7 @@ impl ChatTab {
             quoted_sender_name: None,
             quoted_preview: None,
             mentions: Vec::new(),
+            cached_markup: String::new(),
         }
     }
 }

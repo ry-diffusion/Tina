@@ -34,7 +34,11 @@ impl RelmListItem for ChatRowItem {
     fn setup(_list_item: &gtk::ListItem) -> (Self::Root, Self::Widgets) {
         let root = build_root();
 
-        let avatar = adw::Avatar::builder().size(40).show_initials(true).build();
+        // 44px avatars — sized between Fractal's tight 32px sidebar
+        // and Telegram-style 54px, matches WhatsApp Desktop's "tall
+        // enough to read at a glance, narrow enough to fit a 320-px
+        // sidebar" middle ground.
+        let avatar = adw::Avatar::builder().size(44).show_initials(true).build();
         root.append(&avatar);
 
         let body = build_body();

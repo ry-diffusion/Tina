@@ -141,6 +141,18 @@ pub fn handle_event(event: WorkerEvent) {
                 account_id, jid, error
             );
         }
+        WorkerEvent::MentionCandidatesLoaded {
+            account_id,
+            chat_id,
+            candidates,
+        } => {
+            println!(
+                "\n@ {} mention candidates for {} in {}",
+                candidates.len(),
+                chat_id,
+                account_id
+            );
+        }
     }
 }
 

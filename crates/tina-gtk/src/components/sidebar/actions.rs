@@ -51,10 +51,19 @@ impl Sidebar {
                 && let Some(p) = self.avatars.get(&r.chat_id) {
                     r.avatar_path = Some(p);
                 }
-            if r.avatar_path.is_none() && self.avatars.needs_fetch(&r.chat_id) {
-                let _ = sender.output(SidebarOutput::RequestFetchAvatar(
-                    tina_core::WaIdentity::parse(&r.chat_id),
-                ));
+            if r.avatar_path.is_none() {
+                if let Some(url) = &r.avatar_url {
+                    if self.avatars.needs_url_fetch(&r.chat_id) {
+                        let _ = sender.output(SidebarOutput::RequestFetchAvatarFromURL(
+                            tina_core::WaIdentity::parse(&r.chat_id),
+                            url.clone(),
+                        ));
+                    }
+                } else if self.avatars.needs_fetch(&r.chat_id) {
+                    let _ = sender.output(SidebarOutput::RequestFetchAvatar(
+                        tina_core::WaIdentity::parse(&r.chat_id),
+                    ));
+                }
             }
         }
         // Snapshot whether the user is parked at the top BEFORE
@@ -199,6 +208,32 @@ impl Sidebar {
         }
     }
 
+    /// glycin's async decode of a local avatar file landed in the
+    /// `AvatarInventory` cache. Walk the list, find rows whose
+    /// `avatar_path` matches, force a rebind so the cached texture
+    /// gets pulled from the inventory.
+    pub(super) fn handle_avatar_texture_ready(&mut self, path: &str) {
+        let total = self.list.len();
+        let mut matches: Vec<u32> = Vec::new();
+        for pos in 0..total {
+            if let Some(item) = self.list.get(pos)
+                && item.borrow().avatar_path.as_deref() == Some(path)
+            {
+                matches.push(pos);
+            }
+        }
+        for pos in matches {
+            if let Some(item) = self.list.get(pos) {
+                // Re-insert at the same index; the typed view fires
+                // an items_changed for that row, which retriggers
+                // bind. The bind path then hits the now-populated
+                // texture cache.
+                let row = item.borrow().clone();
+                self.replace_at(pos, row);
+            }
+        }
+    }
+
     pub(super) fn handle_row_activated(&mut self, pos: u32, sender: &ComponentSender<Self>) {
         if let Some(item) = self.list.get_visible(pos) {
             let id = item.borrow().chat_id.clone();
@@ -272,6 +307,9 @@ impl Sidebar {
                 indeterminate,
             } => self.handle_repair_progress(stage, current, total, indeterminate),
             SidebarInput::AvatarReady { jid, path } => self.handle_avatar_ready(jid, path),
+            SidebarInput::AvatarTextureReady(path) => {
+                self.handle_avatar_texture_ready(&path)
+            }
             SidebarInput::RowActivated(pos) => self.handle_row_activated(pos, &sender),
             SidebarInput::OpenChatRequested(id) => {
                 let _ = sender.output(SidebarOutput::OpenInCurrent(id));

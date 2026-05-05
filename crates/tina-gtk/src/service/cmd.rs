@@ -34,8 +34,15 @@ pub enum Cmd {
     /// UI closed a tab — drop the chat from the worker's open-tab set so
     /// future sync rows for it stop firing `MessagesAppended`.
     CloseChat(String),
-    /// Send a plain-text message to a chat.
-    SendText { chat_id: String, text: String },
+    /// Send a plain-text message to a chat. `mentioned_jids` is
+    /// piped through to `IpcCommand::SendMessage` so whatsmeow
+    /// attaches a `contextInfo.MentionedJID` array — empty for the
+    /// common path of unmentioned text.
+    SendText {
+        chat_id: String,
+        text: String,
+        mentioned_jids: Vec<String>,
+    },
     /// Send a media message (image / video / audio / voice / sticker
     /// / document). `path` is read by the Go side; the worker just
     /// forwards through IPC. `caption` is honoured for image / video
@@ -55,6 +62,9 @@ pub enum Cmd {
     /// Fetch a profile picture for the given JID (chat_id, contact_id,
     /// etc — anything that resolves through the worker's aliases).
     FetchAvatar { jid: WaIdentity },
+    /// Fetch an avatar directly from a known URL (for @newsletter JIDs
+    /// where GetProfilePictureInfo returns 504).
+    FetchAvatarFromURL { jid: WaIdentity, url: String },
     /// Re-pull a chat's display name + avatar (newsletters / groups).
     /// Triggered by `ChatInventory` when it sees a render miss.
     RefreshChat { chat_jid: WaIdentity },
@@ -64,6 +74,16 @@ pub enum Cmd {
     LoadOlder {
         chat_id: String,
         before_ts: i64,
+        limit: i64,
+    },
+    /// Lazy-load newer messages (page forward). Symmetric counterpart
+    /// to `LoadOlder`: the UI passes the timestamp of its currently-
+    /// newest row, and the worker returns the next batch strictly
+    /// newer than that. Triggered when the user scrolls past the
+    /// factory's last row after the soft-cap trimmed the tail.
+    LoadNewer {
+        chat_id: String,
+        after_ts: i64,
         limit: i64,
     },
     /// Persist a chat's pinned flag. After the DB write the UI will see
@@ -99,6 +119,10 @@ pub enum Cmd {
     /// Wipe the on-disk avatar cache + null out `chats.avatar_path`,
     /// `contacts.avatar_path`. Avatars re-fetch on next render.
     ClearAvatarCache,
+    /// Resolve the `@`-mention picker candidates for a chat. Fired
+    /// when a tab opens (groups only — DMs return an empty list).
+    /// Result lands as `AppMsg::MentionCandidatesLoaded`.
+    LoadMentionCandidates { chat_id: String },
     /// Shut down the worker thread.
     Shutdown,
 }

@@ -10,5 +10,6 @@ mod echo;
 mod history;
 mod identity;
 mod media;
+mod mentions;
 mod scroll;
 mod stickers;

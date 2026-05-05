@@ -1,9 +1,9 @@
 // Public Input / Output / Init / constants for the `ChatTab` component.
 
 use tina_core::WaIdentity;
-use tina_db::MessageRow;
+use tina_db::{MentionCandidate, MessageRow};
 
-use crate::inventory::{AvatarInventory, MediaInventory};
+use crate::inventory::{AvatarInventory, MediaInventory, MentionInventory};
 
 /// Window in seconds within which two messages from the same sender are
 /// rendered as a collapsed run (no avatar/header on the second). Mirrors
@@ -81,12 +81,35 @@ pub enum ChatTabInput {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    /// Newer page came back from the worker. Symmetric counterpart of
+    /// `PrependOlder`: rows are appended at the back. `reached_bottom`
+    /// is the parallel of `reached_top` — if the worker returned
+    /// fewer rows than requested, the factory now holds every row up
+    /// to the actual tail and live MessagesAppended is the only
+    /// remaining source of new rows.
+    AppendNewer {
+        messages: Vec<MessageRow>,
+        reached_bottom: bool,
+    },
+    /// VAdjustment crossed the load-newer threshold. Internal trigger
+    /// fired when scrolling near the bottom and `reached_bottom == false`.
+    NearBottomFetch,
+    /// Per-row click handler asked us to refresh the list view's
+    /// projection of `message_id` — used after the user toggles
+    /// `media_expanded` so the bind pass can swap in the
+    /// `gtk::Video` / `gtk::MediaControls` widget for the lazy
+    /// instantiation. No-op if the row isn't in the loaded window.
+    RebindRow(String),
     /// User switched into this tab. Force sticky-bottom + a deferred
     /// scroll so the freshly-realised page lands on the latest message.
     StickToBottom,
     /// Worker resolved a profile picture — apply it to every message
     /// row whose sender JID matches.
     AvatarReady { jid: WaIdentity, path: String },
+    /// Local glycin decode of an avatar file landed. Refresh
+    /// rows whose `sender_avatar_path` matches so the texture
+    /// painted by the bind path becomes visible.
+    AvatarTextureReady(String),
     /// Identity arrived (or changed) — back-fill `sender_jid` on
     /// existing from_me rows and apply the cached avatar to them.
     SetUserJid(Option<WaIdentity>),
@@ -107,11 +130,26 @@ pub enum ChatTabInput {
         message_ids: Vec<String>,
         status: String,
     },
+    /// Worker resolved the `@`-mention picker. Replaces whatever the
+    /// tab had cached so the popover filter operates on fresh data.
+    MentionCandidatesLoaded(Vec<MentionCandidate>),
+    /// Composer popover inserted a mention. The popover already
+    /// rewrote the entry's text; this just records the JID so the
+    /// next `Send` lifts it into `contextInfo.MentionedJID`.
+    MentionInserted { jid: String },
 }
 
 #[derive(Debug)]
 pub enum ChatTabOutput {
-    Send { chat_id: String, text: String },
+    Send {
+        chat_id: String,
+        text: String,
+        /// JIDs the user `@`-picked from the popover. Wire through
+        /// to `IpcCommand::SendMessage` so whatsmeow attaches a
+        /// `contextInfo.MentionedJID` array — without it the peer
+        /// renders the bubble as plain text without the mention chip.
+        mentioned_jids: Vec<String>,
+    },
     /// User confirmed a media-attach preview. Carries the source
     /// path; the worker reads the file when the IPC fires.
     SendMedia {
@@ -125,6 +163,7 @@ pub enum ChatTabOutput {
     Close { chat_id: String },
     RequestMediaDownload(String),
     RequestLoadOlder { chat_id: String, before_ts: i64 },
+    RequestLoadNewer { chat_id: String, after_ts: i64 },
     /// Ask the worker to fetch a sender's profile picture. Deduped at
     /// the tab level so we only round-trip per JID once.
     RequestFetchAvatar(WaIdentity),
@@ -150,6 +189,7 @@ pub struct ChatTabInit {
     pub initial: Vec<MessageRow>,
     pub avatars: AvatarInventory,
     pub media: MediaInventory,
+    pub mentions: MentionInventory,
     /// Signed-in user's JID, used to override `sender_jid` for `from_me`
     /// rows (which the DB stores with `sender_contact_id = NULL`, so the
     /// JOIN can't resolve a JID for them).

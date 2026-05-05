@@ -84,6 +84,7 @@ impl SimpleComponent for ChatArea {
             media: init.media,
             chats: init.chats,
             messages: init.messages,
+            mentions: init.mentions,
             user_jid: None,
         };
         model.refresh_pane_visibility();

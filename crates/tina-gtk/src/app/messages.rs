@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use tina_core::WaIdentity;
-use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
+use tina_db::{ChatRow, MentionCandidate, MessageRow, StatusAuthorRow};
 
 pub struct AppInit {
     pub nanachi_dir: PathBuf,
@@ -97,15 +97,29 @@ pub enum AppMsg {
         messages: Vec<MessageRow>,
         reached_top: bool,
     },
+    NewerMessagesLoaded {
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_bottom: bool,
+    },
     RequestLoadOlder {
         chat_id: String,
         before_ts: i64,
+    },
+    RequestLoadNewer {
+        chat_id: String,
+        after_ts: i64,
     },
     AvatarReady {
         jid: WaIdentity,
         path: String,
     },
+    /// glycin finished decoding an avatar file locally. Broadcast
+    /// to UI components so they rebind rows whose `avatar_path`
+    /// matches `path`.
+    AvatarTextureReady(String),
     RequestFetchAvatar(WaIdentity),
+    RequestFetchAvatarFromURL(WaIdentity, String),
     /// Worker propagated a receipt update — flip the matching
     /// outgoing rows' `delivery_status` icon. Multiple ids per
     /// status because whatsmeow batches them.
@@ -120,6 +134,10 @@ pub enum AppMsg {
     SendText {
         chat_id: String,
         text: String,
+        /// JIDs `@`-picked from the composer popover. Routes through
+        /// `Cmd::SendText` → `IpcCommand::SendMessage` so the peer's
+        /// client sees the proper `contextInfo.MentionedJID`.
+        mentioned_jids: Vec<String>,
     },
     /// User confirmed a media-attach preview. Routes to
     /// `Cmd::SendMedia` and the worker forwards it to nanachi.
@@ -180,4 +198,11 @@ pub enum AppMsg {
     },
     /// Settings dialog asked us to drop the on-disk avatar cache.
     ClearAvatarCache,
+    /// Worker resolved the mention-picker candidates for `chat_id`.
+    /// Forwarded down to the matching `ChatTab` so its `@`-popover
+    /// has the live list to filter against.
+    MentionCandidatesLoaded {
+        chat_id: String,
+        candidates: Vec<MentionCandidate>,
+    },
 }

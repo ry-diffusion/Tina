@@ -8,9 +8,8 @@
 // use the clicked widget itself.
 
 use adw::prelude::*;
+use glib::clone;
 use gtk::gio;
-
-use super::image::load_image_paintable;
 
 pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message_type: String) {
     let dialog = adw::Dialog::builder()
@@ -41,25 +40,66 @@ pub fn open_media_lightbox(anchor: &impl IsA<gtk::Widget>, path: String, message
             video.upcast()
         }
         _ => {
-            // `Picture::for_filename` bottoms out in
-            // `gdk::Texture::from_filename`, whose internal decoders
-            // skip GdkPixbuf for "known" formats and have flaky WebP
-            // detection — so WebP stickers showed as a blank canvas
-            // in the lightbox even though the bubble rendered fine.
-            // Going through `load_image_paintable` forces the
-            // GdkPixbuf path (which honours `webp-pixbuf-loader`),
-            // matching how the inline bubble renders the same file.
+            // Decode through glycin so the lightbox honours the same
+            // sandboxed pipeline as inline bubbles. Without this the
+            // attack surface for things like CVE-2023-4863 (libwebp
+            // RCE) opens up the moment the user taps a malicious
+            // image. Loading is async — we install the paintable as
+            // soon as the first frame lands; until then a spinner
+            // sits on the body.
+            let stack = gtk::Stack::builder()
+                .transition_type(gtk::StackTransitionType::Crossfade)
+                .build();
+            let spinner = gtk::Spinner::new();
+            spinner.set_spinning(true);
+            spinner.set_halign(gtk::Align::Center);
+            spinner.set_valign(gtk::Align::Center);
+            spinner.set_width_request(48);
+            spinner.set_height_request(48);
+            stack.add_named(&spinner, Some("loading"));
+
             let pic = gtk::Picture::new();
-            pic.set_paintable(
-                load_image_paintable(Some(path.as_str()))
-                    .as_ref()
-                    .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
-            );
             pic.set_can_shrink(true);
             pic.set_content_fit(gtk::ContentFit::Contain);
             pic.set_hexpand(true);
             pic.set_vexpand(true);
-            pic.upcast()
+            stack.add_named(&pic, Some("media"));
+            stack.set_visible_child_name("loading");
+
+            let load_path = path.clone();
+            glib::MainContext::default().spawn_local(clone!(
+                #[weak]
+                stack,
+                #[weak]
+                pic,
+                async move {
+                    let file = gio::File::for_path(&load_path);
+                    let loader = glycin::Loader::new(file);
+                    let result: Option<(glycin::Image, glycin::Frame)> = async {
+                        let image = loader.load().await.ok()?;
+                        let first = image.next_frame().await.ok()?;
+                        Some((image, first))
+                    }
+                    .await;
+                    let Some((image, first)) = result else {
+                        tracing::debug!(
+                            path = %load_path,
+                            "lightbox glycin load failed",
+                        );
+                        return;
+                    };
+                    let paintable =
+                        crate::components::message_media::AnimatedImagePaintable::new(
+                            image, first, true,
+                        );
+                    pic.set_paintable(Some(&paintable));
+                    stack.set_visible_child_name("media");
+                }
+            ));
+
+            stack.set_hexpand(true);
+            stack.set_vexpand(true);
+            stack.upcast()
         }
     };
 

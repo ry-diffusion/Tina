@@ -18,6 +18,8 @@ mod qr;
 mod service;
 mod time;
 mod wa_id;
+#[allow(dead_code)]
+mod widget_utils;
 
 /// Constants for the icons we bundle via relm4-icons-build (see `build.rs`).
 /// Both shipped (icon-development-kit feature) and custom icons are loaded
@@ -34,7 +36,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::banner::print_banner;
 
-const APP_ID: &str = "dev.tina.Tina";
+const APP_ID: &str = "br.com.zesmoi.Tina";
 
 fn find_nanachi_dir() -> color_eyre::Result<PathBuf> {
     let exe_path = std::env::current_exe()?;

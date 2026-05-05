@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use relm4::Sender;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use tina_worker::TinaWorker;
 
@@ -90,7 +90,11 @@ pub(super) async fn handle(
                 worker.remove_open_chat(&account_id, &chat_id).await;
             }
         }
-        Cmd::SendText { chat_id, text } => send_text(worker, app, state, chat_id, text).await,
+        Cmd::SendText {
+            chat_id,
+            text,
+            mentioned_jids,
+        } => send_text(worker, app, state, chat_id, text, mentioned_jids).await,
         Cmd::SendMedia {
             chat_id,
             kind,
@@ -110,11 +114,17 @@ pub(super) async fn handle(
             before_ts,
             limit,
         } => load_older(worker, app, state, chat_id, before_ts, limit).await,
+        Cmd::LoadNewer {
+            chat_id,
+            after_ts,
+            limit,
+        } => load_newer(worker, app, state, chat_id, after_ts, limit).await,
         Cmd::FetchAvatar { jid } => fetch_avatar(worker, state, jid).await,
-        Cmd::RefreshChat { chat_jid } => refresh_chat(worker, state, chat_jid).await,
-        Cmd::DownloadMedia { message_id } => {
-            download_media(worker, app, state, message_id).await
+        Cmd::FetchAvatarFromURL { jid, url } => {
+            fetch_avatar_from_url(worker, state, jid, url).await
         }
+        Cmd::RefreshChat { chat_jid } => refresh_chat(worker, state, chat_jid).await,
+        Cmd::DownloadMedia { message_id } => download_media(worker, app, state, message_id).await,
         Cmd::SetChatPinned { chat_id, pinned } => {
             set_chat_pinned(worker, app, state, chat_id, pinned).await
         }
@@ -131,9 +141,42 @@ pub(super) async fn handle(
             message_ids,
         } => mark_chat_read(worker, state, chat_id, sender_jid, message_ids).await,
         Cmd::ClearAvatarCache => clear_avatar_cache(worker, app).await,
+        Cmd::LoadMentionCandidates { chat_id } => {
+            load_mention_candidates(worker, app, state, chat_id).await
+        }
         Cmd::Shutdown => return false,
     }
     true
+}
+
+async fn load_mention_candidates(
+    worker: &Arc<TinaWorker>,
+    app: &Sender<AppMsg>,
+    state: &SharedState,
+    chat_id: String,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    // Pull the active account's JID so we can drop it from the
+    // candidate list — there's no point letting the user mention
+    // themselves.
+    let exclude = match worker.get_account(&account_id).await {
+        Ok(a) => a.jid,
+        Err(_) => None,
+    };
+    match worker
+        .list_mention_candidates(&account_id, &chat_id, exclude.as_deref())
+        .await
+    {
+        Ok(candidates) => {
+            let _ = app.send(AppMsg::MentionCandidatesLoaded {
+                chat_id,
+                candidates,
+            });
+        }
+        Err(e) => error!("list_mention_candidates: {e}"),
+    }
 }
 
 async fn load_chats(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &SharedState) {
@@ -224,11 +267,7 @@ async fn open_status_author(
                         || r.sender_contact_id.as_deref() == Some(raw.as_str())
                 })
                 .collect();
-            info!(
-                total,
-                matched = posts.len(),
-                "[stories] filter result",
-            );
+            info!(total, matched = posts.len(), "[stories] filter result",);
             // `get_message_rows` returns newest-first for the chat
             // tab; the carousel reads oldest-first so the user's
             // "back" gesture moves into older posts.
@@ -265,20 +304,39 @@ async fn open_chat(
         .await
         .unwrap_or_default();
     // Drop the unread badge — the user's looking at the messages now.
-    // Refresh the sidebar so the pill disappears immediately. We
-    // don't gate on `clear_chat_unread`'s return value because
-    // ChatOpened already implies a UI repaint and the chat list
-    // refresh is dirt-cheap.
+    // We re-fetch ONLY the affected row from the DB and emit a
+    // single-row upsert. Re-emitting the entire chat list (the old
+    // path) made every `open_chat` an O(n²) scan on the sidebar's
+    // upsert handler; a single row keeps it O(1).
     let _ = worker.clear_chat_unread(&account_id, &id).await;
-    if let Ok(rows) = worker.list_chat_rows(&account_id).await {
-        let _ = app.send(AppMsg::ChatsUpserted(rows));
+    if let Ok(Some(updated)) = worker.get_chat_row(&account_id, &id).await {
+        let _ = app.send(AppMsg::ChatsUpserted(vec![updated]));
     }
+    let chat_id_for_mentions = id.clone();
     let _ = app.send(AppMsg::ChatOpened {
         chat_id: Some(id),
         name,
         kind,
         messages,
     });
+    // Resolve mention-picker candidates in the background so the
+    // composer's `@` popup has data ready by the time the user
+    // starts typing. Empty for DMs/newsletters — the inventory
+    // handles that as a no-op.
+    let exclude = worker
+        .get_account(&account_id)
+        .await
+        .ok()
+        .and_then(|a| a.jid);
+    if let Ok(candidates) = worker
+        .list_mention_candidates(&account_id, &chat_id_for_mentions, exclude.as_deref())
+        .await
+    {
+        let _ = app.send(AppMsg::MentionCandidatesLoaded {
+            chat_id: chat_id_for_mentions,
+            candidates,
+        });
+    }
 }
 
 async fn send_text(
@@ -287,11 +345,15 @@ async fn send_text(
     state: &SharedState,
     chat_id: String,
     text: String,
+    mentioned_jids: Vec<String>,
 ) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
-    if let Err(e) = worker.send_message(&account_id, &chat_id, &text).await {
+    if let Err(e) = worker
+        .send_message(&account_id, &chat_id, &text, &mentioned_jids)
+        .await
+    {
         error!("send_message: {e}");
         return;
     }
@@ -304,15 +366,9 @@ async fn send_text(
     let worker = worker.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        match worker
-            .get_message_rows(&account_id, &chat_id, 20, 0)
-            .await
-        {
+        match worker.get_message_rows(&account_id, &chat_id, 20, 0).await {
             Ok(messages) if !messages.is_empty() => {
-                let _ = app.send(AppMsg::MessagesAppended {
-                    chat_id,
-                    messages,
-                });
+                let _ = app.send(AppMsg::MessagesAppended { chat_id, messages });
             }
             Ok(_) => {}
             Err(e) => error!("post-send fetch: {e}"),
@@ -360,10 +416,7 @@ async fn send_media(
         tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         match worker.get_message_rows(&account_id, &chat_id, 20, 0).await {
             Ok(messages) if !messages.is_empty() => {
-                let _ = app.send(AppMsg::MessagesAppended {
-                    chat_id,
-                    messages,
-                });
+                let _ = app.send(AppMsg::MessagesAppended { chat_id, messages });
             }
             Ok(_) => {}
             Err(e) => error!("post-send-media fetch: {e}"),
@@ -408,16 +461,59 @@ async fn load_older(
     }
 }
 
-async fn fetch_avatar(
+async fn load_newer(
     worker: &Arc<TinaWorker>,
+    app: &Sender<AppMsg>,
     state: &SharedState,
-    jid: tina_core::WaIdentity,
+    chat_id: String,
+    after_ts: i64,
+    limit: i64,
 ) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    match worker
+        .get_message_rows_after(&account_id, &chat_id, after_ts, limit)
+        .await
+    {
+        Ok(messages) => {
+            // The tab caps at `limit` rows per page; the worker
+            // returns at most `limit` so a short batch means we hit
+            // the actual tail. Mirror `load_older`'s `reached_top`
+            // semantic with `reached_bottom` here.
+            let _ = app.send(AppMsg::NewerMessagesLoaded {
+                chat_id,
+                messages,
+                reached_bottom: false,
+            });
+        }
+        Err(e) => error!("load_newer: {e}"),
+    }
+}
+
+async fn fetch_avatar(worker: &Arc<TinaWorker>, state: &SharedState, jid: tina_core::WaIdentity) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker.fetch_avatar(&account_id, jid.raw()).await {
         error!("fetch_avatar: {e}");
+    }
+}
+
+async fn fetch_avatar_from_url(
+    worker: &Arc<TinaWorker>,
+    state: &SharedState,
+    jid: tina_core::WaIdentity,
+    url: String,
+) {
+    let Some(account_id) = active_account(state).await else {
+        return;
+    };
+    if let Err(e) = worker
+        .fetch_avatar_from_url(&account_id, jid.raw(), &url)
+        .await
+    {
+        error!("fetch_avatar_from_url: {e}");
     }
 }
 
@@ -503,11 +599,10 @@ async fn set_download_method(
     worker: &Arc<TinaWorker>,
     m: crate::components::settings::DownloadMethod,
 ) {
-    if let Err(e) = worker.put_setting(
-        crate::components::settings::DownloadMethod::KEY,
-        m.as_str(),
-    )
-    .await {
+    if let Err(e) = worker
+        .put_setting(crate::components::settings::DownloadMethod::KEY, m.as_str())
+        .await
+    {
         error!("put_setting download_method: {e}");
     }
 }
@@ -540,8 +635,10 @@ fn data_dir() -> std::path::PathBuf {
     if let Some(dirs) = directories::ProjectDirs::from("com.br", "zesmoi", "tina") {
         dirs.data_dir().to_path_buf()
     } else if let Some(home) = std::env::var_os("HOME") {
+        warn!("directories::ProjectDirs failed, falling back to $HOME/.local/share/tina");
         std::path::PathBuf::from(home).join(".local/share/tina")
     } else {
+        error!("Failed to determine data directory, falling back to current directory");
         std::path::PathBuf::from(".")
     }
 }

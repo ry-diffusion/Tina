@@ -160,7 +160,7 @@ func (c *Client) markRead(p MarkReadPayload) error {
 	return c.wa.MarkRead(ctx, ids, time.Now(), chatJID, senderJID)
 }
 
-func (c *Client) send(to, content string) (bool, error) {
+func (c *Client) send(to, content string, mentioned []string) (bool, error) {
 	jid, err := types.ParseJID(to)
 	if err != nil {
 		return false, fmt.Errorf("invalid jid: %w", err)
@@ -170,9 +170,26 @@ func (c *Client) send(to, content string) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	resp, err := c.wa.SendMessage(ctx, jid, &waE2E.Message{
-		Conversation: &content,
-	})
+	// Whatsmeow's `Conversation` field doesn't carry context info,
+	// so any message with mentions has to ride on
+	// `ExtendedTextMessage`. We keep `Conversation` as the
+	// lightweight default to avoid changing the wire shape for
+	// every plain-text message.
+	var msg *waE2E.Message
+	if len(mentioned) > 0 {
+		ctxInfo := &waE2E.ContextInfo{
+			MentionedJID: append([]string(nil), mentioned...),
+		}
+		msg = &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:        &content,
+				ContextInfo: ctxInfo,
+			},
+		}
+	} else {
+		msg = &waE2E.Message{Conversation: &content}
+	}
+	resp, err := c.wa.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return false, err
 	}
@@ -197,6 +214,9 @@ func (c *Client) send(to, content string) (bool, error) {
 		MessageType: "text",
 		Timestamp:   ts,
 		IsFromMe:    true,
+	}
+	if len(mentioned) > 0 {
+		md.MentionedJIDs = append([]string(nil), mentioned...)
 	}
 	emitMessages(c.accountID, []MessageData{md})
 	return true, nil

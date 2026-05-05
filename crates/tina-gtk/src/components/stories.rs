@@ -13,7 +13,6 @@ use adw::prelude::*;
 use gtk::glib;
 use tina_db::MessageRow;
 
-use crate::components::message_bubble::load_image_paintable;
 
 /// Per-post auto-advance dwell time. WhatsApp uses ~5 s for images
 /// and the duration of the clip for video; we treat both the same
@@ -139,18 +138,35 @@ fn build_post_widget(post: &MessageRow) -> gtk::Widget {
 
     match post.message_type.as_str() {
         "image" | "sticker" => {
-            if post.media_path.is_some() {
+            if let Some(path) = post.media_path.clone() {
+                // Decode through glycin (sandboxed). Status posts
+                // come from arbitrary contacts; we don't want a
+                // malformed sticker reaching GdkPixbuf.
                 let pic = gtk::Picture::new();
-                pic.set_paintable(
-                    load_image_paintable(post.media_path.as_deref())
-                        .as_ref()
-                        .map(|t| t.upcast_ref::<gtk::gdk::Paintable>()),
-                );
                 pic.set_can_shrink(true);
                 pic.set_content_fit(gtk::ContentFit::Contain);
                 pic.set_hexpand(true);
                 pic.set_vexpand(true);
                 outer.append(&pic);
+                glib::MainContext::default().spawn_local({
+                    let pic = pic.clone();
+                    async move {
+                        let file = gtk::gio::File::for_path(&path);
+                        let loader = glycin::Loader::new(file);
+                        let result: Option<(glycin::Image, glycin::Frame)> = async {
+                            let image = loader.load().await.ok()?;
+                            let first = image.next_frame().await.ok()?;
+                            Some((image, first))
+                        }
+                        .await;
+                        if let Some((image, first)) = result {
+                            let paintable = crate::components::message_media::AnimatedImagePaintable::new(
+                                image, first, true,
+                            );
+                            pic.set_paintable(Some(&paintable));
+                        }
+                    }
+                });
             } else {
                 outer.append(&loading_widget("Photo downloading…"));
             }

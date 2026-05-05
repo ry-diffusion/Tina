@@ -29,9 +29,10 @@ impl ServiceWorker {
         let (tx, rx) = mpsc::unbounded_channel();
         let app_sender_thread = app_sender.clone();
         let thread = std::thread::Builder::new()
-            .name("tina-service".into())
+            .name("Tina Worker".into())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
+                    .name("Tina Worker")
                     .enable_all()
                     .build()
                     .expect("tokio runtime");
@@ -45,11 +46,7 @@ impl ServiceWorker {
     }
 }
 
-async fn run(
-    nanachi_dir: PathBuf,
-    mut rx: mpsc::UnboundedReceiver<Cmd>,
-    app: Sender<AppMsg>,
-) {
+async fn run(nanachi_dir: PathBuf, mut rx: mpsc::UnboundedReceiver<Cmd>, app: Sender<AppMsg>) {
     let mut worker = match TinaWorker::new(nanachi_dir).await {
         Ok(w) => w,
         Err(e) => {

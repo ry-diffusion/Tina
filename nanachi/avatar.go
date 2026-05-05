@@ -127,3 +127,68 @@ func fetchAvatar(mgr *Manager, accountID, jidStr string) error {
 	emitAvatarUpdated(accountID, jidStr, target)
 	return nil
 }
+
+// fetchAvatarFromURL downloads an avatar from an explicit URL, skipping the
+// GetProfilePictureInfo API call. Used for newsletter channels whose JIDs
+// return 504 from that endpoint but whose picture URL is in their metadata.
+func fetchAvatarFromURL(accountID, jidStr, avatarURL string) error {
+	root, err := avatarCacheDir()
+	if err != nil {
+		return fmt.Errorf("avatar cache dir: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, avatarURL, nil)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("http %d", resp.StatusCode)
+	}
+	bytes, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	if err != nil {
+		return fmt.Errorf("read body: %w", err)
+	}
+	if len(bytes) == 0 {
+		return fmt.Errorf("empty avatar")
+	}
+
+	hash := sha256.Sum256(bytes)
+	shaHex := hex.EncodeToString(hash[:])
+	target := filepath.Join(root, shaHex[:2], shaHex+".jpg")
+
+	if st, err := os.Stat(target); err == nil && st.Size() > 0 {
+		emitAvatarUpdated(accountID, jidStr, target)
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".avatar-*")
+	if err != nil {
+		return fmt.Errorf("tempfile: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(bytes); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+
+	emitAvatarUpdated(accountID, jidStr, target)
+	return nil
+}

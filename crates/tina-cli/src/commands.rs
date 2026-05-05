@@ -133,7 +133,7 @@ pub async fn send_message(worker: &TinaWorker) -> Result<()> {
     let content = read_line("Message: ")?;
 
     worker
-        .send_message(account_id.trim(), to.trim(), content.trim())
+        .send_message(account_id.trim(), to.trim(), content.trim(), &[])
         .await?;
     println!("Message sent!");
     Ok(())

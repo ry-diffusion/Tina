@@ -5,7 +5,7 @@ mod actions;
 mod build;
 mod clipboard_paste;
 mod component;
-mod messages;
+pub mod messages;
 mod model;
 mod preview;
 mod record;

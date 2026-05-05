@@ -61,13 +61,37 @@ impl NanachiManager {
         }
 
         let bin = self.binary_path();
-        let needs_build = match (bin.metadata(), go_mod.metadata()) {
-            (Ok(b), Ok(m)) => match (b.modified(), m.modified()) {
-                (Ok(bt), Ok(mt)) => bt < mt,
-                _ => false,
-            },
-            (Err(_), _) => true,
-            _ => false,
+        let bin_mtime = bin.metadata().and_then(|m| m.modified()).ok();
+        let needs_build = match bin_mtime {
+            None => true,
+            Some(bt) => {
+                // Rebuild if go.mod OR any .go source file is newer than
+                // the binary. Checking only go.mod misses edits to *.go
+                // files (the common case during development).
+                let go_mod_newer = go_mod
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .map(|mt| mt > bt)
+                    .unwrap_or(false);
+                let source_newer = std::fs::read_dir(&self.nanachi_dir)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            .map(|x| x == "go")
+                            .unwrap_or(false)
+                    })
+                    .any(|e| {
+                        e.metadata()
+                            .and_then(|m| m.modified())
+                            .map(|mt| mt > bt)
+                            .unwrap_or(false)
+                    });
+                go_mod_newer || source_newer
+            }
         };
 
         if needs_build {
@@ -211,6 +235,7 @@ fn command_kind(c: &IpcCommand) -> &'static str {
         IpcCommand::Reconcile { .. } => "Reconcile",
         IpcCommand::DownloadMedia { .. } => "DownloadMedia",
         IpcCommand::FetchAvatar { .. } => "FetchAvatar",
+        IpcCommand::FetchAvatarFromURL { .. } => "FetchAvatarFromURL",
         IpcCommand::RefreshChat { .. } => "RefreshChat",
         IpcCommand::Shutdown => "Shutdown",
     }

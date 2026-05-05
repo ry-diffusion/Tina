@@ -56,6 +56,7 @@ impl SimpleComponent for MainPage {
                 media: init.media.clone(),
                 chats: init.chats.clone(),
                 messages: init.messages.clone(),
+                mentions: init.mentions.clone(),
             })
             .forward(sender.input_sender(), MainInput::FromChatArea);
 

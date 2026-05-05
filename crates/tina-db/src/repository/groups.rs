@@ -97,14 +97,15 @@ async fn upsert_chats_for_groups(
 ) -> Result<()> {
     const CHATS_CHUNK: usize = 200;
     for chunk in groups.chunks(CHATS_CHUNK) {
-        let row_tpl = "(?,?,?,?,?)";
+        let row_tpl = "(?,?,?,?,?,?)";
         let mut sql = String::from(
-            "INSERT INTO chats (account_id, chat_id, kind, display_name, updated_at) VALUES ",
+            "INSERT INTO chats (account_id, chat_id, kind, display_name, avatar_url, updated_at) VALUES ",
         );
         sql.push_str(&repeat_csv(row_tpl, chunk.len()));
         sql.push_str(
             r#" ON CONFLICT(account_id, chat_id) DO UPDATE SET
                 display_name = COALESCE(excluded.display_name, chats.display_name),
+                avatar_url = COALESCE(excluded.avatar_url, chats.avatar_url),
                 updated_at = excluded.updated_at"#,
         );
         let mut q = sqlx::query(&sql);
@@ -115,6 +116,7 @@ async fn upsert_chats_for_groups(
                 .bind(g.jid)
                 .bind(kind.as_str())
                 .bind(g.subject)
+                .bind(g.avatar_url)
                 .bind(now);
         }
         q.execute(&mut **tx).await?;

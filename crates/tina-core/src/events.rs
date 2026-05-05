@@ -66,6 +66,12 @@ pub enum IpcCommand {
         account_id: String,
         to: WaIdentity,
         content: String,
+        /// JIDs the user `@`-mentioned in `content`. Goes onto the
+        /// outgoing `proto.contextInfo.mentionedJID` so the peer's
+        /// client renders the mention chip and notifies the
+        /// recipient. Empty for plain text.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mentioned_jids: Vec<WaIdentity>,
     },
     /// Send a media message (image / video / audio / voice note /
     /// sticker / document). The Go side reads `path` from disk,
@@ -112,6 +118,14 @@ pub enum IpcCommand {
     FetchAvatar {
         account_id: String,
         jid: WaIdentity,
+    },
+    /// Baixa o avatar diretamente de uma URL conhecida, sem chamar
+    /// GetProfilePictureInfo. Usado para canais (newsletter) cujo
+    /// endpoint retorna 504. Resultado via AvatarUpdated/Failed.
+    FetchAvatarFromURL {
+        account_id: String,
+        jid: WaIdentity,
+        url: String,
     },
     /// Re-fetch metadata for a single chat (newsletter / group). The
     /// nanachi handler dispatches based on the JID server: routes
@@ -281,6 +295,7 @@ pub struct GroupData {
     pub subject: Option<String>,
     pub owner: Option<WaIdentity>,
     pub description: Option<String>,
+    pub avatar_url: Option<String>,
     pub participants: Vec<ParticipantData>,
 }
 

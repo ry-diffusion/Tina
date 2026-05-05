@@ -7,7 +7,9 @@ use adw::prelude::*;
 use relm4::Controller;
 
 use crate::components::chat_tab::ChatTab;
-use crate::inventory::{AvatarInventory, ChatInventory, MediaInventory, MessageInventory};
+use crate::inventory::{
+    AvatarInventory, ChatInventory, MediaInventory, MentionInventory, MessageInventory,
+};
 
 use super::pane::Pane;
 
@@ -30,6 +32,7 @@ pub struct ChatArea {
     pub(super) chats: ChatInventory,
     #[allow(dead_code)] // first consumer lands with reply rendering
     pub(super) messages: MessageInventory,
+    pub(super) mentions: MentionInventory,
     pub(super) user_jid: Option<tina_core::WaIdentity>,
 }
 

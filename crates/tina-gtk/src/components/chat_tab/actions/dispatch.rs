@@ -48,19 +48,34 @@ impl ChatTab {
             } => self.handle_media_ready(message_ids, path, mimetype),
             ChatTabInput::SetUserJid(j) => self.handle_set_user_jid(j, &sender),
             ChatTabInput::AvatarReady { jid, path } => self.handle_avatar_ready(jid, path),
+            ChatTabInput::AvatarTextureReady(path) => {
+                self.handle_avatar_texture_ready(&path)
+            }
             ChatTabInput::MediaFailed(id) => self.handle_media_failed(id),
             ChatTabInput::StickToBottom => self.handle_stick_to_bottom(),
             ChatTabInput::NearBottom => self.handle_near_bottom(),
             ChatTabInput::TrimBottom => self.handle_trim_bottom(),
             ChatTabInput::NearTop => self.handle_near_top(&sender),
+            ChatTabInput::NearBottomFetch => self.handle_near_bottom_fetch(&sender),
             ChatTabInput::PrependOlder {
                 messages,
                 reached_top,
             } => self.handle_prepend_older(messages, reached_top, &sender),
+            ChatTabInput::AppendNewer {
+                messages,
+                reached_bottom,
+            } => self.handle_append_newer(messages, reached_bottom, &sender),
             ChatTabInput::RequestMediaDownload(id) => {
                 self.handle_request_media_download(id, &sender)
             }
             ChatTabInput::JumpToMessage(id) => self.handle_jump_to_message(id),
+            ChatTabInput::MentionCandidatesLoaded(candidates) => {
+                self.handle_mention_candidates_loaded(candidates);
+            }
+            ChatTabInput::MentionInserted { jid } => {
+                self.pending_mentions.insert(jid);
+            }
+            ChatTabInput::RebindRow(message_id) => self.handle_rebind_row(&message_id),
         }
     }
 }

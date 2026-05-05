@@ -1,4 +1,3 @@
-// Reused as-is from the Slint frontend; pure-stdout, no UI deps.
 use owo_colors::OwoColorize;
 
 pub fn print_banner() {

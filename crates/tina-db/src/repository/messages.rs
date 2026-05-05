@@ -105,6 +105,31 @@ impl TinaDb {
         Ok(rows)
     }
 
+    /// Páginação para frente: mensagens com `timestamp > after_ts` em
+    /// ordem ASC. Simétrico de `get_message_rows_before`, usado quando
+    /// o usuário scrolla para o fim do factory e a tab cortou as
+    /// últimas N rows pelo soft-cap — precisamos buscar de volta as
+    /// mais novas no DB.
+    pub async fn get_message_rows_after(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        after_ts: i64,
+        limit: i64,
+    ) -> Result<Vec<MessageRow>> {
+        // Já vem em ordem cronológica ascendente — não precisa
+        // reverter como o `_before` precisa (ele busca DESC para
+        // pegar os mais recentes primeiro, depois reverte).
+        let rows = sqlx::query_as::<_, MessageRow>(MESSAGE_ROWS_AFTER_SQL)
+            .bind(account_id)
+            .bind(chat_id)
+            .bind(after_ts)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows)
+    }
+
     pub async fn get_message_rows_by_ids(
         &self,
         account_id: &str,
@@ -252,4 +277,42 @@ const MESSAGE_ROWS_BEFORE_SQL: &str = r#"SELECT
      ON qct.account_id = m.account_id AND qct.contact_id = qca.contact_id
    WHERE m.account_id = ? AND m.chat_id = ? AND m.timestamp < ?
    ORDER BY m.timestamp DESC
+   LIMIT ?"#;
+
+const MESSAGE_ROWS_AFTER_SQL: &str = r#"SELECT
+     m.message_id,
+     m.chat_id,
+     m.sender_contact_id,
+     COALESCE(ct.contact_name, ct.push_name, ct.verified_name, ct.business_name, ct.phone_number) AS sender_name,
+     COALESCE(ct.pn_jid, ct.lid_jid) AS sender_jid,
+     ct.avatar_path AS sender_avatar_path,
+     m.content,
+     m.message_type,
+     m.timestamp,
+     m.is_from_me,
+     m.media_mimetype,
+     m.media_filename,
+     m.media_duration_secs,
+     m.media_width,
+     m.media_height,
+     m.media_size_bytes,
+     m.media_sha256,
+     m.media_path,
+     m.media_status,
+     m.media_thumbnail,
+     m.quoted_message_id,
+     m.quoted_sender_id,
+     m.quoted_preview,
+     COALESCE(qct.contact_name, qct.push_name, qct.verified_name, qct.business_name, qct.phone_number) AS quoted_sender_name,
+     m.mentions_json,
+         m.delivery_status
+   FROM messages m
+   LEFT JOIN contacts ct
+     ON ct.account_id = m.account_id AND ct.contact_id = m.sender_contact_id
+   LEFT JOIN contact_aliases qca
+     ON qca.account_id = m.account_id AND qca.alias_jid = m.quoted_sender_id
+   LEFT JOIN contacts qct
+     ON qct.account_id = m.account_id AND qct.contact_id = qca.contact_id
+   WHERE m.account_id = ? AND m.chat_id = ? AND m.timestamp > ?
+   ORDER BY m.timestamp ASC
    LIMIT ?"#;

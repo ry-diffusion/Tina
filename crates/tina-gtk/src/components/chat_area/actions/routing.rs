@@ -40,6 +40,20 @@ impl ChatArea {
         }
     }
 
+    pub(in crate::components::chat_area) fn handle_newer_messages_loaded(
+        &mut self,
+        chat_id: String,
+        messages: Vec<MessageRow>,
+        reached_bottom: bool,
+    ) {
+        if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
+            let _ = controller.sender().send(ChatTabInput::AppendNewer {
+                messages,
+                reached_bottom,
+            });
+        }
+    }
+
     pub(in crate::components::chat_area) fn handle_media_ready(
         &mut self,
         message_ids: Vec<String>,
@@ -88,6 +102,23 @@ impl ChatArea {
         }
     }
 
+    /// Local glycin decode of an avatar landed in the inventory
+    /// cache. Forward to every open tab so its rows that show this
+    /// avatar can rebind and pull the texture.
+    pub(in crate::components::chat_area) fn handle_avatar_texture_ready(
+        &mut self,
+        path: &str,
+    ) {
+        // Refresh the per-pane header avatar paintables.
+        self.apply_pane_avatar(0);
+        self.apply_pane_avatar(1);
+        for (controller, _, _) in self.open_tabs.values() {
+            let _ = controller
+                .sender()
+                .send(ChatTabInput::AvatarTextureReady(path.to_string()));
+        }
+    }
+
     pub(in crate::components::chat_area) fn handle_set_user_jid(
         &mut self,
         jid: Option<tina_core::WaIdentity>,
@@ -100,13 +131,36 @@ impl ChatArea {
         }
     }
 
+    /// Worker delivered the resolved `@`-mention candidates for a
+    /// chat. Stash them in the shared inventory (so future tabs of
+    /// the same chat reuse them, and the bubble renderer can resolve
+    /// `@<digits>` to a name without round-tripping) and forward to
+    /// the matching open tab so its composer popover repaints.
+    pub(in crate::components::chat_area) fn handle_mention_candidates_loaded(
+        &mut self,
+        chat_id: String,
+        candidates: Vec<tina_db::MentionCandidate>,
+    ) {
+        self.mentions.set_candidates(&chat_id, &candidates);
+        if let Some((controller, _, _)) = self.open_tabs.get(&chat_id) {
+            let _ = controller
+                .sender()
+                .send(ChatTabInput::MentionCandidatesLoaded(candidates));
+        }
+    }
+
     pub(in crate::components::chat_area) fn forward_send(
         &mut self,
         chat_id: String,
         text: String,
+        mentioned_jids: Vec<String>,
         sender: &ComponentSender<Self>,
     ) {
-        let _ = sender.output(ChatAreaOutput::SendText { chat_id, text });
+        let _ = sender.output(ChatAreaOutput::SendText {
+            chat_id,
+            text,
+            mentioned_jids,
+        });
     }
 
     pub(in crate::components::chat_area) fn forward_request_stickers(
@@ -183,6 +237,15 @@ impl ChatArea {
         sender: &ComponentSender<Self>,
     ) {
         let _ = sender.output(ChatAreaOutput::RequestLoadOlder { chat_id, before_ts });
+    }
+
+    pub(in crate::components::chat_area) fn forward_load_newer(
+        &mut self,
+        chat_id: String,
+        after_ts: i64,
+        sender: &ComponentSender<Self>,
+    ) {
+        let _ = sender.output(ChatAreaOutput::RequestLoadNewer { chat_id, after_ts });
     }
 
     pub(in crate::components::chat_area) fn forward_fetch_avatar(

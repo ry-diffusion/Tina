@@ -12,6 +12,9 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
+use adw::prelude::*;
+use tina_db::MentionCandidate;
+
 /// JID kinds the WhatsApp profile-picture endpoint never serves. We
 /// short-circuit fetches for these so the worker doesn't burn its
 /// 30-second deadline on every channel/status row in the chat list.
@@ -87,7 +90,12 @@ impl TextureCache {
 struct AvatarInner {
     paths: HashMap<String, String>,
     requested: HashSet<String>,
+    url_requested: HashSet<String>,
     textures: Option<TextureCache>,
+    /// Paths whose async glycin decode is in flight. Prevents
+    /// duplicate spawns when many rows ask for the same avatar at
+    /// once (the sidebar's first paint, opening a tab).
+    in_flight_decodes: HashSet<String>,
 }
 
 /// Single source of truth for "do we already have a profile picture for
@@ -96,6 +104,12 @@ struct AvatarInner {
 #[derive(Clone, Default)]
 pub struct AvatarInventory {
     inner: Rc<RefCell<AvatarInner>>,
+    /// Fires once per successful async glycin decode of an avatar
+    /// file. The hosting app wires this to broadcast a "texture
+    /// ready" message that nudges the sidebar + open chat tabs into
+    /// rebinding rows whose `avatar_path` matches. Without it, the
+    /// avatar would only appear after the next unrelated rebind.
+    on_texture_ready: Rc<RefCell<Option<Box<dyn Fn(String)>>>>,
 }
 
 const TEXTURE_CACHE_CAP: usize = 256;
@@ -134,6 +148,18 @@ impl AvatarInventory {
         true
     }
 
+    /// True iff the caller should issue a `FetchAvatarFromURL` to the worker.
+    /// Uses a separate tracking set from `needs_fetch` so URL-based fetches
+    /// and API fetches don't interfere with each other.
+    pub fn needs_url_fetch(&self, jid: &str) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.paths.contains_key(jid) || inner.url_requested.contains(jid) {
+            return false;
+        }
+        inner.url_requested.insert(jid.to_string());
+        true
+    }
+
     /// Record a resolved avatar.
     pub fn put(&self, jid: String, path: String) {
         let mut inner = self.inner.borrow_mut();
@@ -160,28 +186,87 @@ impl AvatarInventory {
             cache.invalidate(&path);
         }
         inner.requested.remove(jid);
+        inner.url_requested.remove(jid);
     }
 
-    /// Look up (and amortise the decode of) a `gdk::Texture` for an
-    /// avatar file path. Returns `None` if `path` is `None`/empty or the
-    /// file can't be decoded. Callers should prefer this over
-    /// `Texture::from_filename` directly so repeated binds of the same
-    /// row don't redo the decode.
+    /// Look up a cached `gdk::Texture` for an avatar file path.
+    /// Returns `None` on miss AND fires an async glycin decode in
+    /// the background — the cache is populated when the load
+    /// completes, and the inventory's `on_texture_ready` callback
+    /// fires so UI components can rebind affected rows.
+    ///
+    /// We never go through GdkPixbuf nor `Texture::from_filename`:
+    /// avatars come from arbitrary contacts on the network, and
+    /// libwebp / libheif RCEs (CVE-2023-4863 et al) live exactly in
+    /// those non-sandboxed loaders. Glycin's external-process
+    /// decoder is the safe path.
     pub fn load_texture(&self, path: Option<&str>) -> Option<gtk::gdk::Texture> {
         let path = path?;
         if path.is_empty() {
             return None;
         }
-        let mut inner = self.inner.borrow_mut();
-        let cache = inner
-            .textures
-            .get_or_insert_with(|| TextureCache::new(TEXTURE_CACHE_CAP));
-        if let Some(tex) = cache.get(path) {
-            return Some(tex);
+        // Cache hit?
+        {
+            let mut inner = self.inner.borrow_mut();
+            let cache = inner
+                .textures
+                .get_or_insert_with(|| TextureCache::new(TEXTURE_CACHE_CAP));
+            if let Some(tex) = cache.get(path) {
+                return Some(tex);
+            }
         }
-        let tex = gtk::gdk::Texture::from_filename(path).ok()?;
-        cache.insert(path.to_string(), tex.clone());
-        Some(tex)
+        // Cache miss — fire async glycin decode (deduped per path).
+        let need_spawn = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.in_flight_decodes.contains(path) {
+                false
+            } else {
+                inner.in_flight_decodes.insert(path.to_string());
+                true
+            }
+        };
+        if need_spawn {
+            self.spawn_glycin_decode(path.to_string());
+        }
+        None
+    }
+
+    /// Wire the post-decode notification. Called once at app init.
+    /// `f` receives the path that just landed; the implementation
+    /// dispatches a UI message that fans out to sidebar + chat
+    /// area to rebind matching rows.
+    pub fn set_texture_ready_handler<F: Fn(String) + 'static>(&self, f: F) {
+        *self.on_texture_ready.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn spawn_glycin_decode(&self, path: String) {
+        let inner_clone = self.inner.clone();
+        let cb_clone = self.on_texture_ready.clone();
+        gtk::glib::MainContext::default().spawn_local(async move {
+            let file = gtk::gio::File::for_path(&path);
+            let loader = glycin::Loader::new(file);
+            let texture: Option<gtk::gdk::Texture> = async {
+                let image = loader.load().await.ok()?;
+                let frame = image.next_frame().await.ok()?;
+                Some(frame.texture())
+            }
+            .await;
+
+            let mut inner = inner_clone.borrow_mut();
+            inner.in_flight_decodes.remove(&path);
+            let Some(tex) = texture else {
+                tracing::debug!(path = %path, "glycin: avatar decode failed");
+                return;
+            };
+            let cache = inner
+                .textures
+                .get_or_insert_with(|| TextureCache::new(TEXTURE_CACHE_CAP));
+            cache.insert(path.clone(), tex);
+            drop(inner);
+            if let Some(cb) = cb_clone.borrow().as_ref() {
+                cb(path);
+            }
+        });
     }
 }
 
@@ -209,6 +294,11 @@ struct MediaInner {
     /// twice (e.g. tab close + reopen). Bounded by a hard cap so a
     /// long-lived session doesn't grow this forever.
     auto_queued: HashSet<String>,
+    /// LRU cache for inline-thumbnail textures. Decoded once via
+    /// glycin (sandboxed) and reused across rebinds. Keyed by
+    /// message_id — each row has its own bytes blob from the wire
+    /// proto; sharing across messages isn't safe.
+    thumbnails: Option<TextureCache>,
 }
 
 /// Tracks media download state across tab open/close. The DB persists
@@ -297,7 +387,31 @@ impl MediaInventory {
             },
         );
     }
+
+    /// Sync cache lookup for an inline-thumbnail paintable keyed by
+    /// `message_id`. Returns `None` on miss; the caller is expected
+    /// to call `request_thumbnail_decode()` to fire the async glycin
+    /// load (sandboxed, no GdkPixbuf surface).
+    pub fn cached_thumbnail(&self, message_id: &str) -> Option<gtk::gdk::Paintable> {
+        let mut inner = self.inner.borrow_mut();
+        let cache = inner
+            .thumbnails
+            .get_or_insert_with(|| TextureCache::new(THUMBNAIL_CACHE_CAP));
+        cache.get(message_id).map(|t| t.upcast())
+    }
+
+    /// Insert a freshly-decoded thumbnail texture into the cache.
+    /// Called by the widget after its async glycin decode completes.
+    pub fn put_thumbnail(&self, message_id: &str, tex: gtk::gdk::Texture) {
+        let mut inner = self.inner.borrow_mut();
+        let cache = inner
+            .thumbnails
+            .get_or_insert_with(|| TextureCache::new(THUMBNAIL_CACHE_CAP));
+        cache.insert(message_id.to_string(), tex);
+    }
 }
+
+const THUMBNAIL_CACHE_CAP: usize = 512;
 
 // ============================================================================
 // ChatInventory: chat_id → resolved metadata + auto-refresh on miss
@@ -487,5 +601,89 @@ impl MessageInventory {
     #[allow(dead_code)] // first consumer lands with reply rendering
     pub fn get(&self, message_id: &str) -> Option<MessageMeta> {
         self.inner.borrow().metas.get(message_id).cloned()
+    }
+}
+
+// ============================================================================
+// MentionInventory: chat_id → autocomplete list + jid → display_name
+// ============================================================================
+
+#[derive(Default)]
+struct MentionInner {
+    /// Per-chat candidate list. Loaded once per chat from the
+    /// worker's `list_mention_candidates` and refreshed on the next
+    /// open. Empty for DMs/newsletters.
+    by_chat: HashMap<String, Vec<MentionCandidate>>,
+    /// jid → display_name. Populated alongside `by_chat` so the
+    /// bubble renderer can resolve `@<digits>` to a human name even
+    /// for chats whose tab isn't currently open.
+    names_by_jid: HashMap<String, String>,
+    /// digits → display_name. Mentions in WhatsApp text reference
+    /// the user-part of the JID (e.g. `@5511999999999`), not the
+    /// full JID; the renderer scans for `@<digits>` so it needs a
+    /// digits-keyed lookup.
+    names_by_digits: HashMap<String, String>,
+}
+
+/// Process-wide cache of `@`-mention data: per-chat candidate lists
+/// (the popover's filter input) and a global digits-keyed name map
+/// (the bubble renderer's resolver). Single inventory rather than
+/// two so the worker only fires one event per chat-open and both
+/// sides stay in sync.
+#[derive(Clone, Default)]
+pub struct MentionInventory {
+    inner: Rc<RefCell<MentionInner>>,
+}
+
+impl MentionInventory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replace the candidate list for `chat_id` and merge each
+    /// candidate's name into the global digits-keyed map. We never
+    /// evict from the global map — names only get more accurate
+    /// over time, and forgetting one means the bubble briefly
+    /// regresses to bare digits.
+    pub fn set_candidates(&self, chat_id: &str, candidates: &[MentionCandidate]) {
+        let mut inner = self.inner.borrow_mut();
+        for c in candidates {
+            inner
+                .names_by_jid
+                .insert(c.jid.clone(), c.display_name.clone());
+            let digits = c.jid.split('@').next().unwrap_or(&c.jid).to_string();
+            if !digits.is_empty() {
+                inner.names_by_digits.insert(digits, c.display_name.clone());
+            }
+            // Also key by `phone` directly — group `participants_json`
+            // sometimes embeds the LID form on `jid` while the wire
+            // mention uses the phone digits, so we want both
+            // resolved to the same name.
+            if !c.phone.is_empty() {
+                inner
+                    .names_by_digits
+                    .insert(c.phone.clone(), c.display_name.clone());
+            }
+        }
+        inner.by_chat.insert(chat_id.to_string(), candidates.to_vec());
+    }
+
+    /// Snapshot of the candidate list for `chat_id`. Cheap clone —
+    /// the popover takes a copy each time it filters so the
+    /// inventory stays free for concurrent updates.
+    pub fn candidates_for(&self, chat_id: &str) -> Vec<MentionCandidate> {
+        self.inner
+            .borrow()
+            .by_chat
+            .get(chat_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Resolve a `@<digits>` mention to a display name. Returns
+    /// `None` if the digits don't match any cached candidate, in
+    /// which case the renderer keeps the raw digits.
+    pub fn name_for_digits(&self, digits: &str) -> Option<String> {
+        self.inner.borrow().names_by_digits.get(digits).cloned()
     }
 }

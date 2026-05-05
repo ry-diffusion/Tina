@@ -82,6 +82,7 @@ pub(super) async fn process_groups(
             subject: g.subject.as_deref(),
             owner: g.owner.as_ref().map(|x| x.raw()),
             description: g.description.as_deref(),
+            avatar_url: g.avatar_url.as_deref(),
             participants_json: participants_json[i].as_deref(),
             participant_jids: participant_refs[i].as_slice(),
         })

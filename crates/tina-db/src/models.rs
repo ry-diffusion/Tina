@@ -214,6 +214,7 @@ pub struct GroupBatchInput<'a> {
     pub subject: Option<&'a str>,
     pub owner: Option<&'a str>,
     pub description: Option<&'a str>,
+    pub avatar_url: Option<&'a str>,
     pub participants_json: Option<&'a str>,
     pub participant_jids: &'a [&'a str],
 }
@@ -307,4 +308,28 @@ pub struct GroupParticipant {
     pub id: String,
     pub admin: Option<String>,
     pub phone_number: Option<String>,
+}
+
+/// One row of the `@`-mention picker. Resolved per chat: for groups
+/// it's every participant joined against `contacts`; for DMs the
+/// counterpart contact only. The renderer also reuses
+/// `display_name` to swap `@<digits>` for `@<Name>` in incoming
+/// bubbles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MentionCandidate {
+    /// Raw `<user>@<server>` JID — what we send back over the wire
+    /// in `contextInfo.mentionedJID` and key the inventory by.
+    pub jid: String,
+    /// Resolved display name (contact_name → push_name → business
+    /// → verified → phone). Falls back to the JID's user-part when
+    /// no contact row exists yet.
+    pub display_name: String,
+    /// Digits portion of the JID, used as the visible mention chip
+    /// when the user types `@<digits>`. Whatsapp's wire format
+    /// matches text mentions by digits, so we keep this around even
+    /// after we've replaced the chip with a name on render.
+    pub phone: String,
+    /// Cached avatar path if the worker has already pulled it; the
+    /// popover renders a tiny avatar next to each row.
+    pub avatar_path: Option<String>,
 }

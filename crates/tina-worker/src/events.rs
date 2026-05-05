@@ -1,5 +1,5 @@
 use tina_core::WaIdentity;
-use tina_db::{ChatRow, MessageRow, StatusAuthorRow};
+use tina_db::{ChatRow, MentionCandidate, MessageRow, StatusAuthorRow};
 
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
@@ -97,5 +97,15 @@ pub enum WorkerEvent {
         account_id: String,
         jid: WaIdentity,
         error: String,
+    },
+
+    /// Resolved mention candidates for a chat. Fired right after
+    /// `OpenChat` for groups so the composer's `@`-popover has data
+    /// to filter against; DMs/newsletters get an empty list and the
+    /// popover stays a no-op.
+    MentionCandidatesLoaded {
+        account_id: String,
+        chat_id: String,
+        candidates: Vec<MentionCandidate>,
     },
 }

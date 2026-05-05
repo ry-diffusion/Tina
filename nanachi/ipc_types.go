@@ -30,6 +30,11 @@ type SendMessagePayload struct {
 	AccountID string `json:"account_id"`
 	To        string `json:"to"`
 	Content   string `json:"content"`
+	// MentionedJIDs is the list of JIDs the user `@`-picked in the
+	// composer. When non-empty we send an ExtendedTextMessage with
+	// `ContextInfo.MentionedJID` populated; otherwise we fall back
+	// to the lighter `Conversation` payload.
+	MentionedJIDs []string `json:"mentioned_jids,omitempty"`
 }
 
 // MarkReadPayload mirrors `IpcCommand::MarkRead`. `SenderJID` matches
@@ -78,6 +83,7 @@ type GroupData struct {
 	Subject      *string           `json:"subject,omitempty"`
 	Owner        *string           `json:"owner,omitempty"`
 	Description  *string           `json:"description,omitempty"`
+	AvatarURL    *string           `json:"avatar_url,omitempty"`
 	Participants []ParticipantData `json:"participants"`
 }
 

@@ -1,52 +1,129 @@
 // CSS shipped alongside the bubble factory. Loaded once at app start via
 // `relm4::set_global_css`.
+//
+// Visual language ported from Fractal's `_room_history.scss` and
+// `_session_view.scss`: rows have soft hover/selection backgrounds with
+// rounded corners (matching the menu radius), the day-divider is a
+// dim, bold pill flanked by content margins, and the cozy/collapsed
+// avatar gutter aligns with the rest of the timeline. Reply quotes
+// are rendered as the Fractal `%nested-effect` (left-accent border +
+// reduced opacity).
 
 pub const MESSAGE_ROW_CSS: &str = r#"
+/* ── Per-row container ──────────────────────────────────────────── */
 .message-row {
     padding: 0;
+    /* Fractal's `.room-history-row` uses 8px horizontal + 2px vertical
+     * padding inside a row that owns the `border-radius`. The hover
+     * affordance is the row background, not an inner element. */
 }
-.message-box {
-    border: 2px solid transparent;
-    transition: linear 150ms background-color;
-    padding: 2px 4px;
+.message-row .message-box {
+    margin-left: 6px;
+    margin-right: 6px;
+    padding: 4px 8px;
+    border-radius: 9px;
+    transition: linear 120ms background-color;
 }
-.message-row:hover .message-box {
+.message-row:hover .message-box,
+.message-row:focus-within .message-box {
     background-color: alpha(@theme_fg_color, 0.06);
     transition: none;
 }
-.message-row:focus .message-box {
+.message-row.has-open-popup .message-box {
     background-color: alpha(@theme_fg_color, 0.10);
-    transition: none;
 }
+/* Cozy: first message in a sender's run — full padding so the avatar
+ * column has room to breathe. Collapsed: zero top padding so a run
+ * reads as one block. Mirrors Fractal's `.has-avatar` margin-top. */
 .message-cozy {
-    padding-top: 6px;
+    margin-top: 4px;
 }
 .message-collapsed {
-    padding-top: 0;
+    margin-top: 0;
 }
 .message-cozy-header {
     min-height: 1.4em;
 }
 .message-cozy-avatar {
-    margin-left: 8px;
+    margin-left: 4px;
     margin-right: 12px;
 }
+
+/* ── Day divider pill ───────────────────────────────────────────── */
+/* Fractal's `divider-row` is a bold, dim caption that sits centered
+ * between two flanking separators. We render the same shape with a
+ * single label inside a centered box; a future iteration can add the
+ * separator lines via `gtk::Separator` siblings if visual parity is
+ * desired down the line. */
+.message-day-divider {
+    margin: 14px 24px 6px 24px;
+}
+.message-day-divider-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    opacity: 0.55;
+    padding: 2px 12px;
+    border-radius: 9999px;
+    background-color: alpha(@theme_fg_color, 0.06);
+}
+
+/* ── Hover-only timestamp on collapsed runs ─────────────────────── */
 .message-collapsed-timestamp {
     opacity: 0;
     font-size: 0.7em;
     color: alpha(@theme_fg_color, 0.7);
+    transition: opacity 120ms ease-out;
 }
 .message-row:hover .message-collapsed-timestamp,
-.message-row:focus .message-collapsed-timestamp {
+.message-row:focus-within .message-collapsed-timestamp {
     opacity: 1;
 }
+
+/* ── Content ────────────────────────────────────────────────────── */
 .message-content {
     margin-top: 1px;
     margin-bottom: 1px;
 }
 .message-picture {
-    border-radius: 6px;
+    border-radius: 9px;
 }
+
+/* Blurhash-style placeholder: the proto thumbnail is tiny (often
+ * <150 px on the long axis), and we blow it up to fill the widget's
+ * expected media footprint via `ContentFit::Cover`. The result is
+ * heavily pixelated; the blur turns it into a soft preview that
+ * matches what Discord/WhatsApp show before the full image arrives.
+ * `interpolation-filter: linear` smooths the up-scale so the blur
+ * has a clean source instead of nearest-neighbour pixelation. */
+.message-thumbnail-blur {
+    filter: blur(12px);
+    -gtk-interpolation-filter: linear;
+}
+
+/* ── Per-type media sizing ──────────────────────────────────────── */
+/* `gtk::Picture::set_can_shrink(true)` + `set_size_request(N, N)`
+ * gives MIN sizing only, so the widget can grow back to its natural
+ * (file) resolution when the row is allocated more space — which is
+ * what was making stickers render at full size. CSS max-width /
+ * max-height caps the widget allocation so 128 px stays 128 px and
+ * a 4K photo stays at 360 px tall. */
+.message-sticker {
+    min-width: 128px;
+    max-width: 128px;
+    min-height: 128px;
+    max-height: 128px;
+}
+.message-image {
+    max-height: 360px;
+    /* Width follows the aspect ratio capped by the row's available
+     * width; we don't constrain max-width because chat-area widths
+     * vary with the splitter. */
+}
+.message-video {
+    max-height: 480px;
+}
+
+/* ── Reply (nested-effect from Fractal) ─────────────────────────── */
 .message-reply-button {
     padding: 0;
     margin-bottom: 2px;
@@ -60,10 +137,11 @@ pub const MESSAGE_ROW_CSS: &str = r#"
     background-color: alpha(@theme_fg_color, 0.06);
 }
 .message-reply-box {
-    border-left: 2px solid alpha(@theme_fg_color, 0.4);
+    border-left: 2px solid @accent_color;
     padding: 2px 8px;
     border-radius: 3px;
     font-size: 0.9em;
+    opacity: 0.85;
 }
 .message-reply-author {
     font-weight: 600;
@@ -72,16 +150,16 @@ pub const MESSAGE_ROW_CSS: &str = r#"
 .message-reply-preview {
     color: alpha(@theme_fg_color, 0.7);
 }
+
+/* ── Jump highlight (transient when navigating to a quoted message) */
 .message-jump-highlight {
     background-color: alpha(@accent_color, 0.18);
     transition: background-color 600ms ease-out;
 }
 
-/* Delivery-status indicator next to outgoing bubbles. Only renders
- * for from_me rows; the icon swaps via #[watch] in `factory.rs`,
- * the colour comes from these classes. Keeping the read-receipt
- * blue close to WhatsApp's spec (#34b7f1) so the visual mapping is
- * obvious at a glance. */
+/* ── Delivery status (from_me only) ─────────────────────────────── */
+/* WhatsApp-style check marks. Read-receipt blue close to spec
+ * (#34b7f1) so the visual mapping is obvious at a glance. */
 .tina-delivery-status {
     margin-left: 6px;
     -gtk-icon-size: 14px;

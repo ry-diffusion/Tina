@@ -140,5 +140,10 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
         WorkerEvent::AvatarFailed { jid, error, .. } => {
             tracing::warn!(%jid, %error, "avatar fetch failed");
         }
+        WorkerEvent::MentionCandidatesLoaded {
+            chat_id, candidates, ..
+        } => {
+            let _ = app.send(AppMsg::MentionCandidatesLoaded { chat_id, candidates });
+        }
     }
 }
