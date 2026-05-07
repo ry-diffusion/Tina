@@ -94,6 +94,7 @@ pub enum ChatAreaInput {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
     },
     /// Forwarded from a ChatTab.
     RequestMediaDownload(String),
@@ -158,6 +159,7 @@ pub enum ChatAreaOutput {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
     },
     /// A chat was closed in the UI — parent must tell the worker so it
     /// stops emitting `MessagesAppended` for it.

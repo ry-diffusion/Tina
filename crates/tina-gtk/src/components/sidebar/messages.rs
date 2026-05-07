@@ -5,7 +5,7 @@ use tina_db::{ChatRow, StatusAuthorRow};
 
 use crate::app::ConnectionStatus;
 use crate::components::profile_menu::ProfileMenuOutput;
-use crate::inventory::{AvatarInventory, ChatInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MentionInventory};
 
 /// Active sidebar filter — mirrors WhatsApp's tab strip (All / Groups /
 /// Channels / Status). Each variant scopes the visible chat list to a
@@ -44,6 +44,7 @@ impl ChatFilter {
 pub struct SidebarInit {
     pub avatars: AvatarInventory,
     pub chats: ChatInventory,
+    pub mentions: MentionInventory,
 }
 
 #[derive(Debug)]

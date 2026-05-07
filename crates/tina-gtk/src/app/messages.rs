@@ -154,6 +154,7 @@ pub enum AppMsg {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
     },
     RequestRepair,
     RequestPreferences,

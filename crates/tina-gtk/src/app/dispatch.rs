@@ -162,6 +162,7 @@ impl AppModel {
                 caption,
                 mimetype,
                 filename,
+                local_id,
             } => {
                 self.service.handle.send(Cmd::SendMedia {
                     chat_id,
@@ -170,6 +171,7 @@ impl AppModel {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 });
             }
             AppMsg::RequestRepair => {

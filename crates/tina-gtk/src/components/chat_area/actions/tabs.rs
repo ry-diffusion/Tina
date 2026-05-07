@@ -125,6 +125,7 @@ impl ChatArea {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 } => ChatAreaInput::SendMediaFromTab {
                     chat_id,
                     kind,
@@ -132,6 +133,7 @@ impl ChatArea {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 },
                 ChatTabOutput::Close { chat_id } => {
                     ChatAreaInput::TabClosed { pane: 0, chat_id }

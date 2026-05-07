@@ -102,9 +102,10 @@ pub(super) async fn handle(
             caption,
             mimetype,
             filename,
+            local_id,
         } => {
             send_media(
-                worker, app, state, chat_id, kind, path, caption, mimetype, filename,
+                worker, app, state, chat_id, kind, path, caption, mimetype, filename, local_id,
             )
             .await
         }
@@ -387,6 +388,7 @@ async fn send_media(
     caption: Option<String>,
     mimetype: Option<String>,
     filename: Option<String>,
+    _local_id: Option<String>,
 ) {
     let Some(account_id) = active_account(state).await else {
         return;

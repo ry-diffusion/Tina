@@ -7,7 +7,7 @@ use crate::fl;
 
 use tina_db::ChatRow;
 
-use crate::inventory::AvatarInventory;
+use crate::inventory::{AvatarInventory, MentionInventory};
 use crate::time::format_chat_timestamp;
 
 #[derive(Clone)]
@@ -32,8 +32,8 @@ pub struct ChatRowItem {
 }
 
 impl ChatRowItem {
-    pub fn from_row(row: &ChatRow, avatars: AvatarInventory) -> Self {
-        let preview = build_preview(row);
+    pub fn from_row(row: &ChatRow, avatars: AvatarInventory, mentions: &MentionInventory) -> Self {
+        let preview = resolve_preview_mentions(&build_preview(row), mentions);
         let last_ts = row.last_message_ts.unwrap_or(0);
         Self {
             chat_id: row.chat_id.clone(),
@@ -192,3 +192,39 @@ impl PartialEq for ChatRowItem {
     }
 }
 impl Eq for ChatRowItem {}
+
+/// Scan `text` for `@<digits>` patterns and replace with the resolved
+/// display name from `mentions` when available. Runs once at
+/// `from_row` time so the preview string is always up-to-date with
+/// whatever names the inventory currently holds.
+fn resolve_preview_mentions(text: &str, mentions: &MentionInventory) -> String {
+    if !text.contains('@') {
+        return text.to_string();
+    }
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.char_indices().peekable();
+    while let Some((_, c)) = chars.next() {
+        if c == '@' {
+            let mut digits = String::new();
+            while let Some(&(_, d)) = chars.peek() {
+                if d.is_ascii_digit() {
+                    digits.push(d);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            result.push('@');
+            if digits.is_empty() {
+                // bare `@` with no digits — keep as-is
+            } else if let Some(name) = mentions.name_for_digits(&digits) {
+                result.push_str(&name);
+            } else {
+                result.push_str(&digits);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}

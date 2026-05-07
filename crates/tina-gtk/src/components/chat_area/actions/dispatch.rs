@@ -67,7 +67,8 @@ impl ChatArea {
                 caption,
                 mimetype,
                 filename,
-            } => self.forward_send_media(chat_id, kind, path, caption, mimetype, filename, &sender),
+                local_id,
+            } => self.forward_send_media(chat_id, kind, path, caption, mimetype, filename, local_id, &sender),
             ChatAreaInput::RequestMediaDownload(id) => self.forward_media_download(id, &sender),
             ChatAreaInput::RequestLoadOlder { chat_id, before_ts } => {
                 self.forward_load_older(chat_id, before_ts, &sender)

@@ -271,6 +271,7 @@ impl MainPage {
                 caption,
                 mimetype,
                 filename,
+                local_id,
             } => {
                 let _ = sender.output(MainOutput::SendMedia {
                     chat_id,
@@ -279,6 +280,7 @@ impl MainPage {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 });
             }
             ChatAreaOutput::CloseChat(id) => {

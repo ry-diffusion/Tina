@@ -216,6 +216,7 @@ impl SimpleComponent for AppModel {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 } => AppMsg::SendMedia {
                     chat_id,
                     kind,
@@ -223,6 +224,7 @@ impl SimpleComponent for AppModel {
                     caption,
                     mimetype,
                     filename,
+                    local_id,
                 },
                 MainOutput::RequestPreferences => AppMsg::RequestPreferences,
                 MainOutput::RequestLogout => AppMsg::RequestLogout,

@@ -3,7 +3,7 @@
 // straight without going through the preview dialog (matches the
 // WhatsApp mobile UX where stickers are a one-tap send).
 
-use gtk::prelude::*;
+use adw::prelude::*;
 use relm4::ComponentSender;
 
 use super::super::messages::{ChatTabInput, ChatTabOutput};
@@ -80,26 +80,39 @@ impl ChatTab {
 }
 
 fn build_sticker_tile(path: &str, sender: ComponentSender<ChatTab>) -> gtk::Widget {
-    // gtk::Picture decodes lazily, so even a 64-tile grid stays
-    // responsive on slow disks. Falls back to a generic icon if the
-    // file is unreadable (deleted from cache, broken symlink).
-    let pic: gtk::Widget = match gdk::Texture::from_filename(path) {
-        Ok(tex) => {
-            let p = gtk::Picture::for_paintable(&tex);
-            p.set_can_shrink(true);
-            p.set_content_fit(gtk::ContentFit::Contain);
-            p.set_size_request(STICKER_TILE_PX, STICKER_TILE_PX);
-            p.upcast()
+    // Use glycin for decoding — it runs in a sandboxed subprocess so
+    // a malformed/malicious webp (CVE-2023-4863 class) can't reach
+    // libwebp in our process. The synchronous `gdk::Texture::from_*`
+    // path is explicitly avoided here for the same reason we avoid it
+    // in `TinaMessageMedia`.
+    let picture = gtk::Picture::builder()
+        .can_shrink(true)
+        .content_fit(gtk::ContentFit::Contain)
+        .build();
+    picture.set_size_request(STICKER_TILE_PX, STICKER_TILE_PX);
+
+    let path_for_load = path.to_string();
+    gtk::glib::MainContext::default().spawn_local(gtk::glib::clone!(
+        #[weak]
+        picture,
+        async move {
+            let file = gtk::gio::File::for_path(&path_for_load);
+            let loader = glycin::Loader::new(file);
+            let texture = async {
+                let image = loader.load().await.ok()?;
+                let frame = image.next_frame().await.ok()?;
+                Some(frame.texture())
+            }
+            .await;
+            if let Some(tex) = texture {
+                picture.set_paintable(Some(&tex));
+            }
         }
-        Err(_) => {
-            let icon = gtk::Image::from_icon_name("image-missing-symbolic");
-            icon.set_pixel_size(STICKER_TILE_PX / 2);
-            icon.upcast()
-        }
-    };
+    ));
+
     let btn = gtk::Button::builder()
         .css_classes(["flat"])
-        .child(&pic)
+        .child(&picture)
         .build();
     let path_owned = path.to_string();
     btn.connect_clicked(move |_| {

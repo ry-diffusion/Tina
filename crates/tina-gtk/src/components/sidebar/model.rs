@@ -12,7 +12,7 @@ use tina_db::ChatRow;
 use crate::app::ConnectionStatus;
 use crate::components::chat_row::ChatRowItem;
 use crate::components::profile_menu::ProfileMenu;
-use crate::inventory::{AvatarInventory, ChatInventory};
+use crate::inventory::{AvatarInventory, ChatInventory, MentionInventory};
 
 use super::messages::{ChatFilter, SidebarOutput};
 use super::status_row::StatusAuthorItem;
@@ -65,6 +65,7 @@ pub struct Sidebar {
     pub(super) user_jid: Option<tina_core::WaIdentity>,
     pub(super) avatars: AvatarInventory,
     pub(super) chats: ChatInventory,
+    pub(super) mentions: MentionInventory,
     /// JIDs waiting to be fetched once an in-flight slot opens up.
     pub(super) pending_avatar_fetches: VecDeque<tina_core::WaIdentity>,
     /// How many `RequestFetchAvatar` outputs are currently in flight.
@@ -213,7 +214,7 @@ impl Sidebar {
             {
                 self.chats.request_refresh(id.raw());
             }
-            let mut item = ChatRowItem::from_row(row, self.avatars.clone());
+            let mut item = ChatRowItem::from_row(row, self.avatars.clone(), &self.mentions);
             if let Some(&pos) = pos_index.get(&item.chat_id) {
                 if let Some(prev) = self.list.get(pos) {
                     let prev = prev.borrow();

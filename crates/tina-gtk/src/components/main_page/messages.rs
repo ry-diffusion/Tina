@@ -113,6 +113,7 @@ pub enum MainOutput {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
     },
     RequestPreferences,
     RequestLogout,

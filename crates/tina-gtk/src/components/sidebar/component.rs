@@ -302,6 +302,7 @@ impl SimpleComponent for Sidebar {
             user_jid: None,
             avatars: init.avatars,
             chats: init.chats,
+            mentions: init.mentions,
             pending_avatar_fetches: std::collections::VecDeque::new(),
             in_flight_avatar_count: 0,
         };

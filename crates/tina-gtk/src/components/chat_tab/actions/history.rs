@@ -465,24 +465,26 @@ impl ChatTab {
         self.composer_buffer.set_text("");
     }
 
-    /// Synthesise a bubble with a sentinel id for the optimistic echo.
+    /// Synthesise a text bubble with a sentinel id for the optimistic echo.
     /// When the worker echoes the real row back, the matching local
     /// entry is dropped so the real one slots in at the same position.
     fn build_optimistic_echo(&self, trimmed: &str) -> MessageItem {
-        let local_id = format!(
-            "local-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        );
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or_default();
-        // Collapse against the trailing message just like a real row
-        // would. Read the cursor from the factory's tail so a stale
-        // `last_sender` can't misgroup this echo under the recipient.
+        let local_id = format!("local-{}", uuid::Uuid::now_v7());
+        let now_unix = optimistic_secs();
+        let mut item = self.build_optimistic_base(local_id, now_unix);
+        item.content = trimmed.to_string();
+        item.message_type = "text".to_string();
+        item
+    }
+
+    /// Common fields shared by all optimistic echoes (text and media).
+    /// Callers fill in the type-specific fields (`content`, `message_type`,
+    /// media path / status, etc.) after calling this.
+    pub(in crate::components::chat_tab) fn build_optimistic_base(
+        &self,
+        local_id: String,
+        now_unix: i64,
+    ) -> MessageItem {
         let (cursor_sender, cursor_ts) = self.factory_tail_cursor();
         let local_collapsed = match (cursor_sender.as_deref(), cursor_ts) {
             (Some("\0me"), Some(prev_ts)) => {
@@ -498,9 +500,6 @@ impl ChatTab {
             id: local_id,
             from_me: true,
             sender_name: String::new(),
-            // MessageItem still keys on raw JID strings (the DB
-            // schema does too); converting that down to typed
-            // identifiers is a separate refactor.
             sender_jid: self.user_jid.as_ref().map(|x| x.raw().to_string()),
             sender_avatar_path: local_avatar,
             chat_kind: self.kind.clone(),
@@ -513,9 +512,8 @@ impl ChatTab {
             is_collapsed: local_collapsed,
             is_first_of_day: false,
             day_label: String::new(),
-            cached_markup: String::new(),
-            content: trimmed.to_string(),
-            message_type: "text".to_string(),
+            content: String::new(),
+            message_type: String::new(),
             timestamp: crate::time::format_message_time(now_unix),
             short_time: crate::time::format_short_time(now_unix),
             timestamp_unix: now_unix,
@@ -536,6 +534,14 @@ impl ChatTab {
             quoted_sender_name: None,
             quoted_preview: None,
             mentions: Vec::new(),
+            cached_markup: String::new(),
         }
     }
+}
+
+pub(in crate::components::chat_tab) fn optimistic_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
 }

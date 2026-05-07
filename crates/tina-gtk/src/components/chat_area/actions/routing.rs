@@ -210,6 +210,7 @@ impl ChatArea {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
         sender: &ComponentSender<Self>,
     ) {
         let _ = sender.output(ChatAreaOutput::SendMedia {
@@ -219,6 +220,7 @@ impl ChatArea {
             caption,
             mimetype,
             filename,
+            local_id,
         });
     }
 

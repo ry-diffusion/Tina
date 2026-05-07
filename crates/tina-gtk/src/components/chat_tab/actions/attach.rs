@@ -22,10 +22,11 @@ use sha2::{Digest, Sha256};
 
 use crate::components::message_bubble::MessageItem;
 
-use super::super::messages::{ChatTabInput, ChatTabOutput, COLLAPSE_WINDOW_SECS};
+use super::super::messages::{ChatTabInput, ChatTabOutput};
 use super::super::model::ChatTab;
 use super::super::preview;
 use super::super::record;
+use super::history::optimistic_secs;
 
 impl ChatTab {
     pub(in crate::components::chat_tab) fn handle_pick_attachment(
@@ -125,7 +126,7 @@ impl ChatTab {
             self.pending_media_echoes
                 .entry(sha)
                 .or_default()
-                .push_back(local_id);
+                .push_back(local_id.clone());
         } else {
             // SHA-256 failed (file unreadable / oversized) — fall
             // back to the body-text key. The dispatcher's belt-and-
@@ -133,7 +134,7 @@ impl ChatTab {
             self.pending_echoes
                 .entry(media_echo_key(&path, caption.as_deref()))
                 .or_default()
-                .push_back(local_id);
+                .push_back(local_id.clone());
         }
         self.bottomed.set(true);
         let mut local_item = local_item;
@@ -147,6 +148,7 @@ impl ChatTab {
             caption,
             mimetype,
             filename,
+            local_id: Some(local_id),
         });
     }
 
@@ -219,9 +221,8 @@ impl ChatTab {
     }
 
     /// Build the local-only `MessageItem` for an optimistic media echo.
-    /// Mirrors `build_optimistic_echo` (text path) but with the media
-    /// fields pre-filled to point at the source path on disk so the
-    /// bubble renders the picture/preview without a download.
+    /// Uses `build_optimistic_base` for the shared fields and then sets
+    /// the media-specific ones.
     fn build_optimistic_media_echo(
         &self,
         kind: tina_core::MediaKind,
@@ -230,28 +231,8 @@ impl ChatTab {
         mimetype: Option<&str>,
         filename: Option<&str>,
     ) -> MessageItem {
-        let local_id = format!(
-            "local-media-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        );
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or_default();
-        let (cursor_sender, cursor_ts) = self.factory_tail_cursor();
-        let local_collapsed = match (cursor_sender.as_deref(), cursor_ts) {
-            (Some("\0me"), Some(prev_ts)) => {
-                now_unix.saturating_sub(prev_ts) <= COLLAPSE_WINDOW_SECS
-            }
-            _ => false,
-        };
-        let local_avatar = self
-            .user_jid
-            .as_ref()
-            .and_then(|j| self.avatars.get(j.raw()));
+        let local_id = format!("local-media-{}", uuid::Uuid::now_v7());
+        let now_unix = optimistic_secs();
         let summary = caption
             .map(|s| s.to_string())
             .unwrap_or_else(|| match kind {
@@ -263,49 +244,19 @@ impl ChatTab {
             });
         let size_bytes = std::fs::metadata(path).ok().map(|m| m.len() as i64);
         let mt_string = mimetype.map(|s| s.to_string()).or_else(|| guess_mimetype(path));
-        MessageItem {
-            id: local_id,
-            from_me: true,
-            sender_name: String::new(),
-            sender_jid: self.user_jid.as_ref().map(|x| x.raw().to_string()),
-            sender_avatar_path: local_avatar,
-            chat_kind: self.kind.clone(),
-            chat_display_name: if self.name.is_empty() {
-                None
-            } else {
-                Some(self.name.clone())
-            },
-            chat_avatar_path: self.avatars.get(&self.chat_id),
-            is_collapsed: local_collapsed,
-            is_first_of_day: false,
-            day_label: String::new(),
-            content: summary.clone(),
-            message_type: match kind {
-                tina_core::MediaKind::Voice => "audio".to_string(),
-                k => k.as_str().to_string(),
-            },
-            timestamp: crate::time::format_message_time(now_unix),
-            short_time: crate::time::format_short_time(now_unix),
-            timestamp_unix: now_unix,
-            media_summary: summary,
-            media_mimetype: mt_string,
-            media_size_bytes: size_bytes,
-            media_width: None,
-            media_height: None,
-            media_duration_secs: None,
-            media_path: Some(path.to_string()),
-            media_status: "done".to_string(),
-            media_filename: filename.map(|s| s.to_string()),
-            media_sha256: None,
-            delivery_status: "pending".to_string(),
-            thumbnail: None,
-            quoted_message_id: None,
-            quoted_sender_id: None,
-            quoted_sender_name: None,
-            quoted_preview: None,
-            mentions: Vec::new(),
-            cached_markup: String::new(),
-        }
+        let mut item = self.build_optimistic_base(local_id, now_unix);
+        item.content = summary.clone();
+        item.message_type = match kind {
+            tina_core::MediaKind::Voice => "audio".to_string(),
+            k => k.as_str().to_string(),
+        };
+        item.media_summary = summary;
+        item.media_mimetype = mt_string;
+        item.media_size_bytes = size_bytes;
+        item.media_path = Some(path.to_string());
+        item.media_status = "done".to_string();
+        item.media_filename = filename.map(|s| s.to_string());
+        item
     }
 }
 

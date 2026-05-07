@@ -47,6 +47,7 @@ impl SimpleComponent for MainPage {
             .launch(SidebarInit {
                 avatars: init.avatars.clone(),
                 chats: init.chats.clone(),
+                mentions: init.mentions.clone(),
             })
             .forward(sender.input_sender(), MainInput::FromSidebar);
 

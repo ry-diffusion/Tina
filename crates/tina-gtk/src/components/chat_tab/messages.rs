@@ -152,6 +152,8 @@ pub enum ChatTabOutput {
     },
     /// User confirmed a media-attach preview. Carries the source
     /// path; the worker reads the file when the IPC fires.
+    /// `local_id` is the sentinel id of the optimistic echo so the
+    /// backend can key it for deduplication / failure marking.
     SendMedia {
         chat_id: String,
         kind: tina_core::MediaKind,
@@ -159,6 +161,7 @@ pub enum ChatTabOutput {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        local_id: Option<String>,
     },
     Close { chat_id: String },
     RequestMediaDownload(String),

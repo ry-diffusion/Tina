@@ -54,6 +54,10 @@ pub enum Cmd {
         caption: Option<String>,
         mimetype: Option<String>,
         filename: Option<String>,
+        /// Client-side sentinel id of the optimistic echo. Passed
+        /// through so the worker can correlate pending sends with
+        /// their local placeholder for failure marking / dedup.
+        local_id: Option<String>,
     },
     /// Trigger reconcile (whatsmeow → tina).
     Repair,
