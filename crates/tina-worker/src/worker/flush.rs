@@ -31,12 +31,13 @@ pub(super) async fn flush(
     let count_groups: usize = buffer.groups.values().map(|v| v.len()).sum();
 
     let mut affected: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut msgs_per_account: HashMap<String, usize> = HashMap::new();
     let open_snapshot = open_chats.read().await.clone();
 
-    flush_messages(db, event_tx, buffer, &mut affected, &open_snapshot).await?;
+    flush_messages(db, event_tx, buffer, &mut affected, &open_snapshot, &mut msgs_per_account).await?;
     flush_contacts(db, buffer, &mut affected).await?;
     flush_groups(db, buffer, &mut affected).await?;
-    emit_chats_upserted(db, event_tx, affected).await;
+    emit_chats_upserted(db, event_tx, affected, msgs_per_account).await;
 
     log_flush_duration(started.elapsed(), count_msgs, count_contacts, count_groups);
     Ok(())
@@ -48,10 +49,12 @@ async fn flush_messages(
     buffer: &mut DirtyBuffer,
     affected: &mut HashMap<String, HashSet<String>>,
     open_snapshot: &HashMap<String, HashSet<String>>,
+    msgs_per_account: &mut HashMap<String, usize>,
 ) -> Result<()> {
     let messages = std::mem::take(&mut buffer.messages);
     for (account_id, msgs) in messages {
         let open_for_account = open_snapshot.get(&account_id);
+        *msgs_per_account.entry(account_id.clone()).or_default() += msgs.len();
 
         // Pre-render the per-row JSON for mentioned JIDs so the
         // borrowed string lives long enough for the batch input.
@@ -184,11 +187,13 @@ async fn emit_chats_upserted(
     db: &TinaDb,
     event_tx: &mpsc::Sender<WorkerEvent>,
     affected: HashMap<String, HashSet<String>>,
+    msgs_per_account: HashMap<String, usize>,
 ) {
     for (account_id, chat_ids) in affected {
         if chat_ids.is_empty() {
             continue;
         }
+        let messages_written = msgs_per_account.get(&account_id).copied().unwrap_or(0);
         let ids: Vec<String> = chat_ids.into_iter().collect();
         match db.get_chat_rows(&account_id, &ids).await {
             Ok(rows) if !rows.is_empty() => {
@@ -198,7 +203,11 @@ async fn emit_chats_upserted(
                     account_id
                 );
                 let _ = event_tx
-                    .send(WorkerEvent::ChatsUpserted { account_id, rows })
+                    .send(WorkerEvent::ChatsUpserted {
+                        account_id,
+                        rows,
+                        messages_written,
+                    })
                     .await;
             }
             Ok(_) => {}

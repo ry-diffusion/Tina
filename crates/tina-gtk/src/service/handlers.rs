@@ -53,7 +53,7 @@ pub(super) async fn initialize(
         );
         let _ = app.send(AppMsg::ShowInApp);
         if let Ok(rows) = worker.list_chat_rows(&account.id).await {
-            let _ = app.send(AppMsg::ChatsUpserted(rows));
+            let _ = app.send(AppMsg::ChatsUpserted { rows, messages_written: 0 });
         }
     } else {
         info!(
@@ -185,7 +185,7 @@ async fn load_chats(worker: &Arc<TinaWorker>, app: &Sender<AppMsg>, state: &Shar
     };
     match worker.list_chat_rows(&account_id).await {
         Ok(rows) => {
-            let _ = app.send(AppMsg::ChatsUpserted(rows));
+            let _ = app.send(AppMsg::ChatsUpserted { rows, messages_written: 0 });
         }
         Err(e) => error!("list_chat_rows: {e}"),
     }
@@ -310,7 +310,7 @@ async fn open_chat(
     // upsert handler; a single row keeps it O(1).
     let _ = worker.clear_chat_unread(&account_id, &id).await;
     if let Ok(Some(updated)) = worker.get_chat_row(&account_id, &id).await {
-        let _ = app.send(AppMsg::ChatsUpserted(vec![updated]));
+        let _ = app.send(AppMsg::ChatsUpserted { rows: vec![updated], messages_written: 0 });
     }
     let chat_id_for_mentions = id.clone();
     let _ = app.send(AppMsg::ChatOpened {
@@ -567,7 +567,7 @@ async fn set_chat_pinned(
     // position).
     match worker.list_chat_rows(&account_id).await {
         Ok(rows) => {
-            let _ = app.send(AppMsg::ChatsUpserted(rows));
+            let _ = app.send(AppMsg::ChatsUpserted { rows, messages_written: 0 });
         }
         Err(e) => error!("list_chat_rows after pin: {e}"),
     }

@@ -80,6 +80,15 @@ impl SimpleComponent for AppModel {
                                 #[watch]
                                 set_text: Some(&model.sync_percent_text()),
                             },
+                            gtk::Button {
+                                set_label: &fl!("sync-skip"),
+                                set_halign: gtk::Align::Center,
+                                set_css_classes: &["pill"],
+                                set_margin_top: 8,
+                                #[watch]
+                                set_visible: model.reconnect_syncing,
+                                connect_clicked => AppMsg::SkipSync,
+                            },
                         },
                     },
 
@@ -274,6 +283,8 @@ impl SimpleComponent for AppModel {
             repair_indeterminate: true,
             sync_progress: 0,
             sync_type: String::new(),
+            reconnect_syncing: false,
+            reconnect_messages_count: 0,
             connection: crate::app::ConnectionStatus::Connecting,
             phone: None,
             data_dir: init.data_dir,

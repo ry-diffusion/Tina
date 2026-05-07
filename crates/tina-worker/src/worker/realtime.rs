@@ -80,12 +80,14 @@ pub(super) async fn handle_realtime_event(
             account_id,
             sync_type,
             progress,
+            messages_count,
         } => {
             let _ = event_tx
                 .send(WorkerEvent::HistorySyncProgress {
                     account_id,
                     sync_type,
                     progress,
+                    messages_count,
                 })
                 .await;
         }
@@ -278,7 +280,7 @@ async fn handle_chats_pin_update(
     match db.get_chat_rows(&account_id, &affected).await {
         Ok(rows) if !rows.is_empty() => {
             let _ = event_tx
-                .send(WorkerEvent::ChatsUpserted { account_id, rows })
+                .send(WorkerEvent::ChatsUpserted { account_id, rows, messages_written: 0 })
                 .await;
         }
         Ok(_) => {}
@@ -314,7 +316,7 @@ async fn handle_chats_read_hint(
         && !rows.is_empty()
     {
         let _ = event_tx
-            .send(WorkerEvent::ChatsUpserted { account_id, rows })
+            .send(WorkerEvent::ChatsUpserted { account_id, rows, messages_written: 0 })
             .await;
     }
 }

@@ -11,6 +11,11 @@ import (
 )
 
 func (c *Client) onConnected() {
+	// `firstConnected.Swap(true)` returns the previous value.
+	// false → this is the first Connected event (startup).
+	// true  → this is a mid-session reconnect.
+	wasPreviouslyConnected := c.firstConnected.Swap(true)
+
 	var phone, jid *string
 	if id := c.wa.Store.ID; id != nil {
 		j := id.String()
@@ -30,6 +35,24 @@ func (c *Client) onConnected() {
 		pushName = &pn
 	}
 	emitConnected(c.accountID, phone, jid, pushName)
+
+	// Show "Catching up" for:
+	//   • returning users on startup (isReturningUser=true, first connect)
+	//   • any mid-session reconnect (wasPreviouslyConnected=true)
+	// Skip for initial QR pairing (isReturningUser=false, first connect)
+	// — the Rust Syncing scene handles that path via QrLogin → Syncing.
+	if c.isReturningUser || wasPreviouslyConnected {
+		kind := "reconnect"
+		if !wasPreviouslyConnected {
+			kind = "startup"
+		}
+		fmt.Fprintf(os.Stderr,
+			"[sync] returning-user %s for %s — emitting synthetic catching-up\n",
+			kind, c.accountID,
+		)
+		c.inReconnectSync.Store(true)
+		emitHistorySyncProgress(c.accountID, "RECENT", 0, 0)
+	}
 
 	go c.fetchAllGroups()
 	go c.fetchAllNewsletters()

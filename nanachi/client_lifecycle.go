@@ -34,6 +34,19 @@ type Client struct {
 	// timers (whatsmeow fires it once per app-state name on every
 	// sync — 5+ times during the initial boot).
 	fallbackScheduled atomic.Bool
+	// isReturningUser is true when the device already had a paired JID
+	// at the time newClient was called (i.e. the account was previously
+	// registered). False for brand-new devices going through QR pairing.
+	// Immutable after construction — safe to read without a lock.
+	isReturningUser bool
+	// firstConnected flips to true on the first onConnected call so we
+	// can distinguish "startup" (false) from "mid-session reconnect" (true).
+	firstConnected atomic.Bool
+	// inReconnectSync is set to true in onConnected for returning users
+	// (both startup and mid-session reconnect). It gates a synthetic
+	// HistorySyncProgress emit so the UI shows "Catching up" while the
+	// offline message queue drains. Cleared by OfflineSyncCompleted.
+	inReconnectSync atomic.Bool
 	// newsletterRefreshes dedupes async newsletter-info fetches
 	// across HistorySync chunks. The same channel JID often shows
 	// up in multiple chunks during the initial bootstrap; without
@@ -87,9 +100,10 @@ func newClient(mgr *Manager, accountID string, device *store.Device) *Client {
 	// do primeiro login.
 	wa.EmitAppStateEventsOnFullSync = true
 	c := &Client{
-		mgr:       mgr,
-		accountID: accountID,
-		wa:        wa,
+		mgr:             mgr,
+		accountID:       accountID,
+		wa:              wa,
+		isReturningUser: device.ID != nil,
 	}
 	wa.AddEventHandler(c.handleEvent)
 	return c

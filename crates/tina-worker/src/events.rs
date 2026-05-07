@@ -17,7 +17,14 @@ pub enum WorkerEvent {
     LoggedOut { account_id: String },
 
     /// Snapshot completo (lista inicial) ou parcial (após batch) de chats.
-    ChatsUpserted { account_id: String, rows: Vec<ChatRow> },
+    ChatsUpserted {
+        account_id: String,
+        rows: Vec<ChatRow>,
+        /// Number of messages written to the DB in the flush that produced
+        /// these chat rows. Used by the GTK layer to drive the reconnect
+        /// sync message counter without a separate event.
+        messages_written: usize,
+    },
 
     /// One row per contact who has posted to `status@broadcast`.
     /// Drives the Status tab's vertical author list.
@@ -44,6 +51,7 @@ pub enum WorkerEvent {
         account_id: String,
         sync_type: String,
         progress: u32,
+        messages_count: usize,
     },
 
     /// Atualização de progresso de uma reconciliação em andamento.

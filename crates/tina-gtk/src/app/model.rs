@@ -26,6 +26,14 @@ pub struct AppModel {
     /// Last `HistorySync.SyncType` enum string ("INITIAL_BOOTSTRAP",
     /// "RECENT", …) — humanised by the syncing page for the description.
     pub(super) sync_type: String,
+    /// True while we're showing the Syncing scene for a mid-session
+    /// reconnect (as opposed to the initial bootstrap). Gates the Skip
+    /// button and the live message counter.
+    pub(super) reconnect_syncing: bool,
+    /// Count of messages received via `MessagesAppended` since the
+    /// current reconnect sync started. Shown in the Syncing scene
+    /// description so the user can see progress without a % bar.
+    pub(super) reconnect_messages_count: u32,
     /// Worker-reported link state. `Connecting` until the first
     /// `Connected` event lands.
     pub(super) connection: ConnectionStatus,
@@ -48,6 +56,9 @@ pub struct AppModel {
 impl AppModel {
     /// Human label for the syncing page.
     pub(super) fn sync_stage_label(&self) -> String {
+        if self.reconnect_syncing {
+            return fl!("sync-reconnect-description", "count" = self.reconnect_messages_count);
+        }
         match self.sync_type.as_str() {
             "" | "INITIAL_BOOTSTRAP" => fl!("sync-stage-initial"),
             "INITIAL_STATUS_V3" => fl!("sync-stage-status-v3"),

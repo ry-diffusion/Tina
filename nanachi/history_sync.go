@@ -108,10 +108,6 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 		"[sync] HistorySync chunk: account=%s type=%s progress=%d%% conversations=%d\n",
 		c.accountID, syncType, progress, len(conv),
 	)
-	// Emite antes do trabalho do chunk: a UI já sai de 0% assim que o
-	// primeiro evento chega, mesmo que parsing/emit dos contatos
-	// embutidos demore um pouco.
-	emitHistorySyncProgress(c.accountID, syncType, progress)
 	total := 0
 	pins := make([]chatPinItem, 0)
 	for _, conversation := range conv {
@@ -180,6 +176,9 @@ func (c *Client) onHistorySync(evt *events.HistorySync) {
 		total += len(msgs)
 	}
 	c.historyCount.Add(int64(total))
+	// Emite depois de processar o chunk: o contador já inclui as mensagens
+	// deste chunk. A UI atualiza a barra e o label de progresso juntos.
+	emitHistorySyncProgress(c.accountID, syncType, progress, int(c.historyCount.Load()))
 	// Pin updates ride out alongside the message stream — the realtime
 	// handler tolerates rows that don't exist yet (logs and skips), so
 	// even if a pin lands before its conversation's first message

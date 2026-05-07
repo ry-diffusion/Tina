@@ -50,7 +50,7 @@ pub enum AppMsg {
     },
     Disconnected(String),
     LoggedOut,
-    ChatsUpserted(Vec<ChatRow>),
+    ChatsUpserted { rows: Vec<ChatRow>, messages_written: usize },
     StatusAuthorsUpserted(Vec<StatusAuthorRow>),
     MessagesAppended {
         chat_id: String,
@@ -66,6 +66,7 @@ pub enum AppMsg {
     HistorySyncProgress {
         sync_type: String,
         progress: u32,
+        messages_count: usize,
     },
     RepairStarted,
     RepairProgress {
@@ -77,6 +78,9 @@ pub enum AppMsg {
     RepairEnded,
     FatalError(String),
     Toast(String),
+    /// User pressed "Skip" on the reconnect-sync page. Drops the UI
+    /// straight to InApp without waiting for HistorySyncDone.
+    SkipSync,
 
     MediaDownloadProgress {
         message_id: String,

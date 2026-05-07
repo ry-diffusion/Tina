@@ -107,11 +107,14 @@ func emitHistorySyncComplete(accountID string, count int) {
 // já calcula em cada chunk de HistorySync. `sync_type` carrega o nome
 // do enum (INITIAL_BOOTSTRAP, RECENT, FULL, …) pra a UI poder distinguir
 // "trazendo histórico antigo" vs. "pegando o último mês".
-func emitHistorySyncProgress(accountID, syncType string, progress uint32) {
+// `messagesCount` é o acumulado de mensagens sincronizadas até agora —
+// exibido na tela de Syncing durante reconects e startups.
+func emitHistorySyncProgress(accountID, syncType string, progress uint32, messagesCount int) {
 	emit("HistorySyncProgress", map[string]any{
-		"account_id": accountID,
-		"sync_type":  syncType,
-		"progress":   progress,
+		"account_id":     accountID,
+		"sync_type":      syncType,
+		"progress":       progress,
+		"messages_count": messagesCount,
 	})
 }
 

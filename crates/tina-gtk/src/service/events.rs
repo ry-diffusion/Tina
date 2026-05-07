@@ -47,8 +47,8 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
         WorkerEvent::LoggedOut { .. } => {
             let _ = app.send(AppMsg::LoggedOut);
         }
-        WorkerEvent::ChatsUpserted { rows, .. } => {
-            let _ = app.send(AppMsg::ChatsUpserted(rows));
+        WorkerEvent::ChatsUpserted { rows, messages_written, .. } => {
+            let _ = app.send(AppMsg::ChatsUpserted { rows, messages_written });
         }
         WorkerEvent::StatusAuthorsUpserted { rows, .. } => {
             let _ = app.send(AppMsg::StatusAuthorsUpserted(rows));
@@ -71,12 +71,14 @@ fn forward_one(app: &Sender<AppMsg>, event: WorkerEvent) {
         WorkerEvent::HistorySyncProgress {
             sync_type,
             progress,
+            messages_count,
             ..
         } => {
-            info!(%sync_type, progress, "history sync progress");
+            info!(%sync_type, progress, messages_count, "history sync progress");
             let _ = app.send(AppMsg::HistorySyncProgress {
                 sync_type,
                 progress,
+                messages_count,
             });
         }
         WorkerEvent::ReconcileProgress {

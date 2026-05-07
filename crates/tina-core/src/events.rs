@@ -198,6 +198,8 @@ pub enum IpcEvent {
         account_id: String,
         sync_type: String,
         progress: u32,
+        /// Cumulative message count synced so far in this chunk stream.
+        messages_count: usize,
     },
 
     /// Progresso da reconciliação. `total = 0` significa indeterminado

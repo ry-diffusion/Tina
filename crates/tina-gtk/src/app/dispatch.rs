@@ -39,7 +39,10 @@ impl AppModel {
                 self.toast(fl!("toast-disconnected", "reason" = reason));
             }
             AppMsg::LoggedOut => self.handle_logged_out(),
-            AppMsg::ChatsUpserted(rows) => {
+            AppMsg::ChatsUpserted { rows, messages_written } => {
+                if self.reconnect_syncing && messages_written > 0 {
+                    self.reconnect_messages_count += messages_written as u32;
+                }
                 let _ = self.main.sender().send(MainInput::ChatsUpserted(rows));
             }
             AppMsg::StatusAuthorsUpserted(rows) => {
@@ -86,15 +89,29 @@ impl AppModel {
             AppMsg::HistorySyncProgress {
                 sync_type,
                 progress,
+                messages_count,
             } => {
                 info!(
                     %sync_type,
                     progress,
+                    messages_count,
                     scene = ?self.scene,
+                    reconnect_syncing = self.reconnect_syncing,
                     "[sync] HistorySyncProgress",
                 );
                 self.sync_type = sync_type.clone();
                 self.sync_progress = progress.min(100);
+                if self.reconnect_syncing {
+                    self.reconnect_messages_count = messages_count as u32;
+                }
+                // For reconnect syncs: the synthetic progress=0 event
+                // is our cue to surface the Syncing scene so the user
+                // can see the catching-up indicator instead of a silent
+                // chat list update.
+                if self.reconnect_syncing && self.scene == Scene::InApp {
+                    info!("[sync] reconnect — Scene::InApp → Scene::Syncing");
+                    self.scene = Scene::Syncing;
+                }
                 // Forward to the sidebar so the headerbar subtitle +
                 // top progress bar reflect the active stream while
                 // the user is in-app. During `Scene::Syncing` the
@@ -104,6 +121,13 @@ impl AppModel {
                     sync_type,
                     progress,
                 });
+            }
+            AppMsg::SkipSync => {
+                info!("[sync] user skipped reconnect sync — Scene::Syncing → Scene::InApp");
+                self.reconnect_syncing = false;
+                self.reconnect_messages_count = 0;
+                self.scene = Scene::InApp;
+                self.service.handle.send(Cmd::LoadChats);
             }
             AppMsg::RepairStarted => self.handle_repair_started(),
             AppMsg::RepairProgress {
@@ -421,6 +445,13 @@ impl AppModel {
         }
         if self.scene == Scene::QrLogin {
             self.scene = Scene::Syncing;
+        } else if self.scene == Scene::InApp {
+            // Mid-session reconnect: arm the reconnect-sync indicator.
+            // The Syncing scene won't show until the first
+            // HistorySyncProgress event arrives (confirming there's
+            // actually something to catch up on).
+            self.reconnect_syncing = true;
+            self.reconnect_messages_count = 0;
         }
     }
 
@@ -438,6 +469,7 @@ impl AppModel {
             // final 100% chunk.
             self.sync_progress = 100;
         }
+        self.reconnect_syncing = false;
         self.service.handle.send(Cmd::LoadChats);
     }
 

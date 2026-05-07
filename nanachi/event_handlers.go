@@ -56,15 +56,26 @@ func (c *Client) handleEvent(rawEvt any) {
 			"[sync] OfflineSyncCompleted for %s (cumulative messages=%d)\n",
 			c.accountID, c.historyCount.Load(),
 		)
-		// Fallback for fresh-pair devices that genuinely never get
-		// any HistorySync chunk. We can't emit Complete inline — the
-		// real chunk stream typically lands several seconds AFTER
-		// OfflineSyncCompleted, and emitting now closes the syncing
-		// page before the first chunk arrives. Defer the check; if
-		// `historySyncSeen` flipped during the wait, the chunk
-		// stream's own progress=100 path will close the page and
-		// this fallback no-ops.
-		c.scheduleFallbackHistoryComplete()
+		if c.inReconnectSync.CompareAndSwap(true, false) {
+			// We emitted a synthetic HistorySyncProgress on reconnect;
+			// dismiss the "Catching up" indicator now that the offline
+			// queue has fully drained.
+			fmt.Fprintf(os.Stderr,
+				"[sync] reconnect offline queue drained for %s — emitting Complete\n",
+				c.accountID,
+			)
+			emitHistorySyncComplete(c.accountID, int(c.historyCount.Load()))
+		} else {
+			// Fallback for fresh-pair devices that genuinely never get
+			// any HistorySync chunk. We can't emit Complete inline — the
+			// real chunk stream typically lands several seconds AFTER
+			// OfflineSyncCompleted, and emitting now closes the syncing
+			// page before the first chunk arrives. Defer the check; if
+			// `historySyncSeen` flipped during the wait, the chunk
+			// stream's own progress=100 path will close the page and
+			// this fallback no-ops.
+			c.scheduleFallbackHistoryComplete()
+		}
 		// Reconcile automático: nesse ponto o whatsmeow já populou seu
 		// próprio store de contatos com push names do app-state. Re-emitimos
 		// pro tina pra preencher os nomes que escaparam dos eventos.
