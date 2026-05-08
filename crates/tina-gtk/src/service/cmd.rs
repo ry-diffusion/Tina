@@ -37,11 +37,13 @@ pub enum Cmd {
     /// Send a plain-text message to a chat. `mentioned_jids` is
     /// piped through to `IpcCommand::SendMessage` so whatsmeow
     /// attaches a `contextInfo.MentionedJID` array — empty for the
-    /// common path of unmentioned text.
+    /// common path of unmentioned text. `local_id` is the UUIDv7
+    /// the UI already inserted as a pending optimistic row.
     SendText {
         chat_id: String,
         text: String,
         mentioned_jids: Vec<String>,
+        local_id: String,
     },
     /// Send a media message (image / video / audio / voice / sticker
     /// / document). `path` is read by the Go side; the worker just

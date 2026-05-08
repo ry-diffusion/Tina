@@ -41,6 +41,36 @@ impl TinaDb {
         Ok(res.rows_affected() > 0)
     }
 
+    /// Insert an outgoing text message before the IPC round-trip completes.
+    /// Uses `delivery_status = 'pending'` so the UI can show a clock icon
+    /// until the server_ack receipt arrives.
+    pub async fn insert_pending_text_message(
+        &self,
+        account_id: &str,
+        message_id: &str,
+        chat_id: &str,
+        content: &str,
+        timestamp: i64,
+        mentions_json: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT OR IGNORE INTO messages
+               (account_id, message_id, chat_id, content, message_type,
+                timestamp, is_from_me, delivery_status, mentions_json, created_at)
+               VALUES (?, ?, ?, ?, 'text', ?, 1, 'pending', ?, ?)"#,
+        )
+        .bind(account_id)
+        .bind(message_id)
+        .bind(chat_id)
+        .bind(content)
+        .bind(timestamp)
+        .bind(mentions_json)
+        .bind(now_ts())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn get_messages_by_chat(
         &self,
         account_id: &str,

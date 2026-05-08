@@ -59,7 +59,8 @@ impl ChatArea {
                 chat_id,
                 text,
                 mentioned_jids,
-            } => self.forward_send(chat_id, text, mentioned_jids, &sender),
+                local_id,
+            } => self.forward_send(chat_id, text, mentioned_jids, local_id, &sender),
             ChatAreaInput::SendMediaFromTab {
                 chat_id,
                 kind,

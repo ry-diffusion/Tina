@@ -116,4 +116,5 @@ pub enum WorkerEvent {
         chat_id: String,
         candidates: Vec<MentionCandidate>,
     },
+
 }

@@ -420,31 +420,22 @@ impl ChatTab {
             }
         self.last_send = Some((trimmed.to_string(), std::time::Instant::now()));
 
-        let local_item = self.build_optimistic_echo(trimmed);
-        let local_id = local_item.id.clone();
+        // Pre-generate the message ID as a plain UUIDv7 (no "local-"
+        // prefix). The same ID is written to the DB as a pending row by
+        // the worker, so there is never a text-content match phase —
+        // the factory item and the DB row share one stable identifier
+        // until MessageConfirmed swaps it for the real WA ID.
+        let local_id = wa_message_id();
+        let local_item = self.build_optimistic_echo(local_id.clone(), trimmed);
         self.seen_message_ids.insert(local_id.clone());
-        self.pending_echoes
-            .entry(trimmed.to_string())
-            .or_default()
-            .push_back(local_id);
-        // Force sticky on send — even if the user had scrolled up to
-        // read history, sending a message is a strong intent signal
-        // that they want to see what they just typed.
-        // Render the markup BEFORE pushing to the list — the new
-        // virtualised bind reads `cached_markup` directly, so an
-        // empty cache made the optimistic echo appear blank until
-        // the server echo replaced it.
+
         let mut local_item = local_item;
         local_item.recompute_markup();
+        // Force sticky on send — strong intent signal.
         self.bottomed.set(true);
         let wrapped = self.wrap_row(local_item);
         self.list.append(wrapped);
 
-        // Mentions live in `pending_mentions` rather than being
-        // re-derived from `trimmed` because the popover may have
-        // inserted a chip whose digits the user later tweaked. We
-        // filter against the final text so a mention picked and
-        // then deleted doesn't leak into `contextInfo.MentionedJID`.
         let mut mentioned_jids: Vec<String> = self
             .pending_mentions
             .iter()
@@ -461,15 +452,14 @@ impl ChatTab {
             chat_id: self.chat_id.clone(),
             text: trimmed.to_string(),
             mentioned_jids,
+            local_id,
         });
         self.composer_buffer.set_text("");
     }
 
-    /// Synthesise a text bubble with a sentinel id for the optimistic echo.
-    /// When the worker echoes the real row back, the matching local
-    /// entry is dropped so the real one slots in at the same position.
-    fn build_optimistic_echo(&self, trimmed: &str) -> MessageItem {
-        let local_id = format!("local-{}", uuid::Uuid::now_v7());
+    /// Synthesise a text bubble for the optimistic echo using the
+    /// pre-generated `local_id` (a plain UUIDv7, no prefix).
+    fn build_optimistic_echo(&self, local_id: String, trimmed: &str) -> MessageItem {
         let now_unix = optimistic_secs();
         let mut item = self.build_optimistic_base(local_id, now_unix);
         item.content = trimmed.to_string();
@@ -544,4 +534,16 @@ pub(in crate::components::chat_tab) fn optimistic_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default()
+}
+
+/// Generate a message ID in whatsmeow's `Client.GenerateMessageID()` format:
+/// `3EB0` + 18 uppercase hex chars (9 bytes). Uses UUIDv7's random payload
+/// so no extra dependency is needed.
+pub(in crate::components::chat_tab) fn wa_message_id() -> String {
+    let id = uuid::Uuid::now_v7();
+    let b = id.as_bytes();
+    format!(
+        "3EB0{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    )
 }

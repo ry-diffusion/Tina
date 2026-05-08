@@ -148,11 +148,13 @@ impl AppModel {
                 chat_id,
                 text,
                 mentioned_jids,
+                local_id,
             } => {
                 self.service.handle.send(Cmd::SendText {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 });
             }
             AppMsg::SendMedia {

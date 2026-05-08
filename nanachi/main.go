@@ -133,7 +133,7 @@ func handleCommand(mgr *Manager, msg IpcMessage) {
 			emitCommandResult(msg.ID, false, nil, strPtr(err.Error()))
 			return
 		}
-		ok, err := mgr.sendMessage(p.AccountID, p.To, p.Content, p.MentionedJIDs)
+		ok, err := mgr.sendMessage(p.AccountID, p.To, p.Content, p.LocalID, p.MentionedJIDs)
 		var errStr *string
 		if err != nil {
 			s := err.Error()

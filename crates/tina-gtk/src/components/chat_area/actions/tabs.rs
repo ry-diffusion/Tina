@@ -113,10 +113,12 @@ impl ChatArea {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 } => ChatAreaInput::SendFromTab {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 },
                 ChatTabOutput::SendMedia {
                     chat_id,

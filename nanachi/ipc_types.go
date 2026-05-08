@@ -35,6 +35,12 @@ type SendMessagePayload struct {
 	// `ContextInfo.MentionedJID` populated; otherwise we fall back
 	// to the lighter `Conversation` payload.
 	MentionedJIDs []string `json:"mentioned_jids,omitempty"`
+	// LocalID is a client-generated UUIDv7 that was already written to
+	// the local DB as a pending optimistic row. When non-empty it is
+	// used as the whatsmeow SendRequestExtra.ID so the WA-assigned ID
+	// equals LocalID (no row swap needed). A MessageConfirmed event is
+	// always emitted so the UI can flip delivery_status.
+	LocalID string `json:"local_id,omitempty"`
 }
 
 // MarkReadPayload mirrors `IpcCommand::MarkRead`. `SenderJID` matches

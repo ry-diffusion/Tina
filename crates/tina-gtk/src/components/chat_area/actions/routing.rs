@@ -154,12 +154,14 @@ impl ChatArea {
         chat_id: String,
         text: String,
         mentioned_jids: Vec<String>,
+        local_id: String,
         sender: &ComponentSender<Self>,
     ) {
         let _ = sender.output(ChatAreaOutput::SendText {
             chat_id,
             text,
             mentioned_jids,
+            local_id,
         });
     }
 

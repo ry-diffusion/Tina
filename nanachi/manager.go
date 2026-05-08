@@ -129,14 +129,14 @@ func (m *Manager) reconcileAccount(accountID string) error {
 	return nil
 }
 
-func (m *Manager) sendMessage(accountID, to, content string, mentioned []string) (bool, error) {
+func (m *Manager) sendMessage(accountID, to, content, localID string, mentioned []string) (bool, error) {
 	m.mu.Lock()
 	client := m.clients[accountID]
 	m.mu.Unlock()
 	if client == nil {
 		return false, errors.New("account not connected")
 	}
-	return client.send(to, content, mentioned)
+	return client.send(to, content, localID, mentioned)
 }
 
 func (m *Manager) sendMedia(p SendMediaPayload) (string, error) {

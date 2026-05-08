@@ -26,7 +26,7 @@ use super::super::messages::{ChatTabInput, ChatTabOutput};
 use super::super::model::ChatTab;
 use super::super::preview;
 use super::super::record;
-use super::history::optimistic_secs;
+use super::history::{optimistic_secs, wa_message_id};
 
 impl ChatTab {
     pub(in crate::components::chat_tab) fn handle_pick_attachment(
@@ -231,7 +231,7 @@ impl ChatTab {
         mimetype: Option<&str>,
         filename: Option<&str>,
     ) -> MessageItem {
-        let local_id = format!("local-media-{}", uuid::Uuid::now_v7());
+        let local_id = wa_message_id();
         let now_unix = optimistic_secs();
         let summary = caption
             .map(|s| s.to_string())

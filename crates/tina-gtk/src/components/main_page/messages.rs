@@ -105,6 +105,7 @@ pub enum MainOutput {
         chat_id: String,
         text: String,
         mentioned_jids: Vec<String>,
+        local_id: String,
     },
     SendMedia {
         chat_id: String,

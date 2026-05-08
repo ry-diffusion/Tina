@@ -174,7 +174,7 @@ func (c *Client) markRead(p MarkReadPayload) error {
 	return c.wa.MarkRead(ctx, ids, time.Now(), chatJID, senderJID)
 }
 
-func (c *Client) send(to, content string, mentioned []string) (bool, error) {
+func (c *Client) send(to, content, localID string, mentioned []string) (bool, error) {
 	jid, err := types.ParseJID(to)
 	if err != nil {
 		return false, fmt.Errorf("invalid jid: %w", err)
@@ -203,15 +203,16 @@ func (c *Client) send(to, content string, mentioned []string) (bool, error) {
 	} else {
 		msg = &waE2E.Message{Conversation: &content}
 	}
-	resp, err := c.wa.SendMessage(ctx, jid, msg)
+
+	var extra []whatsmeow.SendRequestExtra
+	if localID != "" {
+		extra = append(extra, whatsmeow.SendRequestExtra{ID: localID})
+	}
+	resp, err := c.wa.SendMessage(ctx, jid, msg, extra...)
 	if err != nil {
 		return false, err
 	}
 
-	// whatsmeow only fires events.Message for incoming traffic; outgoing
-	// messages stay invisible to our pipeline unless we synthesise an
-	// echo. Without this, the user's own messages never appear in their
-	// chat thread until the next history sync.
 	ts := resp.Timestamp.Unix()
 	if ts <= 0 {
 		ts = time.Now().Unix()
@@ -220,6 +221,11 @@ func (c *Client) send(to, content string, mentioned []string) (bool, error) {
 	if id := c.wa.Store.ID; id != nil {
 		senderJID = id.String()
 	}
+
+	// Echo with resp.ID. When localID != "" and SendRequestExtra was used,
+	// resp.ID == localID, so the pre-inserted optimistic row gets a
+	// guaranteed INSERT OR IGNORE no-op. Legacy path (localID == "") uses
+	// the WA-assigned ID directly.
 	md := MessageData{
 		MessageID:   resp.ID,
 		ChatJID:     jid.String(),

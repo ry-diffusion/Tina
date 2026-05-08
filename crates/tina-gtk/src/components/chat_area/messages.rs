@@ -84,6 +84,7 @@ pub enum ChatAreaInput {
         /// JIDs `@`-picked from the popover; routed straight through
         /// to `Cmd::SendText` and then `IpcCommand::SendMessage`.
         mentioned_jids: Vec<String>,
+        local_id: String,
     },
     /// Forwarded from a ChatTab — user confirmed a media-attach
     /// preview.
@@ -151,6 +152,7 @@ pub enum ChatAreaOutput {
         chat_id: String,
         text: String,
         mentioned_jids: Vec<String>,
+        local_id: String,
     },
     SendMedia {
         chat_id: String,

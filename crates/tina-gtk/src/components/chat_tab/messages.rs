@@ -123,9 +123,6 @@ pub enum ChatTabInput {
     /// Sticker tile in the picker was clicked. Sends the sticker
     /// straight (no preview, matches WhatsApp UX).
     SendStickerByPath(String),
-    /// Delivery-status update for one or more outgoing rows. Each
-    /// matching factory item flips its status icon; non-matching
-    /// ids are silently dropped.
     ReceiptUpdate {
         message_ids: Vec<String>,
         status: String,
@@ -149,6 +146,11 @@ pub enum ChatTabOutput {
         /// `contextInfo.MentionedJID` array — without it the peer
         /// renders the bubble as plain text without the mention chip.
         mentioned_jids: Vec<String>,
+        /// UUIDv7 already inserted as a pending optimistic DB row and
+        /// shown in the factory. Flows all the way to the worker so
+        /// `IpcCommand::SendMessage` can set whatsmeow's
+        /// `SendRequestExtra.ID` to this value.
+        local_id: String,
     },
     /// User confirmed a media-attach preview. Carries the source
     /// path; the worker reads the file when the IPC fires.

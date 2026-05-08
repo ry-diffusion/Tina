@@ -94,7 +94,8 @@ pub(super) async fn handle(
             chat_id,
             text,
             mentioned_jids,
-        } => send_text(worker, app, state, chat_id, text, mentioned_jids).await,
+            local_id,
+        } => send_text(worker, app, state, chat_id, text, mentioned_jids, local_id).await,
         Cmd::SendMedia {
             chat_id,
             kind,
@@ -347,12 +348,13 @@ async fn send_text(
     chat_id: String,
     text: String,
     mentioned_jids: Vec<String>,
+    local_id: String,
 ) {
     let Some(account_id) = active_account(state).await else {
         return;
     };
     if let Err(e) = worker
-        .send_message(&account_id, &chat_id, &text, &mentioned_jids)
+        .send_message(&account_id, &chat_id, &text, &mentioned_jids, &local_id)
         .await
     {
         error!("send_message: {e}");

@@ -140,7 +140,32 @@ impl TinaWorker {
         to: &str,
         content: &str,
         mentioned_jids: &[String],
+        local_id: &str,
     ) -> Result<()> {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_default();
+        let mentions_json = if mentioned_jids.is_empty() {
+            None
+        } else {
+            serde_json::to_string(mentioned_jids).ok()
+        };
+        if let Err(e) = self
+            .db
+            .insert_pending_text_message(
+                account_id,
+                local_id,
+                to,
+                content,
+                ts,
+                mentions_json.as_deref(),
+            )
+            .await
+        {
+            tracing::warn!("optimistic insert failed: {e}");
+        }
+
         let nanachi = self.nanachi.read().await;
         let mentioned: Vec<tina_core::WaIdentity> = mentioned_jids
             .iter()
@@ -152,6 +177,7 @@ impl TinaWorker {
                 to: tina_core::WaIdentity::parse(to),
                 content: content.to_string(),
                 mentioned_jids: mentioned,
+                local_id: Some(local_id.to_string()),
             })
             .await?;
         Ok(())

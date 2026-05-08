@@ -144,6 +144,7 @@ pub enum AppMsg {
         /// `Cmd::SendText` → `IpcCommand::SendMessage` so the peer's
         /// client sees the proper `contextInfo.MentionedJID`.
         mentioned_jids: Vec<String>,
+        local_id: String,
     },
     /// User confirmed a media-attach preview. Routes to
     /// `Cmd::SendMedia` and the worker forwards it to nanachi.

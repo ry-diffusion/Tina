@@ -72,6 +72,13 @@ pub enum IpcCommand {
         /// recipient. Empty for plain text.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mentioned_jids: Vec<WaIdentity>,
+        /// Client-generated UUIDv7 that was already written to the local
+        /// DB as a pending optimistic row. Go uses it as the whatsmeow
+        /// message ID (`SendRequestExtra.ID`) so the row never needs
+        /// replacing — only the delivery_status needs updating. Empty
+        /// string / absent means legacy path (no pre-insert).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_id: Option<String>,
     },
     /// Send a media message (image / video / audio / voice note /
     /// sticker / document). The Go side reads `path` from disk,

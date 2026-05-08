@@ -204,10 +204,12 @@ impl SimpleComponent for AppModel {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 } => AppMsg::SendText {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 },
                 MainOutput::SendMedia {
                     chat_id,

@@ -257,11 +257,13 @@ impl MainPage {
                 chat_id,
                 text,
                 mentioned_jids,
+                local_id,
             } => {
                 let _ = sender.output(MainOutput::SendText {
                     chat_id,
                     text,
                     mentioned_jids,
+                    local_id,
                 });
             }
             ChatAreaOutput::SendMedia {
